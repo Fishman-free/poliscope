@@ -1,0 +1,1 @@
+"""Research task contracts."""

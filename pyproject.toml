@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "poliscope"
+version = "0.1.0"
+description = "Auditable controversy evidence mapping for computational social science"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic>=1.14,<2",
+    "arq>=0.26,<1",
+    "asyncpg>=0.30,<1",
+    "boto3>=1.35,<2",
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "pydantic>=2.10,<3",
+    "pymupdf>=1.25,<2",
+    "redis>=5.2,<7",
+    "sqlalchemy>=2.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.14,<2",
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.25,<2",
+    "pytest-repeat>=0.9,<1",
+    "ruff>=0.9,<1",
+    "testcontainers[postgres]>=4.9,<5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["packages"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
