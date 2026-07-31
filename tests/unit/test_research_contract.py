@@ -25,6 +25,22 @@ def test_evidence_demand_type_has_exactly_seven_required_values() -> None:
     )
 
 
+def test_typed_evidence_demand_remains_enum_and_serializes_as_value() -> None:
+    scope = ResearchScope(
+        populations=("adolescents",),
+        regions=("global",),
+        languages=("en",),
+        date_from=None,
+        date_until=date(2025, 1, 1),
+        evidence_priorities=(EvidenceDemandType.CORRELATION,),
+        allow_preprints=False,
+    )
+
+    assert scope.evidence_priorities[0] is EvidenceDemandType.CORRELATION
+    assert scope.model_dump(mode="json")["evidence_priorities"] == ["CORRELATION"]
+    assert hash(scope.evidence_priorities)
+
+
 def test_research_contract_requires_question_scope_budget_and_inputs() -> None:
     with pytest.raises(ValidationError):
         ResearchContract.model_validate({"question": "数字行为是否影响心理健康？"})

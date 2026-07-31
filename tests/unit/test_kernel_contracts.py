@@ -122,13 +122,36 @@ def test_contract_frozen_dict_rejects_composite_key_annotations() -> None:
         TypeAdapter(FrozenDict[frozenset[str], str])
 
 
-@pytest.mark.parametrize("key", ("name", 1, True))
-def test_contract_frozen_dict_accepts_json_scalar_keys(key: str | int | bool) -> None:
-    class ScalarKeyContract(ContractModel):
-        values: FrozenDict[str | int | bool, str]
+def test_contract_frozen_dict_accepts_only_exact_string_keys() -> None:
+    class StringKeyContract(ContractModel):
+        values: FrozenDict[str, str]
 
-    contract = ScalarKeyContract(values=FrozenDict({key: "value"}))
-    assert contract.model_dump(mode="json")["values"]
+    contract = StringKeyContract(values=FrozenDict({"name": "value"}))
+    assert contract.model_dump(mode="json") == {"values": {"name": "value"}}
+    assert contract.model_dump(mode="json") == __import__("json").loads(
+        contract.model_dump_json()
+    )
+
+    for annotation in (FrozenDict[int, str], FrozenDict[str | int, str]):
+        with pytest.raises(TypeError, match="str"):
+            TypeAdapter(annotation)
+
+
+def test_frozen_dict_rejects_non_string_keys_at_runtime_and_in_any() -> None:
+    key_pairs = (
+        {"1": "text", 1: "integer"},
+        {"00000000-0000-0000-0000-000000000001": "text", UUID(int=1): "uuid"},
+        {("tuple",): "value"},
+        {frozenset({"set"}): "value"},
+    )
+    for values in key_pairs:
+        with pytest.raises(TypeError, match="str"):
+            FrozenDict[Any, Any](values)
+        with pytest.raises(ValidationError, match="str"):
+            ExampleContract.model_validate({"labels": [], "metadata": values})
+
+    with pytest.raises(TypeError, match="str"):
+        TypeAdapter(FrozenDict).validate_python({1: "value"})
 
 
 def test_freeze_value_rejects_cycles_but_allows_shared_values() -> None:
@@ -225,6 +248,32 @@ def test_unknown_and_stateful_leaves_are_rejected() -> None:
             ExampleContract.model_validate(
                 {"labels": [], "metadata": {"payload": value}}
             )
+
+
+def test_any_enum_values_freeze_to_exact_scalars() -> None:
+    class Mode(StrEnum):
+        FIXED = "FIXED"
+
+    frozen = FrozenDict({"mode": Mode.FIXED})
+    contract = ExampleContract(labels=(), metadata={"mode": Mode.FIXED})
+
+    assert type(frozen["mode"]) is str
+    assert type(contract.metadata["mode"]) is str
+    assert frozen["mode"] == "FIXED"
+
+
+def test_enum_annotations_reject_public_custom_behavior() -> None:
+    class SneakyStrEnum(StrEnum):
+        public_state: list[Any]
+        FIXED = "FIXED"
+
+        def mutate(self) -> None:
+            self.public_state = []
+
+    with pytest.raises(TypeError, match="mode"):
+
+        class SneakyEnumContract(ContractModel):
+            mode: SneakyStrEnum
 
 
 def test_unsafe_enum_members_are_rejected() -> None:

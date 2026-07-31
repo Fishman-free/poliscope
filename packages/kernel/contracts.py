@@ -95,7 +95,7 @@ def _contains_disallowed_container_annotation(annotation: Any) -> bool:
 _ENUM_INTERNAL_ATTRIBUTES = frozenset(
     {"_name_", "_value_", "__objclass__", "_sort_order_"}
 )
-_JSON_KEY_TYPES = frozenset({str, int, float, bool, type(None), UUID})
+_JSON_KEY_TYPES = frozenset({str})
 
 
 def _is_safe_enum_member(value: Enum) -> bool:
@@ -122,12 +122,35 @@ def _is_json_key_annotation(annotation: Any) -> bool:
     if origin in _SAFE_CONTAINER_ORIGINS:
         return False
     if origin is not None:
-        return all(
-            _is_json_key_annotation(argument) for argument in get_args(annotation)
-        )
-    if annotation in _JSON_KEY_TYPES:
-        return True
-    return isinstance(annotation, type) and issubclass(annotation, (StrEnum, IntEnum))
+        return False
+    return annotation is str
+
+
+def _is_data_enum_type(annotation: Any) -> bool:
+    if not isinstance(annotation, type):
+        return False
+    if not issubclass(annotation, (StrEnum, IntEnum)):
+        return False
+    public_names = {
+        name
+        for name in annotation.__dict__
+        if not name.startswith("_") and name not in annotation.__members__
+    }
+    return not public_names and all(
+        _is_safe_enum_member(member) for member in annotation
+    )
+
+
+def _enum_annotation_is_unsafe(annotation: Any) -> bool:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        arguments = get_args(annotation)
+        return bool(arguments) and _enum_annotation_is_unsafe(arguments[0])
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return not _is_data_enum_type(annotation)
+    return any(
+        _enum_annotation_is_unsafe(argument) for argument in get_args(annotation)
+    )
 
 
 def _default_is_already_immutable(value: Any) -> bool:
@@ -174,7 +197,7 @@ def _freeze_value(value: Any, active_ids: set[int]) -> Any:
     if isinstance(value, Enum):
         if not _is_safe_enum_member(value):
             raise TypeError("Enum member is not safely immutable")
-        return value
+        return value.value
     if type(value) in _IMMUTABLE_LEAF_TYPES:
         return value
     if not isinstance(value, (Mapping, list, tuple, set, frozenset)):
@@ -206,9 +229,11 @@ class FrozenDict(Mapping[K, V], Generic[K, V]):  # noqa: UP046
 
     def __init__(self, values: Mapping[K, V] | None = None) -> None:
         source = {} if values is None else values
+        invalid_key = next((key for key in source if type(key) is not str), None)
+        if invalid_key is not None:
+            raise TypeError("FrozenDict keys must be exact str values")
         frozen_values = {
-            cast(K, freeze_value(key)): cast(V, freeze_value(value))
-            for key, value in source.items()
+            key: cast(V, freeze_value(value)) for key, value in source.items()
         }
         try:
             hash(frozenset(frozen_values.items()))
@@ -246,7 +271,7 @@ class FrozenDict(Mapping[K, V], Generic[K, V]):  # noqa: UP046
         if len(arguments) == 2:
             if not _is_json_key_annotation(arguments[0]):
                 raise TypeError(
-                    "FrozenDict key type must be a stable JSON scalar type"
+                    "FrozenDict key type must be exactly str"
                 )
             has_mutable_key = _contains_disallowed_container_annotation(arguments[0])
             has_mutable_value = _contains_disallowed_container_annotation(arguments[1])
@@ -282,6 +307,10 @@ class ContractModel(BaseModel):
     def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
         super().__pydantic_init_subclass__(**kwargs)
         for field_name, field in cls.model_fields.items():
+            if _enum_annotation_is_unsafe(field.annotation):
+                raise TypeError(
+                    f"field '{field_name}' must use a data-only StrEnum or IntEnum"
+                )
             if _contains_disallowed_container_annotation(field.annotation):
                 raise TypeError(
                     f"field '{field_name}' must use immutable container annotations"
