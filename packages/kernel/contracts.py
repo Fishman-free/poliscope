@@ -16,7 +16,15 @@ from typing import (
 )
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    FieldSerializationInfo,
+    GetCoreSchemaHandler,
+    SerializerFunctionWrapHandler,
+    field_serializer,
+    model_validator,
+)
 from pydantic_core import CoreSchema, PydanticUndefined, core_schema
 
 K = TypeVar("K")
@@ -25,19 +33,20 @@ V = TypeVar("V")
 
 _SAFE_CONTAINER_ORIGINS = frozenset({tuple, frozenset})
 _SAFE_SCALAR_CONTAINERS = frozenset({str, bytes})
-_IMMUTABLE_LEAF_TYPES = (
-    type(None),
-    str,
-    bytes,
-    bool,
-    int,
-    float,
-    Decimal,
-    datetime,
-    date,
-    time,
-    UUID,
-    Enum,
+_IMMUTABLE_LEAF_TYPES = frozenset(
+    {
+        type(None),
+        str,
+        bytes,
+        bool,
+        int,
+        float,
+        Decimal,
+        datetime,
+        date,
+        time,
+        UUID,
+    }
 )
 
 
@@ -84,7 +93,10 @@ def _contains_disallowed_container_annotation(annotation: Any) -> bool:
 
 
 def _default_is_already_immutable(value: Any) -> bool:
-    if isinstance(value, (ContractModel, _IMMUTABLE_LEAF_TYPES)):
+    if (
+        isinstance(value, (ContractModel, Enum))
+        or type(value) in _IMMUTABLE_LEAF_TYPES
+    ):
         return True
     if isinstance(value, (bytearray, memoryview, list, set, dict)):
         return False
@@ -99,6 +111,20 @@ def _default_is_already_immutable(value: Any) -> bool:
     return False
 
 
+def thaw_for_serialization(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            thaw_for_serialization(key): thaw_for_serialization(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [thaw_for_serialization(item) for item in value]
+    if isinstance(value, frozenset):
+        thawed = [thaw_for_serialization(item) for item in value]
+        return sorted(thawed, key=repr)
+    return value
+
+
 def freeze_value(value: Any) -> Any:
     return _freeze_value(value, set())
 
@@ -106,9 +132,9 @@ def freeze_value(value: Any) -> Any:
 def _freeze_value(value: Any, active_ids: set[int]) -> Any:
     if isinstance(value, (bytearray, memoryview)):
         return bytes(value)
-    if isinstance(value, ContractModel):
+    if isinstance(value, (ContractModel, Enum)):
         return value
-    if isinstance(value, _IMMUTABLE_LEAF_TYPES):
+    if type(value) in _IMMUTABLE_LEAF_TYPES:
         return value
     if not isinstance(value, (Mapping, list, tuple, set, frozenset)):
         raise TypeError(
@@ -194,7 +220,7 @@ class FrozenDict(Mapping[K, V], Generic[K, V]):  # noqa: UP046
             cls,
             mapping_schema,
             serialization=core_schema.wrap_serializer_function_ser_schema(
-                lambda value, serializer: serializer(dict(value))
+                lambda value, serializer: serializer(thaw_for_serialization(value))
             ),
         )
 
@@ -230,6 +256,17 @@ class ContractModel(BaseModel):
                 raise TypeError(
                     f"field '{field_name}' default must already be explicitly immutable"
                 )
+
+    @field_serializer("*", mode="wrap")
+    def serialize_field(
+        self,
+        value: Any,
+        handler: SerializerFunctionWrapHandler,
+        info: FieldSerializationInfo,
+    ) -> Any:
+        if info.mode == "json" and isinstance(value, FrozenDict):
+            return handler(thaw_for_serialization(value))
+        return handler(value)
 
     @model_validator(mode="before")
     @classmethod

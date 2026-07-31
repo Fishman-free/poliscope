@@ -7,7 +7,7 @@ from collections.abc import (
     MutableSet,
 )
 from copy import copy, deepcopy
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from io import BytesIO, StringIO
@@ -159,6 +159,40 @@ def test_byte_buffers_freeze_to_hashable_bytes() -> None:
     assert contract.metadata["payload"] == b"value"
 
 
+def test_scalar_subclasses_with_state_are_rejected() -> None:
+    class StatefulInt(int):
+        state: list[Any]
+
+        def __new__(cls) -> "StatefulInt":
+            instance = super().__new__(cls, 1)
+            instance.state = []
+            return instance
+
+    class StatefulStr(str):
+        state: list[Any]
+
+        def __new__(cls) -> "StatefulStr":
+            instance = super().__new__(cls, "value")
+            instance.state = []
+            return instance
+
+    class StatefulDatetime(datetime):
+        pass
+
+    values = (StatefulInt(), StatefulStr(), StatefulDatetime(2025, 1, 1))
+    for value in values:
+        with pytest.raises(TypeError, match="immutable"):
+            FrozenDict({"payload": value})
+        with pytest.raises(ValidationError, match="immutable"):
+            ExampleContract.model_validate(
+                {"labels": [], "metadata": {"payload": value}}
+            )
+        with pytest.raises(TypeError, match="payload"):
+
+            class InvalidScalarDefaultContract(ContractModel):
+                payload: Any = value
+
+
 def test_unknown_and_stateful_leaves_are_rejected() -> None:
     class MutableHashableLeaf:
         def __init__(self) -> None:
@@ -299,3 +333,43 @@ def test_contract_model_serializes_frozen_dict_as_mapping() -> None:
         "labels": ["one"],
         "metadata": {"nested": ["value"]},
     }
+
+
+def test_json_serialization_thaws_nested_frozen_any_values_without_mutation() -> None:
+    contract = ExampleContract.model_validate(
+        {
+            "labels": ["one"],
+            "metadata": {
+                "mapping": {"items": ["a", "b"]},
+                "set": {"b", "a"},
+            },
+        }
+    )
+    initial_hash = hash(contract.metadata)
+    expected = {
+        "labels": ["one"],
+        "metadata": {
+            "mapping": {"items": ["a", "b"]},
+            "set": ["a", "b"],
+        },
+    }
+
+    assert contract.model_dump(mode="json") == expected
+    assert contract.model_dump(mode="json") == expected
+    assert contract.model_dump_json() == contract.model_dump_json()
+    assert isinstance(contract.metadata["mapping"], FrozenDict)
+    assert hash(contract.metadata) == initial_hash
+
+
+def test_direct_any_field_thaws_only_for_json_serialization() -> None:
+    class AnyContract(ContractModel):
+        payload: Any
+
+    contract = AnyContract.model_validate({"payload": {"nested": ["value"]}})
+
+    assert isinstance(contract.payload, FrozenDict)
+    assert isinstance(contract.model_dump(mode="python")["payload"], FrozenDict)
+    assert contract.model_dump(mode="json") == {
+        "payload": {"nested": ["value"]}
+    }
+    assert contract.model_dump_json() == '{"payload":{"nested":["value"]}}'
