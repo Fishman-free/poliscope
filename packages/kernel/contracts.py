@@ -1,4 +1,12 @@
-from collections.abc import Iterator, Mapping
+from collections.abc import (
+    Iterator,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    MutableSet,
+    Sequence,
+    Set,
+)
 from types import MappingProxyType
 from typing import Any, Generic, Self, TypeVar, cast, get_args, get_origin
 
@@ -9,17 +17,48 @@ K = TypeVar("K")
 V = TypeVar("V")
 
 
-_MUTABLE_ORIGINS = frozenset({list, set, dict})
-_MUTABLE_VALUES = (list, set, dict)
-
-
-def _contains_mutable_annotation(annotation: Any) -> bool:
+_DISALLOWED_CONTAINER_ANNOTATIONS = frozenset(
+    {
+        list,
+        set,
+        dict,
+        Mapping,
+        MutableMapping,
+        MutableSequence,
+        MutableSet,
+        Sequence,
+        Set,
+    }
+)
+def _contains_disallowed_container_annotation(annotation: Any) -> bool:
     origin = get_origin(annotation)
-    if annotation in _MUTABLE_ORIGINS or origin in _MUTABLE_ORIGINS:
+    if (
+        annotation in _DISALLOWED_CONTAINER_ANNOTATIONS
+        or origin in _DISALLOWED_CONTAINER_ANNOTATIONS
+    ):
         return True
     return any(
-        _contains_mutable_annotation(argument) for argument in get_args(annotation)
+        _contains_disallowed_container_annotation(argument)
+        for argument in get_args(annotation)
     )
+
+
+def _contains_mutable_value(value: Any, active_ids: set[int] | None = None) -> bool:
+    if isinstance(value, (list, set, dict)):
+        return True
+    if not isinstance(value, (tuple, frozenset, FrozenDict)):
+        return False
+
+    active = set() if active_ids is None else active_ids
+    identity = id(value)
+    if identity in active:
+        return True
+    active.add(identity)
+    try:
+        items = value.values() if isinstance(value, FrozenDict) else value
+        return any(_contains_mutable_value(item, active) for item in items)
+    finally:
+        active.remove(identity)
 
 
 def freeze_value(value: Any) -> Any:
@@ -86,8 +125,8 @@ class FrozenDict(Mapping[K, V], Generic[K, V]):  # noqa: UP046
     ) -> CoreSchema:
         arguments = get_args(source_type)
         if len(arguments) == 2:
-            has_mutable_key = _contains_mutable_annotation(arguments[0])
-            has_mutable_value = _contains_mutable_annotation(arguments[1])
+            has_mutable_key = _contains_disallowed_container_annotation(arguments[0])
+            has_mutable_value = _contains_disallowed_container_annotation(arguments[1])
             if has_mutable_key or has_mutable_value:
                 raise TypeError(
                     "FrozenDict generic arguments must describe immutable values"
@@ -120,15 +159,14 @@ class ContractModel(BaseModel):
     def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
         super().__pydantic_init_subclass__(**kwargs)
         for field_name, field in cls.model_fields.items():
-            if _contains_mutable_annotation(field.annotation):
+            if _contains_disallowed_container_annotation(field.annotation):
                 raise TypeError(
                     f"field '{field_name}' must use immutable container annotations"
                 )
+            if field.default_factory is not None:
+                raise TypeError(f"field '{field_name}' must not use default_factory")
             default = field.default
-            has_mutable_default = default is not PydanticUndefined and isinstance(
-                default, _MUTABLE_VALUES
-            )
-            if has_mutable_default:
+            if default is not PydanticUndefined and _contains_mutable_value(default):
                 raise TypeError(f"field '{field_name}' has a mutable default value")
 
     @model_validator(mode="before")

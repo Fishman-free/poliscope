@@ -1,8 +1,9 @@
+from collections.abc import Mapping, MutableMapping, MutableSequence, MutableSet
 from copy import copy, deepcopy
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 
 from packages.kernel.contracts import ContractModel, FrozenDict, freeze_value
 from tests.helpers import assert_recursively_frozen
@@ -18,6 +19,10 @@ def test_contract_model_rejects_mutable_container_annotations() -> None:
         ("items", list[str]),
         ("members", set[str]),
         ("metadata", dict[str, str]),
+        ("mapping", Mapping[str, str]),
+        ("mutable_mapping", MutableMapping[str, str]),
+        ("mutable_sequence", MutableSequence[str]),
+        ("mutable_set", MutableSet[str]),
     ):
         with pytest.raises(TypeError, match=field_name):
 
@@ -30,6 +35,28 @@ def test_contract_model_validates_defaults_and_rejects_mutable_any_default() -> 
 
         class InvalidDefaultContract(ContractModel):
             payload: Any = []
+
+
+def test_contract_model_rejects_default_factories() -> None:
+    with pytest.raises(TypeError, match="payload"):
+
+        class InvalidFactoryContract(ContractModel):
+            payload: Any = Field(default_factory=list)
+
+
+def test_contract_model_rejects_nested_mutable_defaults() -> None:
+    for default in (([1],), ({"key": "value"},)):
+        with pytest.raises(TypeError, match="payload"):
+
+            class InvalidNestedDefaultContract(ContractModel):
+                payload: tuple[Any, ...] = default
+
+
+def test_contract_model_accepts_explicit_immutable_defaults() -> None:
+    class ValidDefaultContract(ContractModel):
+        payload: tuple[str, ...] = ("value",)
+
+    assert ValidDefaultContract().payload == ("value",)
 
 
 def test_frozen_dict_rejects_mutable_generic_value_annotations() -> None:
