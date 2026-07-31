@@ -1,6 +1,13 @@
-from collections.abc import Mapping, MutableMapping, MutableSequence, MutableSet
+from collections import Counter, OrderedDict, defaultdict, deque
+from collections.abc import (
+    Iterable,
+    Mapping,
+    MutableMapping,
+    MutableSequence,
+    MutableSet,
+)
 from copy import copy, deepcopy
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import pytest
 from pydantic import Field, TypeAdapter, ValidationError
@@ -23,11 +30,30 @@ def test_contract_model_rejects_mutable_container_annotations() -> None:
         ("mutable_mapping", MutableMapping[str, str]),
         ("mutable_sequence", MutableSequence[str]),
         ("mutable_set", MutableSet[str]),
+        ("deque", deque[str]),
+        ("ordered", OrderedDict[str, str]),
+        ("defaultdict", defaultdict[str, str]),
+        ("counter", Counter[str]),
+        ("iterable", Iterable[str]),
     ):
         with pytest.raises(TypeError, match=field_name):
 
             class InvalidContract(ContractModel):
                 __annotations__ = {field_name: annotation}
+
+
+def test_contract_model_accepts_safe_typing_wrappers() -> None:
+    class WrappedContract(ContractModel):
+        optional_items: tuple[str, ...] | None
+        annotated_items: Annotated[tuple[str, ...], "immutable"]
+        literal_value: Literal["fixed"]
+
+    contract = WrappedContract(
+        optional_items=("value",),
+        annotated_items=("value",),
+        literal_value="fixed",
+    )
+    assert contract.optional_items == ("value",)
 
 
 def test_contract_model_validates_defaults_and_rejects_mutable_any_default() -> None:
@@ -94,6 +120,33 @@ def test_freeze_value_recursively_freezes_builtin_containers() -> None:
     assert frozen["sequence"] == ("a", FrozenDict({"nested": ("b",)}))
     assert frozen["members"] == frozenset({"x", "y"})
     assert_recursively_frozen(frozen)
+
+
+def test_byte_buffers_freeze_to_hashable_bytes() -> None:
+    source = bytearray(b"value")
+    frozen = FrozenDict({"payload": source, "view": memoryview(source)})
+
+    assert frozen["payload"] == b"value"
+    assert frozen["view"] == b"value"
+    assert hash(frozen)
+    assert deepcopy(frozen) is frozen
+
+    contract = ExampleContract(labels=(), metadata={"payload": source})
+    assert contract.metadata["payload"] == b"value"
+    source[0] = ord("X")
+    assert contract.metadata["payload"] == b"value"
+
+
+def test_frozen_dict_rejects_unhashable_custom_leaf_during_construction() -> None:
+    class UnhashableLeaf:
+        __hash__ = None  # type: ignore[assignment]
+
+    with pytest.raises(TypeError, match="hashable"):
+        FrozenDict({"payload": UnhashableLeaf()})
+    with pytest.raises(ValidationError, match="hashable"):
+        ExampleContract.model_validate(
+            {"labels": [], "metadata": {"payload": UnhashableLeaf()}}
+        )
 
 
 def test_frozen_dict_is_hashable_independent_of_mapping_order() -> None:

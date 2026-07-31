@@ -1,14 +1,16 @@
-from collections.abc import (
-    Iterator,
-    Mapping,
-    MutableMapping,
-    MutableSequence,
-    MutableSet,
-    Sequence,
-    Set,
-)
+from collections.abc import Container, Iterator, Mapping
 from types import MappingProxyType
-from typing import Any, Generic, Self, TypeVar, cast, get_args, get_origin
+from typing import (
+    Annotated,
+    Any,
+    Generic,
+    Literal,
+    Self,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, model_validator
 from pydantic_core import CoreSchema, PydanticUndefined, core_schema
@@ -17,25 +19,45 @@ K = TypeVar("K")
 V = TypeVar("V")
 
 
-_DISALLOWED_CONTAINER_ANNOTATIONS = frozenset(
-    {
-        list,
-        set,
-        dict,
-        Mapping,
-        MutableMapping,
-        MutableSequence,
-        MutableSet,
-        Sequence,
-        Set,
-    }
-)
+_SAFE_CONTAINER_ORIGINS = frozenset({tuple, frozenset})
+_SAFE_SCALAR_CONTAINERS = frozenset({str, bytes})
+
+
+def _is_disallowed_container_type(annotation: Any) -> bool:
+    if annotation is Any or annotation in _SAFE_SCALAR_CONTAINERS:
+        return False
+    if isinstance(annotation, type) and issubclass(annotation, (str, bytes)):
+        return False
+    module = getattr(annotation, "__module__", "")
+    if module in {"collections", "collections.abc"}:
+        return True
+    try:
+        return isinstance(annotation, type) and issubclass(annotation, Container)
+    except TypeError:
+        return False
+
+
 def _contains_disallowed_container_annotation(annotation: Any) -> bool:
     origin = get_origin(annotation)
-    if (
-        annotation in _DISALLOWED_CONTAINER_ANNOTATIONS
-        or origin in _DISALLOWED_CONTAINER_ANNOTATIONS
-    ):
+    candidate = origin or annotation
+    if candidate is FrozenDict:
+        return any(
+            _contains_disallowed_container_annotation(argument)
+            for argument in get_args(annotation)
+        )
+    if candidate in _SAFE_CONTAINER_ORIGINS:
+        return any(
+            _contains_disallowed_container_annotation(argument)
+            for argument in get_args(annotation)
+        )
+    if origin is Annotated:
+        arguments = get_args(annotation)
+        return bool(arguments) and _contains_disallowed_container_annotation(
+            arguments[0]
+        )
+    if origin is Literal:
+        return False
+    if _is_disallowed_container_type(candidate):
         return True
     return any(
         _contains_disallowed_container_annotation(argument)
@@ -66,6 +88,8 @@ def freeze_value(value: Any) -> Any:
 
 
 def _freeze_value(value: Any, active_ids: set[int]) -> Any:
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
     if not isinstance(value, (Mapping, list, tuple, set, frozenset)):
         return value
 
@@ -93,8 +117,13 @@ class FrozenDict(Mapping[K, V], Generic[K, V]):  # noqa: UP046
     def __init__(self, values: Mapping[K, V] | None = None) -> None:
         source = {} if values is None else values
         frozen_values = {
-            key: cast(V, freeze_value(value)) for key, value in source.items()
+            cast(K, freeze_value(key)): cast(V, freeze_value(value))
+            for key, value in source.items()
         }
+        try:
+            hash(frozenset(frozen_values.items()))
+        except TypeError as exc:
+            raise TypeError("FrozenDict keys and values must be hashable") from exc
         object.__setattr__(self, "_values", MappingProxyType(frozen_values))
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -172,7 +201,10 @@ class ContractModel(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def freeze_containers(cls, value: Any) -> Any:
-        return freeze_value(value)
+        try:
+            return freeze_value(value)
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
 
     def model_copy(
         self, *, update: Mapping[str, Any] | None = None, deep: bool = False
