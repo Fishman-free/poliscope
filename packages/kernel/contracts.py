@@ -1,4 +1,7 @@
 from collections.abc import Container, Iterator, Mapping
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from types import MappingProxyType
 from typing import (
     Annotated,
@@ -11,6 +14,7 @@ from typing import (
     get_args,
     get_origin,
 )
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, model_validator
 from pydantic_core import CoreSchema, PydanticUndefined, core_schema
@@ -21,6 +25,20 @@ V = TypeVar("V")
 
 _SAFE_CONTAINER_ORIGINS = frozenset({tuple, frozenset})
 _SAFE_SCALAR_CONTAINERS = frozenset({str, bytes})
+_IMMUTABLE_LEAF_TYPES = (
+    type(None),
+    str,
+    bytes,
+    bool,
+    int,
+    float,
+    Decimal,
+    datetime,
+    date,
+    time,
+    UUID,
+    Enum,
+)
 
 
 def _is_disallowed_container_type(annotation: Any) -> bool:
@@ -65,22 +83,20 @@ def _contains_disallowed_container_annotation(annotation: Any) -> bool:
     )
 
 
-def _contains_mutable_value(value: Any, active_ids: set[int] | None = None) -> bool:
-    if isinstance(value, (list, set, dict)):
+def _default_is_already_immutable(value: Any) -> bool:
+    if isinstance(value, (ContractModel, _IMMUTABLE_LEAF_TYPES)):
         return True
-    if not isinstance(value, (tuple, frozenset, FrozenDict)):
+    if isinstance(value, (bytearray, memoryview, list, set, dict)):
         return False
-
-    active = set() if active_ids is None else active_ids
-    identity = id(value)
-    if identity in active:
-        return True
-    active.add(identity)
-    try:
-        items = value.values() if isinstance(value, FrozenDict) else value
-        return any(_contains_mutable_value(item, active) for item in items)
-    finally:
-        active.remove(identity)
+    if isinstance(value, tuple | frozenset):
+        return all(_default_is_already_immutable(item) for item in value)
+    if isinstance(value, FrozenDict):
+        return all(
+            _default_is_already_immutable(key)
+            and _default_is_already_immutable(item)
+            for key, item in value.items()
+        )
+    return False
 
 
 def freeze_value(value: Any) -> Any:
@@ -90,8 +106,15 @@ def freeze_value(value: Any) -> Any:
 def _freeze_value(value: Any, active_ids: set[int]) -> Any:
     if isinstance(value, (bytearray, memoryview)):
         return bytes(value)
-    if not isinstance(value, (Mapping, list, tuple, set, frozenset)):
+    if isinstance(value, ContractModel):
         return value
+    if isinstance(value, _IMMUTABLE_LEAF_TYPES):
+        return value
+    if not isinstance(value, (Mapping, list, tuple, set, frozenset)):
+        raise TypeError(
+            f"unsupported mutable or unknown leaf type: {type(value).__name__}; "
+            "an immutable value is required"
+        )
 
     identity = id(value)
     if identity in active_ids:
@@ -195,8 +218,18 @@ class ContractModel(BaseModel):
             if field.default_factory is not None:
                 raise TypeError(f"field '{field_name}' must not use default_factory")
             default = field.default
-            if default is not PydanticUndefined and _contains_mutable_value(default):
-                raise TypeError(f"field '{field_name}' has a mutable default value")
+            if default is PydanticUndefined:
+                continue
+            try:
+                freeze_value(default)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"field '{field_name}' has an unsupported mutable default value"
+                ) from exc
+            if not _default_is_already_immutable(default):
+                raise TypeError(
+                    f"field '{field_name}' default must already be explicitly immutable"
+                )
 
     @model_validator(mode="before")
     @classmethod

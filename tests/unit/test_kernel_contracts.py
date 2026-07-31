@@ -7,7 +7,12 @@ from collections.abc import (
     MutableSet,
 )
 from copy import copy, deepcopy
+from datetime import date
+from decimal import Decimal
+from enum import StrEnum
+from io import BytesIO, StringIO
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 import pytest
 from pydantic import Field, TypeAdapter, ValidationError
@@ -85,6 +90,23 @@ def test_contract_model_accepts_explicit_immutable_defaults() -> None:
     assert ValidDefaultContract().payload == ("value",)
 
 
+def test_contract_model_rejects_defaults_that_require_freezing() -> None:
+    with pytest.raises(TypeError, match="payload"):
+
+        class BufferDefaultContract(ContractModel):
+            payload: Any = bytearray(b"value")
+
+
+def test_contract_model_rejects_unknown_stateful_defaults() -> None:
+    class MutableLeaf:
+        pass
+
+    with pytest.raises(TypeError, match="payload"):
+
+        class StatefulDefaultContract(ContractModel):
+            payload: Any = MutableLeaf()
+
+
 def test_frozen_dict_rejects_mutable_generic_value_annotations() -> None:
     with pytest.raises(TypeError, match="FrozenDict"):
         TypeAdapter(FrozenDict[str, list[int]])
@@ -137,16 +159,42 @@ def test_byte_buffers_freeze_to_hashable_bytes() -> None:
     assert contract.metadata["payload"] == b"value"
 
 
-def test_frozen_dict_rejects_unhashable_custom_leaf_during_construction() -> None:
-    class UnhashableLeaf:
-        __hash__ = None  # type: ignore[assignment]
+def test_unknown_and_stateful_leaves_are_rejected() -> None:
+    class MutableHashableLeaf:
+        def __init__(self) -> None:
+            self.state = 1
 
-    with pytest.raises(TypeError, match="hashable"):
-        FrozenDict({"payload": UnhashableLeaf()})
-    with pytest.raises(ValidationError, match="hashable"):
-        ExampleContract.model_validate(
-            {"labels": [], "metadata": {"payload": UnhashableLeaf()}}
-        )
+        def __hash__(self) -> int:
+            return self.state
+
+    for value in (MutableHashableLeaf(), StringIO("value"), BytesIO(b"value")):
+        with pytest.raises(TypeError, match="immutable"):
+            FrozenDict({"payload": value})
+        with pytest.raises(ValidationError, match="immutable"):
+            ExampleContract.model_validate(
+                {"labels": [], "metadata": {"payload": value}}
+            )
+
+
+def test_known_immutable_leaves_and_nested_contract_are_stable() -> None:
+    class Mode(StrEnum):
+        FIXED = "FIXED"
+
+    nested = ExampleContract(labels=("nested",), metadata=FrozenDict())
+    frozen = FrozenDict(
+        {
+            "decimal": Decimal("1.25"),
+            "date": date(2025, 1, 1),
+            "uuid": UUID("00000000-0000-0000-0000-000000000001"),
+            "enum": Mode.FIXED,
+            "contract": nested,
+        }
+    )
+    contract = ExampleContract(labels=(), metadata=frozen)
+
+    assert hash(frozen)
+    assert contract.model_dump_json() == contract.model_dump_json()
+    assert contract.metadata["contract"] is nested
 
 
 def test_frozen_dict_is_hashable_independent_of_mapping_order() -> None:
