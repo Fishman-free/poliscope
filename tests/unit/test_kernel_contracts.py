@@ -1,7 +1,8 @@
+from copy import copy, deepcopy
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from packages.kernel.contracts import ContractModel, FrozenDict, freeze_value
 from tests.helpers import assert_recursively_frozen
@@ -10,6 +11,51 @@ from tests.helpers import assert_recursively_frozen
 class ExampleContract(ContractModel):
     labels: tuple[str, ...]
     metadata: FrozenDict[str, Any]
+
+
+def test_contract_model_rejects_mutable_container_annotations() -> None:
+    for field_name, annotation in (
+        ("items", list[str]),
+        ("members", set[str]),
+        ("metadata", dict[str, str]),
+    ):
+        with pytest.raises(TypeError, match=field_name):
+
+            class InvalidContract(ContractModel):
+                __annotations__ = {field_name: annotation}
+
+
+def test_contract_model_validates_defaults_and_rejects_mutable_any_default() -> None:
+    with pytest.raises(TypeError, match="payload"):
+
+        class InvalidDefaultContract(ContractModel):
+            payload: Any = []
+
+
+def test_frozen_dict_rejects_mutable_generic_value_annotations() -> None:
+    with pytest.raises(TypeError, match="FrozenDict"):
+        TypeAdapter(FrozenDict[str, list[int]])
+    with pytest.raises(TypeError, match="FrozenDict"):
+        TypeAdapter(FrozenDict[str, tuple[dict[str, int], ...]])
+
+
+def test_freeze_value_rejects_cycles_but_allows_shared_values() -> None:
+    cyclic: list[Any] = []
+    cyclic.append(cyclic)
+
+    with pytest.raises(ValueError, match="cyclic"):
+        freeze_value(cyclic)
+
+    shared = ["value"]
+    assert freeze_value([shared, shared]) == (("value",), ("value",))
+
+
+def test_contract_cycle_is_reported_as_validation_error() -> None:
+    cyclic: list[Any] = []
+    cyclic.append(cyclic)
+
+    with pytest.raises(ValidationError, match="cyclic"):
+        ExampleContract.model_validate({"labels": [], "metadata": {"cycle": cyclic}})
 
 
 def test_freeze_value_recursively_freezes_builtin_containers() -> None:
@@ -29,6 +75,25 @@ def test_frozen_dict_is_hashable_independent_of_mapping_order() -> None:
 
     assert first == second
     assert hash(first) == hash(second)
+
+
+def test_frozen_dict_copy_operations_return_same_immutable_value() -> None:
+    frozen = FrozenDict({"nested": ["value"]})
+
+    assert copy(frozen) is frozen
+    assert deepcopy(frozen) is frozen
+
+    contract = ExampleContract(labels=("one",), metadata=frozen)
+    copied_contract = contract.model_copy(deep=True)
+    assert copied_contract.metadata is contract.metadata
+
+
+def test_frozen_dict_preserves_falsy_non_empty_mapping() -> None:
+    class FalsyMapping(dict[str, str]):
+        def __bool__(self) -> bool:
+            return False
+
+    assert FrozenDict(FalsyMapping(key="value"))["key"] == "value"
 
 
 def test_frozen_dict_internal_storage_cannot_be_mutated() -> None:

@@ -4,7 +4,7 @@ from enum import StrEnum
 from typing import Self
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, StrictInt, model_validator
 
 from packages.kernel.contracts import ContractModel
 
@@ -36,10 +36,10 @@ class ResearchScope(ContractModel):
 
 
 class ResearchBudget(ContractModel):
-    wall_clock_minutes: int = Field(gt=0)
+    wall_clock_minutes: StrictInt = Field(gt=0)
     model_cost_usd: Decimal = Field(ge=0)
-    tool_call_limit: int = Field(gt=0)
-    source_limit: int = Field(gt=0)
+    tool_call_limit: StrictInt = Field(gt=0)
+    source_limit: StrictInt = Field(gt=0)
 
 
 class UserEvidenceInput(ContractModel):

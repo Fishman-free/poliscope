@@ -54,6 +54,22 @@ def test_research_budget_rejects_non_positive_limits_and_negative_cost(
         ResearchBudget.model_validate(values)
 
 
+@pytest.mark.parametrize(
+    "field", ("wall_clock_minutes", "tool_call_limit", "source_limit")
+)
+def test_research_budget_rejects_boolean_integer_limits(field: str) -> None:
+    values = {
+        "wall_clock_minutes": 60,
+        "model_cost_usd": Decimal("1.00"),
+        "tool_call_limit": 10,
+        "source_limit": 5,
+    }
+    values[field] = True
+
+    with pytest.raises(ValidationError):
+        ResearchBudget.model_validate(values)
+
+
 def test_research_scope_rejects_reversed_date_range() -> None:
     with pytest.raises(ValidationError):
         ResearchScope(
