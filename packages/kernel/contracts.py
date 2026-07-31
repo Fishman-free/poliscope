@@ -1,4 +1,5 @@
 from collections.abc import Iterator, Mapping
+from types import MappingProxyType
 from typing import Any, Generic, Self, TypeVar, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, model_validator
@@ -19,11 +20,19 @@ def freeze_value(value: Any) -> Any:
 
 
 class FrozenDict(Mapping[K, V], Generic[K, V]):  # noqa: UP046
+    __slots__ = ("_values",)
+
+    _values: Mapping[K, V]
+
     def __init__(self, values: Mapping[K, V] | None = None) -> None:
-        self._values: dict[K, V] = {
+        frozen_values = {
             key: cast(V, freeze_value(value))
             for key, value in (values or {}).items()
         }
+        object.__setattr__(self, "_values", MappingProxyType(frozen_values))
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("FrozenDict attributes cannot be reassigned")
 
     def __getitem__(self, key: K) -> V:
         return self._values[key]

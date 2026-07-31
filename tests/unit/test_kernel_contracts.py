@@ -31,6 +31,33 @@ def test_frozen_dict_is_hashable_independent_of_mapping_order() -> None:
     assert hash(first) == hash(second)
 
 
+def test_frozen_dict_internal_storage_cannot_be_mutated() -> None:
+    frozen = FrozenDict({"key": "value"})
+    initial_hash = hash(frozen)
+
+    with pytest.raises((AttributeError, TypeError)):
+        frozen._values["key"] = "changed"  # type: ignore[index]
+    with pytest.raises((AttributeError, TypeError)):
+        frozen._values = {"key": "replaced"}
+
+    assert frozen["key"] == "value"
+    assert hash(frozen) == initial_hash
+
+
+def test_nested_mappings_cannot_add_change_or_delete_keys() -> None:
+    frozen = FrozenDict({"outer": {"inner": "value"}})
+    inner = frozen["outer"]
+
+    with pytest.raises(TypeError):
+        inner["added"] = "value"  # type: ignore[unused-ignore]
+    with pytest.raises(TypeError):
+        inner["inner"] = "changed"  # type: ignore[unused-ignore]
+    with pytest.raises(TypeError):
+        del inner["inner"]  # type: ignore[unused-ignore]
+
+    assert inner == FrozenDict({"inner": "value"})
+
+
 def test_contract_model_converts_plain_containers_to_immutable_values() -> None:
     contract = ExampleContract.model_validate(
         {"labels": ["one", "two"], "metadata": {"nested": ["value"]}}
