@@ -1,3 +1,4 @@
+import warnings
 from collections import Counter, OrderedDict, defaultdict, deque
 from collections.abc import (
     Iterable,
@@ -9,7 +10,7 @@ from collections.abc import (
 from copy import copy, deepcopy
 from datetime import date, datetime
 from decimal import Decimal
-from enum import StrEnum
+from enum import Enum, StrEnum
 from io import BytesIO, StringIO
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -114,6 +115,22 @@ def test_frozen_dict_rejects_mutable_generic_value_annotations() -> None:
         TypeAdapter(FrozenDict[str, tuple[dict[str, int], ...]])
 
 
+def test_contract_frozen_dict_rejects_composite_key_annotations() -> None:
+    with pytest.raises(TypeError, match="key"):
+        TypeAdapter(FrozenDict[tuple[str, ...], str])
+    with pytest.raises(TypeError, match="key"):
+        TypeAdapter(FrozenDict[frozenset[str], str])
+
+
+@pytest.mark.parametrize("key", ("name", 1, True))
+def test_contract_frozen_dict_accepts_json_scalar_keys(key: str | int | bool) -> None:
+    class ScalarKeyContract(ContractModel):
+        values: FrozenDict[str | int | bool, str]
+
+    contract = ScalarKeyContract(values=FrozenDict({key: "value"}))
+    assert contract.model_dump(mode="json")["values"]
+
+
 def test_freeze_value_rejects_cycles_but_allows_shared_values() -> None:
     cyclic: list[Any] = []
     cyclic.append(cyclic)
@@ -208,6 +225,39 @@ def test_unknown_and_stateful_leaves_are_rejected() -> None:
             ExampleContract.model_validate(
                 {"labels": [], "metadata": {"payload": value}}
             )
+
+
+def test_unsafe_enum_members_are_rejected() -> None:
+    class MutableValueEnum(Enum):
+        VALUE = ["mutable"]
+
+    class MutableHashEnum(StrEnum):
+        VALUE = "VALUE"
+
+        def __hash__(self) -> int:
+            return 1
+
+    class StatefulEnum(StrEnum):
+        state: list[Any]
+        VALUE = "VALUE"
+
+        def __new__(cls, value: str) -> "StatefulEnum":
+            member = str.__new__(cls, value)
+            member._value_ = value
+            member.state = []
+            return member
+
+    for value in (MutableValueEnum.VALUE, MutableHashEnum.VALUE, StatefulEnum.VALUE):
+        with pytest.raises(TypeError, match="Enum"):
+            FrozenDict({"payload": value})
+        with pytest.raises(ValidationError, match="Enum"):
+            ExampleContract.model_validate(
+                {"labels": [], "metadata": {"payload": value}}
+            )
+        with pytest.raises(TypeError, match="payload"):
+
+            class InvalidEnumDefaultContract(ContractModel):
+                payload: Any = value
 
 
 def test_known_immutable_leaves_and_nested_contract_are_stable() -> None:
@@ -373,3 +423,30 @@ def test_direct_any_field_thaws_only_for_json_serialization() -> None:
         "payload": {"nested": ["value"]}
     }
     assert contract.model_dump_json() == '{"payload":{"nested":["value"]}}'
+
+
+def test_frozenset_json_serialization_is_stable_for_all_fields() -> None:
+    class SetContract(ContractModel):
+        direct: frozenset[str]
+        payload: Any
+
+    first = SetContract(direct=frozenset({"b", "a"}), payload={"b", "a"})
+    second = SetContract(direct=frozenset({"a", "b"}), payload={"a", "b"})
+
+    assert first.model_dump_json() == second.model_dump_json()
+    assert first.model_dump(mode="json") == {
+        "direct": ["a", "b"],
+        "payload": ["a", "b"],
+    }
+
+
+def test_frozen_dict_dump_has_no_serializer_warnings() -> None:
+    contract = ExampleContract(labels=("one",), metadata={"nested": ["value"]})
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        python_dump = contract.model_dump(mode="python")
+        json_dump = contract.model_dump(mode="json")
+
+    assert isinstance(python_dump["metadata"], FrozenDict)
+    assert json_dump["metadata"] == {"nested": ["value"]}

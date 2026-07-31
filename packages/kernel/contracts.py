@@ -1,7 +1,7 @@
 from collections.abc import Container, Iterator, Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
-from enum import Enum
+from enum import Enum, IntEnum, StrEnum
 from types import MappingProxyType
 from typing import (
     Annotated,
@@ -92,12 +92,49 @@ def _contains_disallowed_container_annotation(annotation: Any) -> bool:
     )
 
 
-def _default_is_already_immutable(value: Any) -> bool:
-    if (
-        isinstance(value, (ContractModel, Enum))
-        or type(value) in _IMMUTABLE_LEAF_TYPES
-    ):
+_ENUM_INTERNAL_ATTRIBUTES = frozenset(
+    {"_name_", "_value_", "__objclass__", "_sort_order_"}
+)
+_JSON_KEY_TYPES = frozenset({str, int, float, bool, type(None), UUID})
+
+
+def _is_safe_enum_member(value: Enum) -> bool:
+    enum_type = type(value)
+    if not issubclass(enum_type, (StrEnum, IntEnum)):
+        return False
+    if "__hash__" in enum_type.__dict__:
+        return False
+    if type(value.value) not in {str, int}:
+        return False
+    return all(
+        name in _ENUM_INTERNAL_ATTRIBUTES
+        for name in getattr(value, "__dict__", {})
+    )
+
+
+def _is_json_key_annotation(annotation: Any) -> bool:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        arguments = get_args(annotation)
+        return bool(arguments) and _is_json_key_annotation(arguments[0])
+    if origin is Literal:
+        return all(type(value) in _JSON_KEY_TYPES for value in get_args(annotation))
+    if origin in _SAFE_CONTAINER_ORIGINS:
+        return False
+    if origin is not None:
+        return all(
+            _is_json_key_annotation(argument) for argument in get_args(annotation)
+        )
+    if annotation in _JSON_KEY_TYPES:
         return True
+    return isinstance(annotation, type) and issubclass(annotation, (StrEnum, IntEnum))
+
+
+def _default_is_already_immutable(value: Any) -> bool:
+    if isinstance(value, ContractModel) or type(value) in _IMMUTABLE_LEAF_TYPES:
+        return True
+    if isinstance(value, Enum):
+        return _is_safe_enum_member(value)
     if isinstance(value, (bytearray, memoryview, list, set, dict)):
         return False
     if isinstance(value, tuple | frozenset):
@@ -132,7 +169,11 @@ def freeze_value(value: Any) -> Any:
 def _freeze_value(value: Any, active_ids: set[int]) -> Any:
     if isinstance(value, (bytearray, memoryview)):
         return bytes(value)
-    if isinstance(value, (ContractModel, Enum)):
+    if isinstance(value, ContractModel):
+        return value
+    if isinstance(value, Enum):
+        if not _is_safe_enum_member(value):
+            raise TypeError("Enum member is not safely immutable")
         return value
     if type(value) in _IMMUTABLE_LEAF_TYPES:
         return value
@@ -203,6 +244,10 @@ class FrozenDict(Mapping[K, V], Generic[K, V]):  # noqa: UP046
     ) -> CoreSchema:
         arguments = get_args(source_type)
         if len(arguments) == 2:
+            if not _is_json_key_annotation(arguments[0]):
+                raise TypeError(
+                    "FrozenDict key type must be a stable JSON scalar type"
+                )
             has_mutable_key = _contains_disallowed_container_annotation(arguments[0])
             has_mutable_value = _contains_disallowed_container_annotation(arguments[1])
             if has_mutable_key or has_mutable_value:
@@ -264,8 +309,13 @@ class ContractModel(BaseModel):
         handler: SerializerFunctionWrapHandler,
         info: FieldSerializationInfo,
     ) -> Any:
-        if info.mode == "json" and isinstance(value, FrozenDict):
-            return handler(thaw_for_serialization(value))
+        if info.mode == "json":
+            if isinstance(value, FrozenDict | frozenset):
+                return thaw_for_serialization(value)
+            serialized = handler(value)
+            return thaw_for_serialization(serialized)
+        if isinstance(value, FrozenDict):
+            return value
         return handler(value)
 
     @model_validator(mode="before")
