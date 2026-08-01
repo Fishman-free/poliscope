@@ -83,8 +83,18 @@ class SqlEventLedger:
         payload: dict[str, object],
         idempotency_key: str,
         status: str = "pending",
+        *,
+        evidence_level: str | None = None,
+        source_id: UUID | None = None,
+        finding_id: UUID | None = None,
+        claim_id: UUID | None = None,
     ) -> LedgerEntry:
         """Append one event, or return the existing one if it was already added.
+
+        The evidence columns are set on insert rather than by a later update
+        because the application role holds INSERT and no UPDATE on this table.
+        That is deliberate: an event whose level or source could be edited after
+        the fact would make the audit trail in CLAUDE.md 7.2 unfalsifiable.
 
         Raises :class:`EventConflict` when the same key arrives with a different
         payload, because that means two different events were assigned the same
@@ -115,6 +125,10 @@ class SqlEventLedger:
             idempotency_key=idempotency_key,
             sequence=int(next_sequence or 1),
             status=status,
+            evidence_level=evidence_level,
+            source_id=source_id,
+            finding_id=finding_id,
+            claim_id=claim_id,
         )
         self._session.add(row)
         await self._session.flush()

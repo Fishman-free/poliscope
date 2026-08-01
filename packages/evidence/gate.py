@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
+from typing import SupportsFloat, cast
 
 from packages.evidence.causal_policy import CausalUpgradePolicy
 from packages.evidence.citation_verifier import verify_citation_entailment
@@ -10,8 +12,15 @@ from packages.evidence.contracts import (
     ClaimType,
     ScientificEventCandidate,
 )
-from packages.evidence.method_auditor import audit_method_quality
-from packages.evidence.source_verifier import verify_source
+from packages.evidence.method_auditor import (
+    METHOD_QUALITY_THRESHOLD,
+    MethodQualityResult,
+    audit_method_quality,
+)
+from packages.evidence.source_verifier import (
+    SourceVerificationResult,
+    verify_source,
+)
 from packages.kernel.contracts import ContractModel
 
 
@@ -38,6 +47,69 @@ class AuditFinding(ContractModel):
     stage: AuditStage
     passed: bool
     detail: str = ""
+
+
+# Names the payload may carry for stage 3. Absent keys fall back to the
+# verifier's own defaults, which is the "already checked upstream" case; a key
+# that is present and false is a real failure and must reach the decision.
+_SOURCE_FLAG_KEYS = (
+    "has_doi",
+    "has_title",
+    "has_authors",
+    "is_retracted",
+    "pdf_matches",
+)
+
+_METHOD_SCORE_KEYS = (
+    "directness",
+    "design_quality",
+    "measurement_quality",
+    "precision",
+    "replicability",
+    "external_validity",
+)
+
+
+def _source_flags(payload: Mapping[str, object]) -> dict[str, bool]:
+    return {
+        key: bool(payload[key]) for key in _SOURCE_FLAG_KEYS if key in payload
+    }
+
+
+def _method_scores(payload: Mapping[str, object]) -> dict[str, float]:
+    raw = payload.get("method_quality")
+    scores = raw if isinstance(raw, Mapping) else payload
+    return {
+        key: float(cast(SupportsFloat, scores[key]))
+        for key in _METHOD_SCORE_KEYS
+        if key in scores and isinstance(scores[key], (int, float, str))
+    }
+
+
+def _source_failure_detail(result: SourceVerificationResult) -> str:
+    if result.is_retracted:
+        return "source is retracted"
+    missing = [
+        name
+        for name, present in (
+            ("doi", result.has_doi),
+            ("title", result.has_title),
+            ("authors", result.has_authors),
+        )
+        if not present
+    ]
+    if missing:
+        return f"source metadata missing: {', '.join(missing)}"
+    return "source pdf does not match the recorded metadata"
+
+
+def _method_failure_detail(result: MethodQualityResult) -> str:
+    weak = [
+        name
+        for name in _METHOD_SCORE_KEYS
+        if getattr(result, name) < METHOD_QUALITY_THRESHOLD
+    ]
+    return f"method quality below threshold: {', '.join(weak)}"
 
 
 class FullAdmissionDecision(AdmissionDecision):
@@ -130,16 +202,27 @@ class FullEvidenceGate:
 
         # Stage 3: Source
         source_id = candidate.source_id
+        source_detail = ""
         if source_id:
-            src = verify_source(source_id)
+            # The metadata comes from the candidate rather than from the
+            # verifier's optimistic defaults. Calling verify_source with no
+            # arguments returned "passed" for every event ever submitted, which
+            # made this stage decorative and let a retracted paper through.
+            src = verify_source(source_id, **_source_flags(candidate.payload))
             source_ok = src.passed
+            if not source_ok:
+                source_detail = _source_failure_detail(src)
         else:
             source_ok = candidate.event_type != "FINDING"
         findings.append(
-            AuditFinding(stage=AuditStage.SOURCE, passed=source_ok)
+            AuditFinding(
+                stage=AuditStage.SOURCE, passed=source_ok, detail=source_detail
+            )
         )
         if not source_ok:
-            return self._quarantine(findings, "source verification failed")
+            return self._quarantine(
+                findings, source_detail or "source verification failed"
+            )
 
         # Stage 4: Citation Entailment
         if candidate.finding_id:
@@ -157,16 +240,27 @@ class FullEvidenceGate:
             return self._quarantine(findings, "citation entailment failed")
 
         # Stage 5: Method Quality
+        method_detail = ""
         if candidate.finding_id:
-            method = audit_method_quality(candidate.finding_id)
+            method = audit_method_quality(
+                candidate.finding_id, **_method_scores(candidate.payload)
+            )
             method_ok = method.passed
+            if not method_ok:
+                method_detail = _method_failure_detail(method)
         else:
             method_ok = True
         findings.append(
-            AuditFinding(stage=AuditStage.METHOD_QUALITY, passed=method_ok)
+            AuditFinding(
+                stage=AuditStage.METHOD_QUALITY,
+                passed=method_ok,
+                detail=method_detail,
+            )
         )
         if not method_ok:
-            return self._quarantine(findings, "method quality failed")
+            return self._quarantine(
+                findings, method_detail or "method quality failed"
+            )
 
         # Stage 6: Graph Consistency
         if candidate.claim_id:

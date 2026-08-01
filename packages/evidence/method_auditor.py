@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+# The score below which a dimension is treated as unfit to support a formal
+# Finding. Named because the Evidence Gate reports which dimensions fell short
+# and must compare against the same number this module applies.
+METHOD_QUALITY_THRESHOLD = 0.5
+
 
 @dataclass(frozen=True, slots=True)
 class MethodQualityResult:
@@ -24,7 +29,7 @@ def audit_method_quality(
     precision: float = 0.8,
     replicability: float = 0.8,
     external_validity: float = 0.8,
-    threshold: float = 0.5,
+    threshold: float = METHOD_QUALITY_THRESHOLD,
 ) -> MethodQualityResult:
     passed = all(
         value >= threshold

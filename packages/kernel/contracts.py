@@ -50,6 +50,18 @@ _IMMUTABLE_LEAF_TYPES = frozenset(
 )
 
 
+def _is_immutable_leaf(value: Any) -> bool:
+    """Admit a leaf only when its type is exactly one of the allowed ones.
+
+    Deliberately not ``isinstance``. A subclass of ``int`` or ``str`` can carry
+    a mutable ``__dict__``, and admitting it would let shared mutable state into
+    a frozen contract. Drivers that return subclasses -- asyncpg hands back its
+    own ``UUID`` -- must normalise at the database boundary instead; see
+    :func:`packages.kernel.database.canonical_uuid`.
+    """
+    return type(value) in _IMMUTABLE_LEAF_TYPES
+
+
 def _is_disallowed_container_type(annotation: Any) -> bool:
     if annotation is Any or annotation in _SAFE_SCALAR_CONTAINERS:
         return False
@@ -154,7 +166,7 @@ def _enum_annotation_is_unsafe(annotation: Any) -> bool:
 
 
 def _default_is_already_immutable(value: Any) -> bool:
-    if isinstance(value, ContractModel) or type(value) in _IMMUTABLE_LEAF_TYPES:
+    if isinstance(value, ContractModel) or _is_immutable_leaf(value):
         return True
     if isinstance(value, Enum):
         return _is_safe_enum_member(value)
@@ -198,7 +210,7 @@ def _freeze_value(value: Any, active_ids: set[int]) -> Any:
         if not _is_safe_enum_member(value):
             raise TypeError("Enum member is not safely immutable")
         return value.value
-    if type(value) in _IMMUTABLE_LEAF_TYPES:
+    if _is_immutable_leaf(value):
         return value
     if not isinstance(value, (Mapping, list, tuple, set, frozenset)):
         raise TypeError(

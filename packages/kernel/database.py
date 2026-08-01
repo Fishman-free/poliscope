@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -14,6 +15,19 @@ from sqlalchemy.orm import DeclarativeBase
 
 class Base(DeclarativeBase):
     """Single declarative base for all Poliscope ORM models."""
+
+
+def canonical_uuid(value: UUID) -> UUID:
+    """Return a plain :class:`uuid.UUID` for an identifier read from the database.
+
+    asyncpg returns ``asyncpg.pgproto.pgproto.UUID``, a subclass. It compares and
+    hashes identically, so it is invisible almost everywhere -- but
+    :class:`packages.kernel.contracts.ContractModel` admits a leaf only when its
+    type matches exactly, on purpose, because a subclass of a scalar can carry
+    mutable state. Normalising here keeps that guarantee intact rather than
+    weakening it for every type just to accommodate one driver.
+    """
+    return value if type(value) is UUID else UUID(str(value))
 
 
 def create_database_engine(url: str) -> AsyncEngine:
