@@ -21,7 +21,8 @@ def restore_task_state(state: TaskState, snapshot: dict[str, object]) -> TaskSta
     restored_checkpoint = snapshot.get("projector_checkpoint", 0)
     if restored_checkpoint < state.projector_checkpoint:
         raise CheckpointRegressionError(
-            f"checkpoint regression: {restored_checkpoint} < {state.projector_checkpoint}"
+            f"checkpoint regression: {restored_checkpoint} "
+            f"< {state.projector_checkpoint}"
         )
     return TaskState(
         task_id=state.task_id,

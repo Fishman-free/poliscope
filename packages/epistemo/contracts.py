@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class TaskStatus(StrEnum):
+    DRAFT = "DRAFT"
+    AWAITING_CLAIM_CONFIRMATION = "AWAITING_CLAIM_CONFIRMATION"
+    QUEUED = "QUEUED"
+    DEGRADED_RUNNING = "DEGRADED_RUNNING"
+    REPORTING = "REPORTING"
+    COMPLETED = "COMPLETED"
+    COMPLETED_WITH_GAPS = "COMPLETED_WITH_GAPS"
+    PAUSED = "PAUSED"
+    FAILED = "FAILED"
+
+
+class TaskPhase(StrEnum):
+    PRECOMMITMENT = "PRECOMMITMENT"
+    ACQUISITION = "ACQUISITION"
+    EVIDENCE_EXCHANGE = "EVIDENCE_EXCHANGE"
+    CROSS_EXAMINATION = "CROSS_EXAMINATION"
+    BLINDSPOT_BOUNTY = "BLINDSPOT_BOUNTY"
+    JOINT_MODELING = "JOINT_MODELING"
+    FINAL_REJUDGMENT = "FINAL_REJUDGMENT"
+    REPORTING = "REPORTING"
+
+
+TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
+    {
+        TaskStatus.COMPLETED,
+        TaskStatus.COMPLETED_WITH_GAPS,
+        TaskStatus.FAILED,
+    }
+)
+
+PHASE_SEQUENCE: tuple[TaskPhase, ...] = (
+    TaskPhase.PRECOMMITMENT,
+    TaskPhase.ACQUISITION,
+    TaskPhase.EVIDENCE_EXCHANGE,
+    TaskPhase.CROSS_EXAMINATION,
+    TaskPhase.BLINDSPOT_BOUNTY,
+    TaskPhase.JOINT_MODELING,
+    TaskPhase.FINAL_REJUDGMENT,
+    TaskPhase.REPORTING,
+)
+
+PHASE_TO_STATUS: dict[TaskPhase, TaskStatus] = {
+    TaskPhase.PRECOMMITMENT: TaskStatus.QUEUED,
+    TaskPhase.ACQUISITION: TaskStatus.QUEUED,
+    TaskPhase.EVIDENCE_EXCHANGE: TaskStatus.QUEUED,
+    TaskPhase.CROSS_EXAMINATION: TaskStatus.QUEUED,
+    TaskPhase.BLINDSPOT_BOUNTY: TaskStatus.QUEUED,
+    TaskPhase.JOINT_MODELING: TaskStatus.QUEUED,
+    TaskPhase.FINAL_REJUDGMENT: TaskStatus.QUEUED,
+    TaskPhase.REPORTING: TaskStatus.REPORTING,
+}

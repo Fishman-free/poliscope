@@ -1,0 +1,7 @@
+{
+  "paper_count": 5,
+  "independent_cluster_count": 2,
+  "admitted_findings": 3,
+  "blindspots": ["confounding", "measurement_bias"],
+  "dissents": 1
+}

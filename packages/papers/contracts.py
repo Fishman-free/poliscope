@@ -4,7 +4,7 @@ from decimal import Decimal
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import ConfigDict, Field
+from pydantic import Field
 
 from packages.kernel.contracts import ContractModel, FrozenDict
 

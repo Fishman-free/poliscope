@@ -1,16 +1,13 @@
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 
+from packages.council.contracts import Seat
 from packages.council.rounds.precommitment import (
     PrecommitmentHandler,
     PrecommitmentNotSealed,
     PrecommitmentOutput,
 )
-from packages.council.runtime import CouncilRuntime
-from packages.council.contracts import Seat
 
 
 async def test_precommitments_hidden_until_sealed() -> None:

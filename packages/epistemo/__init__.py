@@ -1,1 +1,1 @@
-"""State machine, budget, orchestration, recovery."""
+"""EpistemoBrain: state machine, budget, and council orchestration."""

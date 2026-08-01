@@ -4,9 +4,13 @@ from uuid import uuid4
 
 import pytest
 
-from packages.memory.branches import BranchService
+from packages.epistemo.recovery import (
+    CheckpointRegressionError,
+    TaskState,
+    restore_task_state,
+)
 from packages.evidence.lifecycle import LifecycleService, ResurrectionConditionNotMet
-from packages.epistemo.recovery import TaskState, restore_task_state, CheckpointRegressionError
+from packages.memory.branches import BranchService
 
 
 def test_fork_creates_branch() -> None:
@@ -67,7 +71,8 @@ def test_resurrect_succeeds_with_evidence() -> None:
 
 def test_snapshot_resume_keeps_checkpoint() -> None:
     state = TaskState(uuid4(), "evidence_exchange", 5, (uuid4(),))
-    restored = restore_task_state(state, {"projector_checkpoint": 7, "phase": "reporting"})
+    snap = {"projector_checkpoint": 7, "phase": "reporting"}
+    restored = restore_task_state(state, snap)
     assert restored.projector_checkpoint == 7
     assert restored.phase == "reporting"
 

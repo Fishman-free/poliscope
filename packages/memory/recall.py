@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from packages.memory.projection import POLICIES, EvidenceProjection, ProjectionPolicy, RoleContext
+from packages.memory.projection import (
+    POLICIES,
+    EvidenceProjection,
+    ProjectionPolicy,
+    RoleContext,
+)
 
 
 def perspective_recall(
@@ -27,4 +32,11 @@ def perspective_recall(
 
 
 def get_policy(seat: str) -> ProjectionPolicy:
-    return POLICIES.get(seat, ProjectionPolicy(seat=seat, evidence_sort_weights={}, challenge_preferences=()))
+    return POLICIES.get(
+        seat,
+        ProjectionPolicy(
+            seat=seat,
+            evidence_sort_weights={},
+            challenge_preferences=(),
+        ),
+    )

@@ -4,21 +4,12 @@ from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
 from packages.council.contracts import (
-    ALL_SEATS,
     ChallengeResponseType,
     ScientificActionType,
     Seat,
 )
-from packages.council.rounds.base import (
-    CompletionDecision,
-    RoundContext,
-    RoundEntry,
-    RoundResult,
-    TimeoutDecision,
-)
 from packages.council.rounds.precommitment import (
     PrecommitmentHandler,
-    PrecommitmentNotSealed,
     PrecommitmentOutput,
 )
 
@@ -26,7 +17,9 @@ from packages.council.rounds.precommitment import (
 @dataclass
 class CouncilRuntime:
     task_id: UUID = field(default_factory=uuid4)
-    precommitment_handler: PrecommitmentHandler = field(default_factory=PrecommitmentHandler)
+    precommitment_handler: PrecommitmentHandler = field(
+        default_factory=PrecommitmentHandler
+    )
     _action_log: list[dict[str, object]] = field(default_factory=list)
 
     async def submit_precommitment(

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from uuid import UUID
-
-from packages.council.rounds.base import RoundResult
 
 
 @dataclass(frozen=True, slots=True)

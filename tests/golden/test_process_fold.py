@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
-
-from packages.memory.fold import fold_process, GraphBoundaryViolation
+from packages.memory.fold import fold_process
 from packages.memory.process_graph import (
     ProcessEdge,
     ProcessGraphSnapshot,

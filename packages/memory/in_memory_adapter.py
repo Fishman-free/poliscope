@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from packages.memory.contracts import (
     Episode,
-    MemoryAdapter,
     RecallResult,
 )
 

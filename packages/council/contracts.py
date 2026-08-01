@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from uuid import UUID
 
-from packages.kernel.contracts import ContractModel, FrozenDict
+from packages.kernel.contracts import ContractModel
 
 
 class Seat(StrEnum):

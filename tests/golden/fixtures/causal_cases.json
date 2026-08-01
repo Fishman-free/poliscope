@@ -1,0 +1,38 @@
+[
+  {
+    "name": "correlation_to_causation",
+    "finding": {"design": "cross_sectional", "result": "significant"},
+    "claim": "causal",
+    "expected": "BLOCKED"
+  },
+  {
+    "name": "experimental_causal_allowed",
+    "finding": {"design": "experimental", "result": "significant"},
+    "claim": "causal",
+    "expected": "ALLOWED"
+  },
+  {
+    "name": "qualitative_mechanism_allowed",
+    "finding": {"design": "qualitative", "result": "speculative"},
+    "claim": "mechanism",
+    "expected": "ALLOWED"
+  },
+  {
+    "name": "correlational_to_causal_blocked",
+    "finding": {"design": "correlational", "result": "significant"},
+    "claim": "causal",
+    "expected": "BLOCKED"
+  },
+  {
+    "name": "cross_sectional_to_causal_blocked",
+    "finding": {"design": "cross_sectional", "result": "significant"},
+    "claim": "causal",
+    "expected": "BLOCKED"
+  },
+  {
+    "name": "meta_analysis_to_mechanism_blocked",
+    "finding": {"design": "meta_analysis", "result": "significant"},
+    "claim": "mechanism",
+    "expected": "BLOCKED"
+  }
+]

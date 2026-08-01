@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from packages.evidence.contracts import ClaimRevision, ClaimStatus, ClaimType
+from packages.evidence.contracts import ClaimRevision, ClaimStatus
 
 
 @dataclass
@@ -56,5 +56,9 @@ def revise_claim(
         confidence=new_confidence if new_confidence is not None else current.confidence,
         falsification_condition=current.falsification_condition,
         supersedes_revision=current.revision,
-        status=ClaimStatus.NARROWED if response_type == "NARROW" else ClaimStatus.SUPPORTED,
+        status=(
+            ClaimStatus.NARROWED
+            if response_type == "NARROW"
+            else ClaimStatus.SUPPORTED
+        ),
     )

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
-from uuid import UUID, uuid4
+from dataclasses import dataclass
+from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,8 +17,12 @@ class MemorySnapshot:
     projector_checkpoint: int
 
 
-def validate_snapshot(snapshot: MemorySnapshot, expected_hash: str | None = None) -> bool:
+def validate_snapshot(
+    snapshot: MemorySnapshot, expected_hash: str | None = None
+) -> bool:
     if expected_hash is None:
         return True
-    canonical = json.dumps(snapshot.__dict__, sort_keys=True, default=str).encode("utf-8")
+    canonical = json.dumps(
+        snapshot.__dict__, sort_keys=True, default=str
+    ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest() == expected_hash

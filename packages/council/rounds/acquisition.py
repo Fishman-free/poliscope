@@ -22,6 +22,8 @@ class AcquisitionOutput:
 class AcquisitionRound:
     _results: list[RoundResult] = field(default_factory=list)
 
-    async def run(self, handler_seat: Seat, requests: tuple[str, ...]) -> AcquisitionOutput:
+    async def run(
+        self, handler_seat: Seat, requests: tuple[str, ...]
+    ) -> AcquisitionOutput:
         refs = tuple(uuid4() for _ in requests)
         return AcquisitionOutput(source_requests=refs)

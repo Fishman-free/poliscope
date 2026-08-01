@@ -17,8 +17,18 @@ class Branch:
 class BranchService:
     _branches: dict[UUID, Branch] = field(default_factory=dict)
 
-    def fork(self, claim_id: UUID, condition_variable: str, parent_id: UUID | None = None) -> Branch:
-        branch = Branch(id=uuid4(), parent_id=parent_id, claim_id=claim_id, condition_variable=condition_variable)
+    def fork(
+        self,
+        claim_id: UUID,
+        condition_variable: str,
+        parent_id: UUID | None = None,
+    ) -> Branch:
+        branch = Branch(
+            id=uuid4(),
+            parent_id=parent_id,
+            claim_id=claim_id,
+            condition_variable=condition_variable,
+        )
         self._branches[branch.id] = branch
         return branch
 

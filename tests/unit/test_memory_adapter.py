@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from packages.memory.adapter import create_memory_adapter
 from packages.memory.contracts import Episode
 

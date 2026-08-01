@@ -3,8 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 from uuid import uuid4
 
-import pytest
-
 from packages.council.claim_revision import ClaimRepository, revise_claim
 from packages.evidence.contracts import ClaimRevision, ClaimStatus, ClaimType
 
@@ -50,12 +48,13 @@ def test_withdraw_marks_status_withdrawn() -> None:
 
 
 def test_unanswered_fatal_challenge_blocks_claim() -> None:
+    import asyncio
+
     from packages.council.contracts import Seat
     from packages.council.rounds.cross_examination import (
         ChallengeEntry,
         CrossExaminationHandler,
     )
-    import asyncio
 
     handler = CrossExaminationHandler()
     entry = ChallengeEntry(

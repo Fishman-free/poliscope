@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from uuid import UUID, uuid4
+from uuid import UUID
 
 
 class ResurrectionConditionNotMet(Exception):
@@ -40,7 +40,9 @@ class LifecycleService:
         self._quarantined[node_id] = node
         return node
 
-    def resurrect(self, node_id: UUID, evidence_refs: tuple[UUID, ...]) -> QuarantinedNode:
+    def resurrect(
+        self, node_id: UUID, evidence_refs: tuple[UUID, ...]
+    ) -> QuarantinedNode:
         node = self._quarantined.get(node_id)
         if node is None:
             raise KeyError(f"node {node_id} not quarantined")
