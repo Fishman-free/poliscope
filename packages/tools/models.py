@@ -5,7 +5,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -43,3 +43,6 @@ class ToolCallModel(Base):
         ARRAY(PGUUID(as_uuid=True)), nullable=False, default=list
     )
     schema_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_summary: Mapped[dict[str, object]] = mapped_column(
+        JSONB(), nullable=False, default=dict
+    )
