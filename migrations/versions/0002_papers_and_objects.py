@@ -131,7 +131,11 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.ForeignKeyConstraint(["finding_id"], ["findings.id"]),
     )
-    op.create_index("ix_citation_anchors_finding_id", "citation_anchors", ["finding_id"])
+    op.create_index(
+        "ix_citation_anchors_finding_id",
+        "citation_anchors",
+        ["finding_id"],
+    )
 
 
 def downgrade() -> None:

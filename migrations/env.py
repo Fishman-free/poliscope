@@ -7,9 +7,15 @@ from alembic import context
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Every ORM module must be imported so that Base.metadata is complete before
+# autogenerate runs. A missing import makes Alembic emit drop_table for tables
+# that already exist in the database.
+from packages.council import models as council_models  # noqa: F401
+from packages.evidence import models as evidence_models  # noqa: F401
 from packages.kernel.config import DatabaseConfig
 from packages.kernel.database import Base
 from packages.models import models as model_models  # noqa: F401
+from packages.papers import models as paper_models  # noqa: F401
 from packages.research import models as research_models  # noqa: F401
 from packages.tools import models as tool_models  # noqa: F401
 

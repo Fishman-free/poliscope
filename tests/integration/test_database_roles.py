@@ -62,15 +62,17 @@ async def test_app_role_can_use_dml_on_base_tables(
             "'claim', 'descriptive', '{}'::jsonb, 'counterevidence'",
         ),
         "model_calls": (
-            "actor, purpose, model_class, input_hash, input_tokens, output_tokens, "
-            "cost_usd, latency_ms, retries, evidence_refs, schema_status",
-            "'agent', 'research', 'balanced', 'input', 1, 1, 0, 1, 0, "
-            "ARRAY[]::uuid[], 'valid'",
+            "actor, purpose, model_class, output_schema, input_hash, input_tokens, "
+            "output_tokens, cost_usd, latency_ms, retries, evidence_refs, "
+            "schema_status, request_summary",
+            "'agent', 'research', 'balanced', 'summary', 'input', 1, 1, 0, 1, 0, "
+            "ARRAY[]::uuid[], 'valid', '{}'::jsonb",
         ),
         "tool_calls": (
             "actor, tool_name, operation, input_hash, cost_usd, latency_ms, retries, "
-            "evidence_refs, schema_status",
-            "'agent', 'search', 'query', 'input', 0, 1, 0, ARRAY[]::uuid[], 'valid'",
+            "evidence_refs, schema_status, request_summary",
+            "'agent', 'search', 'query', 'input', 0, 1, 0, ARRAY[]::uuid[], 'valid', "
+            "'{}'::jsonb",
         ),
     }
     for table_name, (columns, values) in inserts.items():

@@ -64,6 +64,7 @@ EXPECTED_COLUMNS = {
         "actor",
         "purpose",
         "model_class",
+        "output_schema",
         "input_hash",
         "output_hash",
         "input_tokens",
@@ -74,6 +75,7 @@ EXPECTED_COLUMNS = {
         "error_code",
         "evidence_refs",
         "schema_status",
+        "request_summary",
     },
     "tool_calls": {
         "id",
@@ -92,6 +94,7 @@ EXPECTED_COLUMNS = {
         "error_code",
         "evidence_refs",
         "schema_status",
+        "request_summary",
     },
 }
 NULLABLE_COLUMNS = {

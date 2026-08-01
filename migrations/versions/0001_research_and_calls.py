@@ -42,9 +42,11 @@ def _create_login_role(role_name: str, password_env: str) -> None:
         raise RuntimeError("Role creation requires an online migrator connection")
     alter_sql = connection.execute(
         sa.text(
+            # format() takes "any" arguments, so the driver cannot infer the
+            # parameter types. The explicit CAST calls are required.
             "SELECT format('ALTER ROLE %I WITH LOGIN NOSUPERUSER NOCREATEDB "
             "NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L', "
-            ":role_name, :password)"
+            "CAST(:role_name AS text), CAST(:password AS text))"
         ),
         {"role_name": role_name, "password": password},
     ).scalar_one()
@@ -71,7 +73,7 @@ def _create_login_role(role_name: str, password_env: str) -> None:
         create_sql = connection.execute(
             sa.text(
                 "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', "
-                ":role_name, :password)"
+                "CAST(:role_name AS text), CAST(:password AS text))"
             ),
             {"role_name": role_name, "password": password},
         ).scalar_one()
@@ -209,6 +211,7 @@ def upgrade() -> None:
         sa.Column("actor", sa.String(length=255), nullable=False),
         sa.Column("purpose", sa.String(length=255), nullable=False),
         sa.Column("model_class", sa.String(length=64), nullable=False),
+        sa.Column("output_schema", sa.String(length=255), nullable=False),
         sa.Column("input_hash", sa.String(length=64), nullable=False),
         sa.Column("output_hash", sa.String(length=64), nullable=True),
         sa.Column("input_tokens", sa.Integer(), nullable=False),
@@ -223,6 +226,13 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("schema_status", sa.String(length=64), nullable=False),
+        # Scrubbed request echo. The audit layer strips signed URLs, PDF bytes,
+        # local paths, and full text before persisting it.
+        sa.Column(
+            "request_summary",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["task_id"], ["research_tasks.task_id"]),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -258,6 +268,13 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("schema_status", sa.String(length=64), nullable=False),
+        # Scrubbed request echo. The audit layer strips signed URLs, PDF bytes,
+        # local paths, and full text before persisting it.
+        sa.Column(
+            "request_summary",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["task_id"], ["research_tasks.task_id"]),
         sa.PrimaryKeyConstraint("id"),
     )
