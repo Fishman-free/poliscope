@@ -1,0 +1,1 @@
+"""Model gateway persistence boundary."""
