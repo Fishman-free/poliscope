@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 from packages.council.contracts import Seat
@@ -19,8 +20,8 @@ from packages.council.rounds.joint_modeling import (
 )
 
 
-def _blindspot(**over) -> BlindspotItem:
-    base = dict(
+def _blindspot(**over: Any) -> BlindspotItem:
+    base: dict[str, Any] = dict(
         id=uuid4(),
         statement="unmeasured confound",
         impact=Decimal("0.9"),
@@ -121,10 +122,3 @@ def test_final_rejudgment_all_seats_independent() -> None:
     )
     seats = {j.seat for j in output.judgments}
     assert seats == set(Seat)
-
-
-def test_suite() -> None:
-    test_full_bounty_to_rejudgment_pipeline()
-    test_bounty_assignments_target_evidence_auditor()
-    test_joint_model_no_majority_vote()
-    test_final_rejudgment_all_seats_independent()

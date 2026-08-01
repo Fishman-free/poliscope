@@ -38,8 +38,3 @@ def test_dissent_preserved_after_fold() -> None:
     # Dissent must remain traceable
     assert cert.id is not None
     assert cert.withdrawal_condition == "validated instrument"
-
-
-def test_suite() -> None:
-    test_issue_dissent_creates_certificate()
-    test_dissent_preserved_after_fold()

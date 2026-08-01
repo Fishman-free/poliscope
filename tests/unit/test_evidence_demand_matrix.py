@@ -48,10 +48,3 @@ def test_demand_matrix_fills_slot() -> None:
     filled = matrix.fill_slot(EvidenceDemandType.MEASUREMENT, uuid4())
     slot_map = {s.demand_type: s for s in filled.slots}
     assert slot_map[EvidenceDemandType.MEASUREMENT].status == "filled"
-
-
-def test_suite() -> None:
-    test_demand_matrix_contains_all_seven_slots()
-    test_demand_matrix_exactly_seven_slots()
-    test_demand_matrix_rejects_duplicate_slots()
-    test_demand_matrix_fills_slot()

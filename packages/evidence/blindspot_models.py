@@ -18,7 +18,7 @@ class DiscriminatingStudy(ContractModel):
     node_type: EvidenceNodeType = EvidenceNodeType.DISCRIMINATING_STUDY
     artifact_type: str = "research_recommendation"
 
-    def __init__(self, **data) -> None:
+    def __init__(self, **data: object) -> None:
         super().__init__(**data)
         if len(self.competing_predictions) < 2:
             raise ValueError(

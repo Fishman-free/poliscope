@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def load_case_inventory() -> list[dict]:
+def load_case_inventory() -> list[dict[str, object]]:
     return [
         {
             "case_id": "screen_time_mh_2024",

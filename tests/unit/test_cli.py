@@ -19,7 +19,7 @@ from apps.cli import exit_codes
 from apps.cli.client import APIError, APIUnreachable, CLIClient, _is_loopback
 from apps.cli.main import build_parser, main
 
-SUBCOMMANDS = (
+SUBCOMMANDS: tuple[tuple[list[str], dict[str, object]], ...] = (
     (["health"], {}),
     (["start", "--contract", "c.json"], {"contract": "c.json"}),
     (

@@ -6,6 +6,7 @@ from packages.kernel.contracts import FrozenDict
 from packages.papers.contracts import (
     AvailabilityStatus,
     EvidenceLevel,
+    PaperEvidencePacket,
     StudyDesign,
     VerificationStatus,
 )
@@ -36,7 +37,7 @@ def _pages() -> list[PageText]:
     ]
 
 
-def _build_valid_packet():
+def _build_valid_packet() -> PaperEvidencePacket:
     return build_packet(
         source=_source(),
         pages=_pages(),

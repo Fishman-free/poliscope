@@ -6,12 +6,12 @@ from packages.council.consensus import (
     ConsensusStatus,
     evaluate_consensus,
 )
+from packages.council.contracts import Seat
 
 
-def _six_support_one_dissent():
-    from packages.council.contracts import Seat
+def _six_support_one_dissent() -> dict[Seat, str]:
     seats = list(Seat)
-    judgments = {}
+    judgments: dict[Seat, str] = {}
     for seat in seats[:-1]:
         judgments[seat] = "support"
     judgments[seats[-1]] = "dissent"
@@ -52,9 +52,3 @@ def test_consensus_admits_when_all_conditions_met() -> None:
         evidence_refs=(uuid4(),),
     )
     assert result.status == ConsensusStatus.ADMITTED
-
-
-def test_suite() -> None:
-    test_six_supporters_cannot_override_failed_gate()
-    test_consensus_requires_evidence_refs()
-    test_consensus_admits_when_all_conditions_met()

@@ -67,10 +67,3 @@ def test_unanswered_fatal_challenge_blocks_claim() -> None:
     result = asyncio.run(handler.on_timeout(entry))
     assert entry.claim_id in result.blocked_claim_ids
     assert entry.claim_id in result.unresolved_challenge_ids
-
-
-def test_suite() -> None:
-    test_narrow_appends_revision_and_keeps_original()
-    test_original_claim_preserved_after_revision()
-    test_withdraw_marks_status_withdrawn()
-    test_unanswered_fatal_challenge_blocks_claim()

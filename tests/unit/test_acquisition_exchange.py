@@ -42,10 +42,3 @@ def test_query_planner_merges_requests() -> None:
         (Seat.THEORY_BUILDER, "mechanism"),
     ])
     assert len(merged) == 2
-
-
-def test_suite() -> None:
-    import asyncio
-    asyncio.run(test_duplicate_doi_is_one_candidate_with_two_requests())
-    asyncio.run(test_exchange_contains_structured_projection_not_private())
-    test_query_planner_merges_requests()

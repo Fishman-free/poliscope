@@ -22,9 +22,3 @@ def test_continue_when_budget_and_info_remain() -> None:
         no_new_information_rounds=0, budget_remaining=10
     )
     assert result.reason == StopReason.CONTINUE
-
-
-def test_suite() -> None:
-    test_budget_exhaustion_is_not_saturation()
-    test_evidence_saturation_when_no_new_info()
-    test_continue_when_budget_and_info_remain()

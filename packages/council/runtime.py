@@ -58,7 +58,7 @@ class CouncilRuntime:
         target_id: UUID | None,
         statement: str,
     ) -> dict[str, object]:
-        entry = {
+        entry: dict[str, object] = {
             "seat": seat.value,
             "action": action_type.value,
             "target": str(target_id) if target_id else None,
@@ -74,7 +74,7 @@ class CouncilRuntime:
         target_id: UUID,
         statement: str,
     ) -> dict[str, object]:
-        entry = {
+        entry: dict[str, object] = {
             "seat": seat.value,
             "response": response_type.value,
             "target": str(target_id),

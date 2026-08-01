@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
+
+from packages.council.contracts import Seat
 
 
 class ConsensusStatus(StrEnum):
@@ -22,7 +25,7 @@ class ConsensusResult:
 
 def evaluate_consensus(
     claim_id: UUID,
-    judgments: dict,
+    judgments: Mapping[Seat, str],
     has_unresolved_fatal_challenge: bool,
     evidence_refs: tuple[UUID, ...],
 ) -> ConsensusResult:

@@ -6,7 +6,7 @@ grant that is missing from the migration fails here rather than in production.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -189,8 +189,11 @@ async def test_a_quarantined_event_keeps_its_row_and_gains_an_audit(
     reasons = await projector_session.scalars(
         select(EventAuditModel.reasons).where(EventAuditModel.event_id == event_id)
     )
+    listed = [entry for entry in reasons if isinstance(entry, dict)]
     joined = " ".join(
-        str(reason) for entry in reasons for reason in entry.get("reasons", [])
+        str(reason)
+        for entry in listed
+        for reason in cast(list[object], entry.get("reasons", []))
     )
     assert "causation" in joined
 

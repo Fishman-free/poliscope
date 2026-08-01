@@ -95,11 +95,3 @@ def test_correlation_to_causation_blocked() -> None:
     )
     decision = gate.evaluate(candidate)
     assert decision.disposition == AdmissionDisposition.QUARANTINE
-
-
-def test_suite() -> None:
-    test_level_a_admits_with_source()
-    test_level_b_is_source_only()
-    test_level_c_is_discovery_only()
-    test_level_d_is_tool_lead_only()
-    test_correlation_to_causation_blocked()

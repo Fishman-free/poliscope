@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 from packages.council.contracts import Seat
@@ -22,8 +23,8 @@ from packages.council.rounds.joint_modeling import (
 )
 
 
-def _make_blindspot(**overrides) -> BlindspotItem:
-    base = dict(
+def _make_blindspot(**overrides: Any) -> BlindspotItem:
+    base: dict[str, Any] = dict(
         id=uuid4(),
         statement="unmeasured confound",
         impact=Decimal("0.9"),
@@ -124,11 +125,3 @@ def test_final_rejudgment_dissent_preserved() -> None:
         j for j in result.judgments if j.seat == Seat.ADVERSARY_FALSIFIER
     )
     assert adversary.has_dissent is True
-
-
-def test_suite() -> None:
-    test_blindspot_bounty_scores_and_assigns()
-    test_joint_model_requires_dialectical_fields()
-    test_joint_model_complete_when_all_fields_present()
-    test_final_rejudgment_is_independent_for_all_seats()
-    test_final_rejudgment_dissent_preserved()

@@ -51,11 +51,3 @@ def test_full_phase_sequence() -> None:
     assert sm.phase == TaskPhase.REPORTING
     sm.transition_to(TaskStatus.COMPLETED)
     assert sm.is_terminal(sm.status)
-
-
-def test_suite() -> None:
-    test_degraded_running_is_not_terminal()
-    test_initial_status_is_draft()
-    test_valid_phase_transition()
-    test_invalid_transition_raises()
-    test_full_phase_sequence()

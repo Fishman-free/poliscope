@@ -22,9 +22,3 @@ async def test_all_seats_complete_normal_transition() -> None:
     assert len(result.completed_seats) == 7
     assert result.status == TaskStatus.QUEUED
     assert result.next_phase == TaskPhase.ACQUISITION
-
-
-def test_suite() -> None:
-    import asyncio
-    asyncio.run(test_one_seat_failure_continues_current_round())
-    asyncio.run(test_all_seats_complete_normal_transition())

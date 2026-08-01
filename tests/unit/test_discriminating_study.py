@@ -34,8 +34,3 @@ def test_discriminating_study_requires_two_predictions() -> None:
             resolvable_blindspots=(uuid4(),),
             expected_information_gain=0.5,
         )
-
-
-def test_suite() -> None:
-    test_discriminating_study_is_evidence_artifact()
-    test_discriminating_study_requires_two_predictions()

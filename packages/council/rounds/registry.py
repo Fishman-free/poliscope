@@ -154,16 +154,30 @@ class AcquisitionLike(Protocol):
 
 
 class AcquiredLike(Protocol):
-    source_id: UUID
-    doi: str
-    title: str
-    evidence_level: str
-    already_known: bool
+    # Read-only properties, not attributes: the implementations are frozen
+    # dataclasses, and a mutable attribute in a Protocol demands a settable one.
+    @property
+    def source_id(self) -> UUID: ...
+
+    @property
+    def doi(self) -> str: ...
+
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def evidence_level(self) -> str: ...
+
+    @property
+    def already_known(self) -> bool: ...
 
 
 class RefusedLike(Protocol):
-    query: str
-    reason: str
+    @property
+    def query(self) -> str: ...
+
+    @property
+    def reason(self) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)

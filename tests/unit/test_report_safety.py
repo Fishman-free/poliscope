@@ -25,9 +25,3 @@ def test_report_export_does_not_leak_pdf_or_signed_url() -> None:
     clean = sanitize_export(dirty)
     assert "file://" not in clean
     assert "X-Amz-Signature" not in clean
-
-
-def test_suite() -> None:
-    test_mental_health_report_contains_required_safety_statement()
-    test_non_mental_health_report_unchanged()
-    test_report_export_does_not_leak_pdf_or_signed_url()

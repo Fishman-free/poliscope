@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from uuid import uuid4
 
 from packages.kernel.contracts import FrozenDict
@@ -26,7 +27,7 @@ from .contracts import (
 from .parser import PageText, locate_quote
 
 
-def source_version_hash(source: dict[str, object]) -> str:
+def source_version_hash(source: Mapping[str, object]) -> str:
     from packages.kernel.contracts import thaw_for_serialization
 
     canonical = json.dumps(

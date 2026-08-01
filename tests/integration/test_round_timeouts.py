@@ -25,9 +25,3 @@ async def test_multiple_timeouts_still_degraded() -> None:
     )
     assert result.status == TaskStatus.DEGRADED_RUNNING
     assert len(result.completed_seats) == 5
-
-
-def test_suite() -> None:
-    import asyncio
-    asyncio.run(test_timeout_marks_seat_absent_and_continues())
-    asyncio.run(test_multiple_timeouts_still_degraded())

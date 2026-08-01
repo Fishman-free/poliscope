@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -16,8 +17,8 @@ def minimal_gate() -> MinimalEvidenceGate:
     return MinimalEvidenceGate()
 
 
-def _candidate(**overrides):
-    base = {
+def _candidate(**overrides: Any) -> ScientificEventCandidate:
+    base: dict[str, Any] = {
         "id": uuid4(),
         "task_id": uuid4(),
         "event_type": "study_finding",
@@ -37,13 +38,19 @@ def _candidate(**overrides):
         ("D", AdmissionDisposition.TOOL_LEAD_ONLY),
     ],
 )
-def test_minimal_gate_applies_level_matrix(level, expected, minimal_gate) -> None:
+def test_minimal_gate_applies_level_matrix(
+    level: str,
+    expected: AdmissionDisposition,
+    minimal_gate: MinimalEvidenceGate,
+) -> None:
     decision = minimal_gate.evaluate(_candidate(evidence_level=level))
     assert decision.disposition == expected
     assert decision.evidence_level == level
 
 
-def test_finding_without_source_is_quarantined(minimal_gate) -> None:
+def test_finding_without_source_is_quarantined(
+    minimal_gate: MinimalEvidenceGate,
+) -> None:
     candidate = _candidate(
         finding_id=uuid4(),
         source_id=None,
@@ -53,7 +60,9 @@ def test_finding_without_source_is_quarantined(minimal_gate) -> None:
     assert decision.disposition == AdmissionDisposition.QUARANTINE
 
 
-def test_causal_claim_from_correlational_evidence_is_quarantined(minimal_gate) -> None:
+def test_causal_claim_from_correlational_evidence_is_quarantined(
+    minimal_gate: MinimalEvidenceGate,
+) -> None:
     candidate = _candidate(
         claim_id=uuid4(),
         evidence_level="A",
@@ -68,7 +77,7 @@ def test_causal_claim_from_correlational_evidence_is_quarantined(minimal_gate) -
 
 
 def test_correlational_claim_from_correlational_is_admitted(
-    minimal_gate,
+    minimal_gate: MinimalEvidenceGate,
 ) -> None:
     candidate = _candidate(
         claim_id=uuid4(),
@@ -79,7 +88,9 @@ def test_correlational_claim_from_correlational_is_admitted(
     assert decision.disposition == AdmissionDisposition.ADMIT
 
 
-def test_causal_claim_from_experimental_evidence_is_admitted(minimal_gate) -> None:
+def test_causal_claim_from_experimental_evidence_is_admitted(
+    minimal_gate: MinimalEvidenceGate,
+) -> None:
     candidate = _candidate(
         claim_id=uuid4(),
         evidence_level="A",

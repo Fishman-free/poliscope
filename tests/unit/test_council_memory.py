@@ -99,7 +99,7 @@ def test_all_seven_seats_have_a_distinct_projection_policy() -> None:
 
 def test_two_seats_rank_the_same_evidence_differently() -> None:
     """The policies must actually change the order, not merely exist."""
-    snapshot = [
+    snapshot: list[dict[str, object]] = [
         {"type": "measurement", "id": "m"},
         {"type": "experimental", "id": "e"},
     ]

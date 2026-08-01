@@ -14,9 +14,10 @@ graph state through the wrong door.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.epistemo.contracts import TaskStatus
@@ -197,11 +198,14 @@ class ResearchRepository:
         return await self.list_claims(task_id)
 
     async def set_status(self, task_id: UUID, status: TaskStatus) -> None:
-        result = await self._session.execute(
+        # An UPDATE returns a CursorResult, which is where rowcount lives; the
+        # count is what distinguishes "set it" from "no such task". The cast is
+        # needed because execute() is typed as returning the Result base class.
+        result = cast(CursorResult[Any], await self._session.execute(
             update(ResearchTaskModel)
             .where(ResearchTaskModel.task_id == task_id)
             .values(status=status)
-        )
+        ))
         if result.rowcount == 0:
             raise TaskNotFound(str(task_id))
         await self._session.flush()

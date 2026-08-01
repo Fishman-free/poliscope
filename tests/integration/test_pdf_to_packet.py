@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from packages.papers.parser import PageText, locate_quote
@@ -29,7 +31,7 @@ def test_extract_pages_raises_when_pymupdf_missing(
 
     real_import = builtins.__import__
 
-    def fake_import(name: str, *args: object, **kwargs: object) -> object:
+    def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
         if name == "fitz":
             raise ImportError("simulated missing pymupdf")
         return real_import(name, *args, **kwargs)
@@ -48,7 +50,10 @@ def test_build_packet_from_pages() -> None:
         PageText(page_number=1, text="Introduction."),
         PageText(page_number=2, text="Screen time correlates with anxiety."),
     ]
-    source = {"doi": "10.1234/example", "title": "Digital behavior and wellbeing"}
+    source: dict[str, object] = {
+        "doi": "10.1234/example",
+        "title": "Digital behavior and wellbeing",
+    }
     packet = build_packet(
         source=source,
         pages=pages,

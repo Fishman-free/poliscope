@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 
 from packages.epistemo.blindspots import Blindspot, score_blindspot
 
 
-def _make_blindspot(**over) -> Blindspot:
-    base = dict(
+def _make_blindspot(**over: Any) -> Blindspot:
+    base: dict[str, Any] = dict(
         impact=Decimal("0.8"),
         uncertainty=Decimal("0.8"),
         investigability=Decimal("0.6"),
@@ -48,11 +49,5 @@ def test_blindspot_rejects_sixth_dimension() -> None:
             investigability=Decimal("0.5"),
             novelty=Decimal("0.5"),
             normalized_cost=Decimal("0.5"),
-            popularity=Decimal("0.5"),  # not allowed
+            popularity=Decimal("0.5"),  # type: ignore[call-arg]  # the point
         )
-
-
-def test_suite() -> None:
-    test_blindspot_score_uses_exact_five_dimension_formula()
-    test_blindspot_score_zero_when_all_zero()
-    test_blindspot_rejects_sixth_dimension()

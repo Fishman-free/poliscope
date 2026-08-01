@@ -169,7 +169,7 @@ async def test_a_requested_paper_becomes_a_persisted_source(
 
     sources = await _sources(app_sessions, task_id)
     assert [source.canonical_doi for source in sources] == [GOOD_DOI]
-    assert sources[0].provider_ids["openalex"].endswith(GOOD_DOI)
+    assert str(sources[0].provider_ids["openalex"]).endswith(GOOD_DOI)
 
 
 async def test_one_paper_costs_one_fetch_however_many_seats_asked(

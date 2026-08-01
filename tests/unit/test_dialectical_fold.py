@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -11,8 +12,8 @@ from packages.evidence.dialectical_fold import (
 )
 
 
-def _make_revision(**over) -> ClaimRevision:
-    base = dict(
+def _make_revision(**over: Any) -> ClaimRevision:
+    base: dict[str, Any] = dict(
         claim_id=uuid4(),
         revision=1,
         statement="social media affects mental health",
@@ -29,7 +30,8 @@ def _make_revision(**over) -> ClaimRevision:
 
 def test_debate_capsule_requires_all_fields() -> None:
     with pytest.raises((ValueError, TypeError)):
-        DebateCapsule(common_ground=("association exists",))
+        # The missing fields are exactly what this test asserts are required.
+        DebateCapsule(common_ground=("association exists",))  # type: ignore[call-arg]
 
 
 def test_debate_capsule_complete_when_all_fields_present() -> None:
@@ -64,8 +66,3 @@ def test_fold_debate_preserves_original_claim() -> None:
     assert folded.original_claim == original
     assert folded.capsule == capsule
     assert folded.original_claim.status == ClaimStatus.SUPPORTED
-
-
-def test_suite() -> None:
-    test_debate_capsule_complete_when_all_fields_present()
-    test_fold_debate_preserves_original_claim()

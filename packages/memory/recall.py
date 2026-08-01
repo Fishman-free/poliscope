@@ -21,7 +21,7 @@ def perspective_recall(
     weights = policy.evidence_sort_weights
     sorted_items = sorted(
         evidence_snapshot,
-        key=lambda item: weights.get(item.get("type", ""), 0.0),
+        key=lambda item: weights.get(str(item.get("type", "")), 0.0),
         reverse=True,
     )
     projection = EvidenceProjection(items=tuple(sorted_items))

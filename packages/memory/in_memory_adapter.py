@@ -32,4 +32,11 @@ class InMemoryMemoryAdapter:
 
     async def load_snapshot(self, agent_id: str, snapshot: dict[str, object]) -> None:
         raw_episodes = snapshot.get("episodes", [])
-        self._private[agent_id] = [Episode.model_validate(e) for e in raw_episodes]
+        if not isinstance(raw_episodes, (list, tuple)):
+            # A malformed snapshot must not restore a seat to an empty memory
+            # that looks like a legitimately fresh one; CLAUDE.md 10 wants the
+            # resume to be verifiable.
+            raise ValueError(f"snapshot for {agent_id!r} has no episode list")
+        self._private[agent_id] = [
+            Episode.model_validate(item) for item in raw_episodes
+        ]

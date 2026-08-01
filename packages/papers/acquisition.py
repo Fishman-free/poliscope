@@ -96,12 +96,13 @@ class SourceAcquisition:
         self._budget = budget
 
     async def _existing(self, doi: str) -> SourceModel | None:
-        return await self._session.scalar(
+        row: SourceModel | None = await self._session.scalar(
             select(SourceModel).where(
                 SourceModel.task_id == self._task_id,
                 SourceModel.canonical_doi == doi,
             )
         )
+        return row
 
     async def _persist(self, normalized: NormalizedSource) -> SourceModel:
         row = SourceModel(

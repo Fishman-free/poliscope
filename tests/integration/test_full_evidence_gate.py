@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 from packages.evidence.contracts import (
@@ -9,8 +10,8 @@ from packages.evidence.contracts import (
 from packages.evidence.gate import AuditStage, FullEvidenceGate
 
 
-def _candidate(**over) -> ScientificEventCandidate:
-    base = dict(
+def _candidate(**over: Any) -> ScientificEventCandidate:
+    base: dict[str, Any] = dict(
         id=uuid4(),
         task_id=uuid4(),
         event_type="FINDING",
@@ -63,11 +64,3 @@ async def test_full_gate_blocks_missing_source() -> None:
     candidate = _candidate(source_id=None)
     decision = await gate.audit(candidate)
     assert decision.disposition == AdmissionDisposition.QUARANTINE
-
-
-def test_suite() -> None:
-    import asyncio
-    asyncio.run(test_gate_records_required_stage_order())
-    asyncio.run(test_full_gate_admits_valid_candidate())
-    asyncio.run(test_full_gate_quarantines_correlation_causation())
-    asyncio.run(test_full_gate_blocks_missing_source())

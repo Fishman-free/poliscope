@@ -5,10 +5,10 @@ from packages.evaluation.annotation import load_acceptance_matrix
 
 def test_release_matrix_maps_every_spec_acceptance_item() -> None:
     matrix = load_acceptance_matrix()
-    assert set(matrix["spec_items"]) == set(range(1, 17))
-    for item in matrix["items"]:
+    spec_items = matrix["spec_items"]
+    items = matrix["items"]
+    assert isinstance(spec_items, list)
+    assert isinstance(items, list)
+    assert set(spec_items) == set(range(1, 17))
+    for item in items:
         assert "test_path" in item
-
-
-def test_suite() -> None:
-    test_release_matrix_maps_every_spec_acceptance_item()

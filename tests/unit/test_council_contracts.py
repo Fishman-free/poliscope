@@ -34,12 +34,12 @@ def test_all_seats_frozen_set_has_seven() -> None:
         "DISSENT",
     ],
 )
-def test_allowed_actions(action) -> None:
+def test_allowed_actions(action: str) -> None:
     assert ScientificActionType(action)
 
 
 @pytest.mark.parametrize(
     "response", ["DEFEND", "REVISE", "NARROW", "WITHDRAW", "DISSENT"]
 )
-def test_challenge_response_whitelist(response) -> None:
+def test_challenge_response_whitelist(response: str) -> None:
     assert ChallengeResponseType(response)

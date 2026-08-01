@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from packages.memory.adapter import create_memory_adapter
 from packages.memory.contracts import Episode
 
@@ -36,8 +34,3 @@ async def test_snapshot_round_trip() -> None:
     recall = await adapter.recall_private(THEORY_ID, 200)
     assert "finding-1" in recall.text
     assert "finding-2" not in recall.text
-
-
-def test_suite() -> None:
-    asyncio.run(test_private_memory_is_isolated())
-    asyncio.run(test_snapshot_round_trip())

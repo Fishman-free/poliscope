@@ -5,7 +5,7 @@ from packages.memory.recall import perspective_recall
 
 
 def test_role_projections_differ() -> None:
-    evidence = [
+    evidence: list[dict[str, object]] = [
         {"type": "experimental", "finding": "e1"},
         {"type": "measurement", "finding": "m1"},
         {"type": "causal", "finding": "c1"},

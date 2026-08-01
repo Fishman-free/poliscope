@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def load_acceptance_matrix() -> dict:
+def load_acceptance_matrix() -> dict[str, object]:
     return {
         "spec_items": list(range(1, 17)),
         "items": [
