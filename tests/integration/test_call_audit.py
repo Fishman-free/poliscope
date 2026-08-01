@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select
@@ -22,9 +22,9 @@ from packages.tools.recorded import RecordedToolGateway
 
 
 @pytest.fixture
-def model_request() -> ModelRequest:
+def model_request(seeded_task: UUID) -> ModelRequest:
     return ModelRequest(
-        task_id=uuid4(),
+        task_id=seeded_task,
         actor="theory_builder",
         purpose="summarize evidence",
         model_class=ModelClass.STRONG_REASONING,
@@ -35,9 +35,9 @@ def model_request() -> ModelRequest:
 
 
 @pytest.fixture
-def tool_request() -> ToolRequest:
+def tool_request(seeded_task: UUID) -> ToolRequest:
     return ToolRequest(
-        task_id=uuid4(),
+        task_id=seeded_task,
         actor="theory_builder",
         tool_name="openalex",
         operation="lookup_doi",

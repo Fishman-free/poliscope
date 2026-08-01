@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import AsyncIterator, Iterator
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -156,3 +158,31 @@ async def projector_session(migrated_db: str) -> AsyncIterator[AsyncSession]:
 def valid_research_contract() -> Any:
     """Return a deterministic valid ResearchContract instance."""
     return make_research_contract()
+
+
+@pytest_asyncio.fixture
+async def seeded_task(app_session: AsyncSession) -> UUID:
+    """Insert one research task and return its task_id.
+
+    Call and event rows carry a foreign key to research_tasks.task_id, so any
+    audit assertion needs a real parent task rather than a loose UUID.
+    """
+    from packages.research.models import ResearchTaskModel
+
+    task_id = uuid4()
+    app_session.add(
+        ResearchTaskModel(
+            id=uuid4(),
+            task_id=task_id,
+            question="Does social media use cause adolescent depression?",
+            status="AWAITING_CLAIM_CONFIRMATION",
+            created_by="test_harness",
+            wall_clock_minutes=60,
+            model_cost_usd=Decimal("10.0000"),
+            tool_call_limit=100,
+            source_limit=50,
+            user_evidence={},
+        )
+    )
+    await app_session.flush()
+    return task_id

@@ -1,29 +1,26 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from packages.kernel.contracts import thaw_for_serialization
+from packages.kernel.recording import stable_request_hash
 from packages.tools.contracts import ToolRequest, ToolResult
+
+# An external lookup returns the same payload no matter which seat asked, and
+# the shared candidate pool fetches each paper exactly once, so neither the
+# requesting seat nor the task identity may take part in the recording key.
+# The requesting seat is still persisted by the audit layer.
+VOLATILE_REQUEST_FIELDS = frozenset({"task_id", "actor"})
 
 
 class RecordingNotFound(Exception):
     """Raised when no recorded response exists for a request hash."""
 
 
-def _normalize_request(request: ToolRequest) -> dict[str, object]:
-    return cast(
-        dict[str, object],
-        thaw_for_serialization(request.model_dump(mode="json")),
-    )
-
-
 def _request_hash(request: ToolRequest) -> str:
-    normalized = json.dumps(_normalize_request(request), sort_keys=True).encode("utf-8")
-    return hashlib.sha256(normalized).hexdigest()
+    return stable_request_hash(request, exclude=VOLATILE_REQUEST_FIELDS)
 
 
 class RecordedToolGateway:

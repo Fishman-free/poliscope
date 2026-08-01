@@ -129,6 +129,50 @@ async def test_recorded_tool_gateway_is_hash_deterministic(
     assert first.call_id != second.call_id
 
 
+def test_model_recording_key_ignores_task_identity(
+    model_request: ModelRequest,
+) -> None:
+    """A frozen recording must survive a new task_id on the next run."""
+    from packages.models.recorded import _request_hash
+
+    other_task = model_request.model_dump()
+    other_task["task_id"] = uuid4()
+    assert other_task["task_id"] != model_request.task_id
+    assert _request_hash(ModelRequest(**other_task)) == _request_hash(model_request)
+
+
+def test_model_recording_key_tracks_prompt_content(
+    model_request: ModelRequest,
+) -> None:
+    changed = model_request.model_dump()
+    changed["messages"] = ({"role": "user", "content": "critique"},)
+    from packages.models.recorded import _request_hash
+
+    assert _request_hash(ModelRequest(**changed)) != _request_hash(model_request)
+
+
+def test_tool_recording_key_ignores_task_and_requesting_seat(
+    tool_request: ToolRequest,
+) -> None:
+    """One shared fetch per paper, so the asking seat cannot change the key."""
+    from packages.tools.recorded import _request_hash
+
+    other = tool_request.model_dump()
+    other["task_id"] = uuid4()
+    other["actor"] = "adversarial_falsifier"
+    assert _request_hash(ToolRequest(**other)) == _request_hash(tool_request)
+
+
+def test_tool_recording_key_tracks_arguments(
+    tool_request: ToolRequest,
+) -> None:
+    from packages.tools.recorded import _request_hash
+
+    changed = tool_request.model_dump()
+    changed["arguments"] = {"doi": "10.5678/other"}
+    assert _request_hash(ToolRequest(**changed)) != _request_hash(tool_request)
+
+
 async def test_recorded_model_gateway_raises_on_missing_recording(
     tmp_path: Path,
     model_request: ModelRequest,

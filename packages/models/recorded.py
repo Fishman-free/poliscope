@@ -1,33 +1,28 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from packages.kernel.contracts import thaw_for_serialization
+from packages.kernel.recording import stable_request_hash
 from packages.models.contracts import (
     ModelRequest,
     ModelResult,
     SchemaStatus,
 )
 
+# task_id identifies the research task, not the prompt, so it must not take
+# part in the recording key. Everything else changes what the model is asked.
+VOLATILE_REQUEST_FIELDS = frozenset({"task_id"})
+
 
 class RecordingNotFound(Exception):
     """Raised when no recorded response exists for a request hash."""
 
 
-def _normalize_request(request: ModelRequest) -> dict[str, object]:
-    return cast(
-        dict[str, object],
-        thaw_for_serialization(request.model_dump(mode="json")),
-    )
-
-
 def _request_hash(request: ModelRequest) -> str:
-    normalized = json.dumps(_normalize_request(request), sort_keys=True).encode("utf-8")
-    return hashlib.sha256(normalized).hexdigest()
+    return stable_request_hash(request, exclude=VOLATILE_REQUEST_FIELDS)
 
 
 class RecordedModelGateway:
