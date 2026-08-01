@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from uuid import UUID
+from typing import Protocol
+from uuid import UUID, uuid4
 
 
 class EventConflict(Exception):
@@ -25,20 +26,50 @@ class LedgerEntry:
     status: str
 
 
-def _payload_hash(payload: dict[str, object]) -> str:
+def payload_hash(payload: dict[str, object]) -> str:
+    """Hash a payload so that a replayed append can be recognised as identical.
+
+    Sorting keys is what makes the hash stable: two dictionaries that differ only
+    in insertion order describe the same event and must not look like a conflict.
+    """
     canonical = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
 
 
-class EventLedger:
-    """In-memory implementation of the scientific event ledger.
+class EventLedgerProtocol(Protocol):
+    """The append-only interface the council and the projector depend on.
 
-    Production deployments would persist via the ScientificEventModel.
+    Declared as a Protocol so that the orchestrator can be tested against the
+    in-memory ledger while production runs on PostgreSQL, without either
+    implementation importing the other.
+    """
+
+    def append(
+        self,
+        task_id: UUID,
+        event_type: str,
+        payload: dict[str, object],
+        idempotency_key: str,
+        status: str = ...,
+    ) -> LedgerEntry: ...
+
+    def get(self, event_id: UUID) -> LedgerEntry | None: ...
+
+    def list_admitted(self) -> list[LedgerEntry]: ...
+
+
+class EventLedger:
+    """In-memory ledger used by unit tests and by the deterministic evaluator.
+
+    Production uses :class:`packages.evidence.sql_ledger.SqlEventLedger`, which
+    persists to ``scientific_events``. Both scope idempotency keys per task,
+    matching the ``uq_event_idempotency`` constraint in revision 0003: two
+    unrelated tasks may legitimately choose the same key.
     """
 
     def __init__(self) -> None:
         self._entries: dict[UUID, LedgerEntry] = {}
-        self._sequence = 0
+        self._sequences: dict[UUID, int] = {}
 
     def append(
         self,
@@ -49,29 +80,33 @@ class EventLedger:
         status: str = "pending",
     ) -> LedgerEntry:
         for entry in self._entries.values():
-            if entry.idempotency_key == idempotency_key:
-                if _payload_hash(entry.payload) == _payload_hash(payload):
-                    return entry
-                raise EventConflict(
-                    f"idempotency key {idempotency_key!r} reused with "
-                    "different payload"
-                )
-        self._sequence += 1
-        event_id = UUID(int=self._sequence)
+            if entry.task_id != task_id:
+                continue
+            if entry.idempotency_key != idempotency_key:
+                continue
+            if payload_hash(entry.payload) == payload_hash(payload):
+                return entry
+            raise EventConflict(
+                f"idempotency key {idempotency_key!r} reused with different payload"
+            )
+        sequence = self._sequences.get(task_id, 0) + 1
+        self._sequences[task_id] = sequence
         entry = LedgerEntry(
-            event_id=event_id,
+            event_id=uuid4(),
             task_id=task_id,
             event_type=event_type,
             payload=payload,
             idempotency_key=idempotency_key,
-            sequence=self._sequence,
+            sequence=sequence,
             status=status,
         )
-        self._entries[event_id] = entry
+        self._entries[entry.event_id] = entry
         return entry
 
     def get(self, event_id: UUID) -> LedgerEntry | None:
         return self._entries.get(event_id)
 
     def list_admitted(self) -> list[LedgerEntry]:
-        return [e for e in self._entries.values() if e.status == "admitted"]
+        return [
+            entry for entry in self._entries.values() if entry.status == "admitted"
+        ]
