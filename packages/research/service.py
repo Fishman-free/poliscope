@@ -1,13 +1,27 @@
+"""Research task lifecycle: create, confirm claims, queue.
+
+The service holds no state. It sequences the steps and enforces the one rule the
+repository cannot see on its own: a task may not be queued until the researcher
+has confirmed which atomic claims the council will investigate. CLAUDE.md 2
+requires the researcher to direct the scope, and queueing before confirmation
+would let the council pick its own question.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from uuid import UUID, uuid4
+from dataclasses import dataclass
+from uuid import UUID
 
-from packages.research.atomization import (
-    AtomicClaimCandidate,
-    suggest_atomic_claims,
-)
+from packages.epistemo.contracts import TaskStatus
+from packages.research.atomization import suggest_atomic_claims
 from packages.research.contracts import ResearchContract
+from packages.research.repository import (
+    CLAIM_CONFIRMED,
+    ResearchRepository,
+    StoredClaim,
+    StoredTask,
+    TaskNotFound,
+)
 
 
 class UnconfirmedClaims(Exception):
@@ -15,51 +29,63 @@ class UnconfirmedClaims(Exception):
 
 
 @dataclass(frozen=True, slots=True)
-class ResearchTask:
-    id: UUID
-    contract: ResearchContract
+class CreatedTask:
+    task_id: UUID
     status: str
-    confirmed_claims: frozenset[UUID] = frozenset()
+    suggested_claims: tuple[StoredClaim, ...]
 
 
-@dataclass
 class ResearchService:
-    _tasks: dict[UUID, ResearchTask] = field(default_factory=dict)
-    _confirmed: dict[UUID, frozenset[UUID]] = field(default_factory=dict)
-    _suggestions: dict[UUID, tuple[AtomicClaimCandidate, ...]] = field(
-        default_factory=dict
-    )
+    """Application service over :class:`ResearchRepository`."""
 
-    async def create(self, contract: ResearchContract) -> ResearchTask:
-        task_id = uuid4()
-        task = ResearchTask(id=task_id, contract=contract, status="DRAFT")
-        self._tasks[task_id] = task
-        self._suggestions[task_id] = suggest_atomic_claims(contract)
-        return task
+    def __init__(self, repository: ResearchRepository) -> None:
+        self._repository = repository
 
-    def suggest_atomic_claims(
-        self, task_id: UUID
-    ) -> tuple[AtomicClaimCandidate, ...]:
-        return self._suggestions.get(task_id, ())
+    async def create(
+        self,
+        contract: ResearchContract,
+        created_by: str = "api",
+    ) -> CreatedTask:
+        candidates = suggest_atomic_claims(contract)
+        task_id = await self._repository.create_task(
+            contract, candidates, created_by
+        )
+        return CreatedTask(
+            task_id=task_id,
+            status=TaskStatus.AWAITING_CLAIM_CONFIRMATION,
+            suggested_claims=await self._repository.list_claims(task_id),
+        )
+
+    async def get_task(self, task_id: UUID) -> StoredTask:
+        return await self._repository.get_task(task_id)
+
+    async def suggested_claims(self, task_id: UUID) -> tuple[StoredClaim, ...]:
+        await self._repository.get_task(task_id)
+        return await self._repository.list_claims(task_id)
 
     async def confirm_claims(
-        self, task_id: UUID, claim_ids: list[UUID]
-    ) -> bool:
-        self._confirmed[task_id] = frozenset(claim_ids)
-        return True
+        self,
+        task_id: UUID,
+        claim_ids: tuple[UUID, ...],
+    ) -> tuple[StoredClaim, ...]:
+        await self._repository.get_task(task_id)
+        return await self._repository.confirm_claims(task_id, claim_ids)
 
-    async def queue(self, task_id: UUID) -> ResearchTask:
-        confirmed = self._confirmed.get(task_id, frozenset())
-        if not confirmed:
+    async def queue(self, task_id: UUID) -> str:
+        """Move a task to QUEUED once at least one claim is confirmed."""
+        await self._repository.get_task(task_id)
+        claims = await self._repository.list_claims(task_id)
+        if not any(claim.status == CLAIM_CONFIRMED for claim in claims):
             raise UnconfirmedClaims(
                 "atomic claims must be confirmed before queueing"
             )
-        task = self._tasks[task_id]
-        updated = ResearchTask(
-            id=task.id,
-            contract=task.contract,
-            status="QUEUED",
-            confirmed_claims=confirmed,
-        )
-        self._tasks[task_id] = updated
-        return updated
+        await self._repository.set_status(task_id, TaskStatus.QUEUED)
+        return TaskStatus.QUEUED
+
+
+__all__ = [
+    "CreatedTask",
+    "ResearchService",
+    "TaskNotFound",
+    "UnconfirmedClaims",
+]

@@ -1,39 +1,169 @@
+"""Tests for the Server-Sent Events stream.
+
+The earlier version of this file constructed an SSEEvent and asserted the
+constructor had stored its arguments, then filtered a list it had built in the
+test and asserted the filter worked. Neither touched the endpoint. Resume is the
+property that actually matters here, and it can only be demonstrated against the
+real stream backed by the real ledger.
+"""
+
 from __future__ import annotations
 
-from uuid import uuid4
+import json
+from uuid import UUID, uuid4
 
+import httpx
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from apps.api.routers.stream import parse_last_event_id
 from apps.api.schemas import SSEEvent
+from packages.evidence.sql_ledger import SqlEventLedger
+from tests.factories import make_research_contract
+
+TERMINAL = "TASK_COMPLETED"
 
 
-def test_sse_event_has_required_fields() -> None:
-    event = SSEEvent(
-        event_id="evt-1",
+async def _create_task(client: httpx.AsyncClient) -> UUID:
+    contract = make_research_contract().model_dump(mode="json")
+    response = await client.post("/api/tasks", json=contract)
+    assert response.status_code == 201, response.text
+    return UUID(response.json()["task_id"])
+
+
+async def _seed_events(
+    session: AsyncSession,
+    task_id: UUID,
+    kinds: tuple[str, ...],
+) -> None:
+    """Append events and commit, so the streaming session can read them."""
+    ledger = SqlEventLedger(session)
+    for index, kind in enumerate(kinds, start=1):
+        await ledger.append(task_id, kind, {"n": index}, f"seed-{index}")
+    await session.commit()
+
+
+def _frames(body: str) -> list[dict[str, str]]:
+    """Parse a full SSE body into frames, skipping comment lines."""
+    frames: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in body.split("\n"):
+        line = line.rstrip("\r")
+        if line == "":
+            if current:
+                frames.append(current)
+                current = {}
+            continue
+        if line.startswith(":"):
+            continue
+        field, _, value = line.partition(":")
+        current[field.strip()] = value.lstrip()
+    if current:
+        frames.append(current)
+    return frames
+
+
+def test_sse_frame_uses_the_id_event_data_wire_format() -> None:
+    """The browser EventSource ignores a frame that omits these fields."""
+    formatted = SSEEvent(
+        event_id="7",
         task_id=str(uuid4()),
-        kind="workspace_update",
-        workspace_version=1,
-        payload={"status": "running"},
+        kind="SEAT_UPDATE",
+        workspace_version=7,
+        payload={"seat": "causal_scientist"},
+    ).format_sse()
+    assert formatted.startswith("id: 7\n")
+    assert "event: SEAT_UPDATE\n" in formatted
+    assert formatted.endswith("\n\n")
+    data_line = next(
+        line for line in formatted.split("\n") if line.startswith("data:")
     )
-    dumped = event.model_dump()
-    assert "event_id" in dumped
-    assert "task_id" in dumped
-    assert "kind" in dumped
-    assert "workspace_version" in dumped
+    assert json.loads(data_line[len("data:") :])["payload"] == {
+        "seat": "causal_scientist"
+    }
 
 
-def test_sse_event_formats_with_id_event_data() -> None:
-    event = SSEEvent(
-        event_id="evt-1",
-        task_id=str(uuid4()),
-        kind="update",
-        workspace_version=1,
-        payload={"x": 1},
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    (
+        (None, 0),
+        ("0", 0),
+        ("41", 41),
+        ("-3", 0),
+        ("not-a-number", 0),
+        ("", 0),
+    ),
+)
+def test_last_event_id_header_is_parsed_defensively(
+    header: str | None,
+    expected: int,
+) -> None:
+    """A malformed header replays from the start rather than failing the request.
+
+    Rejecting the reconnect would strand a client that has no other way to catch
+    up, so the safe direction is to send too much rather than too little.
+    """
+    assert parse_last_event_id(header) == expected
+
+
+async def test_stream_delivers_events_in_sequence_order(
+    api_client: httpx.AsyncClient,
+    app_session: AsyncSession,
+) -> None:
+    task_id = await _create_task(api_client)
+    await _seed_events(app_session, task_id, ("A", "B", TERMINAL))
+    response = await api_client.get(f"/api/stream/{task_id}")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    frames = _frames(response.text)
+    assert [frame["event"] for frame in frames] == ["A", "B", TERMINAL]
+    assert [frame["id"] for frame in frames] == ["1", "2", "3"]
+
+
+async def test_stream_resumes_after_last_event_id_without_replaying(
+    api_client: httpx.AsyncClient,
+    app_session: AsyncSession,
+) -> None:
+    """This is the property the whole ledger-backed design exists for.
+
+    A client that saw event 2 and reconnected must receive 3 onward and nothing
+    it has already rendered.
+    """
+    task_id = await _create_task(api_client)
+    await _seed_events(app_session, task_id, ("A", "B", "C", "D", TERMINAL))
+    response = await api_client.get(
+        f"/api/stream/{task_id}",
+        headers={"Last-Event-ID": "2"},
     )
-    formatted = event.format_sse()
-    assert formatted.startswith("id: evt-1\n")
-    assert "event: update\n" in formatted
-    assert "data:" in formatted
+    frames = _frames(response.text)
+    assert [frame["id"] for frame in frames] == ["3", "4", "5"]
+    assert [frame["event"] for frame in frames] == ["C", "D", TERMINAL]
 
 
-def test_suite() -> None:
-    test_sse_event_has_required_fields()
-    test_sse_event_formats_with_id_event_data()
+async def test_stream_survives_a_reconnect_that_reports_a_stale_id(
+    api_client: httpx.AsyncClient,
+    app_session: AsyncSession,
+) -> None:
+    """Replaying from zero is lossless, which is why a bad id is not an error."""
+    task_id = await _create_task(api_client)
+    await _seed_events(app_session, task_id, ("A", TERMINAL))
+    response = await api_client.get(
+        f"/api/stream/{task_id}",
+        headers={"Last-Event-ID": "garbage"},
+    )
+    assert [frame["id"] for frame in _frames(response.text)] == ["1", "2"]
+
+
+async def test_stream_for_an_unknown_task_returns_404_not_an_empty_stream(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """A 200 with no events would look identical to a task that has not started."""
+    response = await api_client.get(f"/api/stream/{uuid4()}")
+    assert response.status_code == 404
+
+
+async def test_stream_for_a_malformed_task_id_returns_422(
+    api_client: httpx.AsyncClient,
+) -> None:
+    response = await api_client.get("/api/stream/not-a-uuid")
+    assert response.status_code == 422

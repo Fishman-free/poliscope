@@ -154,6 +154,33 @@ async def projector_session(migrated_db: str) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+@pytest_asyncio.fixture
+async def api_client(migrated_db: str) -> AsyncIterator[Any]:
+    """An HTTP client bound to the real ASGI app and the test database.
+
+    The app is exercised through its ASGI interface rather than by calling
+    handler functions, so routing, dependency injection, status codes, and
+    response headers are all covered. A handler that works when called directly
+    and 404s over HTTP is a failure users would hit and unit tests would miss.
+    """
+    import httpx
+
+    from apps.api.dependencies import AppState
+    from apps.api.main import app
+
+    state = AppState(_role_url(migrated_db, APP_ROLE, APP_PASSWORD))
+    app.state.poliscope = state
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://poliscope.test",
+        ) as client:
+            yield client
+    finally:
+        await state.dispose()
+
+
 @pytest.fixture
 def valid_research_contract() -> Any:
     """Return a deterministic valid ResearchContract instance."""

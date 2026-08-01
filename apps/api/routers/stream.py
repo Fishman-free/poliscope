@@ -1,10 +1,131 @@
+"""Server-Sent Events for one research task.
+
+The stream replays from the Scientific Event Ledger rather than from an
+in-process queue. That is what makes reconnection lossless: the per-task
+``sequence`` column is a total order, so a client that reports the last sequence
+it saw receives exactly what it missed and nothing twice. An in-process queue
+would drop everything emitted while the client was away, and would also make the
+stream wrong as soon as a second API worker existed.
+
+The event id sent on the wire is the sequence rather than the event UUID,
+because ``Last-Event-ID`` has to be comparable with ``>`` for resume to work.
+"""
+
 from __future__ import annotations
 
-from fastapi import APIRouter
+import asyncio
+from collections.abc import AsyncIterator
+from uuid import UUID
+
+from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
+
+from apps.api.dependencies import AppState, get_state
+from apps.api.schemas import SSEEvent
+from packages.evidence.sql_ledger import SqlEventLedger
+from packages.kernel.contracts import FrozenDict
+from packages.research.repository import ResearchRepository, TaskNotFound
 
 router = APIRouter()
 
+# How long to wait before polling the ledger again when nothing new arrived.
+POLL_INTERVAL_SECONDS = 1.0
+
+# Sent when a poll finds nothing, so an idle connection is not closed by a proxy
+# and the client can tell "still working" apart from "server gone".
+KEEPALIVE_FRAME = ": keep-alive\n\n"
+
+# Reaching one of these ends the stream. Without it the client would poll a
+# finished task forever.
+TERMINAL_EVENT_TYPES = frozenset(
+    {"TASK_COMPLETED", "TASK_COMPLETED_WITH_GAPS", "TASK_FAILED"}
+)
+
+
+def parse_last_event_id(raw: str | None) -> int:
+    """Interpret the resume header, tolerating a client that sends nonsense.
+
+    A malformed header must not fail the request. Replaying from the beginning
+    is wasteful but lossless, whereas rejecting the reconnect would strand a
+    client that can no longer catch up by any means.
+    """
+    if raw is None:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
+
+
+async def _events(
+    state: AppState,
+    task_id: UUID,
+    after_sequence: int,
+    request: Request,
+) -> AsyncIterator[str]:
+    cursor = after_sequence
+    while True:
+        if await request.is_disconnected():
+            return
+        # A short lived session per poll rather than one held open for the whole
+        # stream: a stream can last for the length of a research task, and a
+        # connection idled for that long is a connection the pool cannot reuse.
+        async with state.session_factory() as session:
+            entries = await SqlEventLedger(session).list_since(task_id, cursor)
+        if not entries:
+            yield KEEPALIVE_FRAME
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            continue
+        for entry in entries:
+            cursor = entry.sequence
+            yield SSEEvent(
+                event_id=str(entry.sequence),
+                task_id=str(task_id),
+                kind=entry.event_type,
+                workspace_version=entry.sequence,
+                payload=FrozenDict(entry.payload),
+            ).format_sse()
+            if entry.event_type in TERMINAL_EVENT_TYPES:
+                return
+
 
 @router.get("/{task_id}")
-async def stream_events(task_id: str) -> dict:
-    return {"task_id": task_id, "events": []}
+async def stream_events(
+    task_id: str,
+    request: Request,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
+    """Stream this task's events, resuming after ``Last-Event-ID`` if given."""
+    state = get_state(request)
+    try:
+        parsed_task_id = UUID(task_id)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"malformed task id {task_id}",
+        ) from error
+    # Checked before the response starts, because once a 200 and the
+    # text/event-stream header are on the wire there is no way to report 404.
+    async with state.session_factory() as session:
+        try:
+            await ResearchRepository(session).get_task(parsed_task_id)
+        except TaskNotFound as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown task {task_id}",
+            ) from error
+    return StreamingResponse(
+        _events(
+            state,
+            parsed_task_id,
+            parse_last_event_id(last_event_id),
+            request,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Without this a buffering reverse proxy holds the whole response
+            # and the stream never reaches the browser.
+            "X-Accel-Buffering": "no",
+        },
+    )

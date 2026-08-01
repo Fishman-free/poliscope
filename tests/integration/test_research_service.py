@@ -1,84 +1,151 @@
+"""Tests for the research task lifecycle against a real database.
+
+These used to run against an in-memory service, which meant they proved the
+dictionary worked rather than that a task survives the process that created it.
+CLAUDE.md 8 makes the database the source of truth, so the assertions here are
+about what a second session can read back.
+"""
+
 from __future__ import annotations
 
-from datetime import date
-from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.research.contracts import (
-    EvidenceDemandType,
-    ResearchBudget,
-    ResearchContract,
-    ResearchScope,
-    UserEvidenceInput,
+from packages.epistemo.contracts import TaskStatus
+from packages.research.repository import (
+    CLAIM_CONFIRMED,
+    CLAIM_DISCARDED,
+    CLAIM_SUGGESTED,
+    ResearchRepository,
+    TaskNotFound,
 )
-from packages.research.service import (
-    ResearchService,
-    UnconfirmedClaims,
-)
+from packages.research.service import ResearchService, UnconfirmedClaims
+from tests.factories import make_research_contract
 
 
-def _valid_contract() -> ResearchContract:
-    return ResearchContract(
-        question="Does social media affect adolescent mental health?",
-        scope=ResearchScope(
-            populations=("adolescents",),
-            regions=("global",),
-            languages=("en",),
-            date_from=date(2015, 1, 1),
-            date_until=date(2025, 12, 31),
-            evidence_priorities=(
-                EvidenceDemandType.CORRELATION,
-                EvidenceDemandType.CAUSAL_OR_REVERSE_CAUSAL,
-            ),
-            allow_preprints=False,
-        ),
-        budget=ResearchBudget(
-            wall_clock_minutes=60,
-            model_cost_usd=Decimal("10.00"),
-            tool_call_limit=100,
-            source_limit=50,
-        ),
-        user_evidence=UserEvidenceInput(
-            dois=("10.1234/example",),
-            pdf_object_ids=(uuid4(),),
-        ),
+def _service(session: AsyncSession) -> ResearchService:
+    return ResearchService(ResearchRepository(session))
+
+
+async def test_create_persists_the_task_and_its_suggested_claims(
+    app_session: AsyncSession,
+) -> None:
+    created = await _service(app_session).create(make_research_contract())
+    assert created.status == TaskStatus.AWAITING_CLAIM_CONFIRMATION
+    assert len(created.suggested_claims) > 0
+    assert all(
+        claim.status == CLAIM_SUGGESTED for claim in created.suggested_claims
     )
 
-
-async def test_create_persists_contract() -> None:
-    service = ResearchService()
-    contract = _valid_contract()
-    task = await service.create(contract)
-    assert task.id is not None
-    assert task.status == "DRAFT"
+    stored = await _service(app_session).get_task(created.task_id)
+    assert stored.question == make_research_contract().question
+    await app_session.rollback()
 
 
-async def test_queue_requires_claim_confirmation() -> None:
-    service = ResearchService()
-    contract = _valid_contract()
-    task = await service.create(contract)
+async def test_create_does_not_queue_the_task(
+    app_session: AsyncSession,
+) -> None:
+    """The researcher directs the scope, so nothing starts on its own."""
+    created = await _service(app_session).create(make_research_contract())
+    stored = await _service(app_session).get_task(created.task_id)
+    assert stored.status != TaskStatus.QUEUED
+    await app_session.rollback()
+
+
+async def test_queue_requires_claim_confirmation(
+    app_session: AsyncSession,
+) -> None:
+    created = await _service(app_session).create(make_research_contract())
     with pytest.raises(UnconfirmedClaims):
-        await service.queue(task.id)
+        await _service(app_session).queue(created.task_id)
+    await app_session.rollback()
 
 
-async def test_queue_succeeds_after_confirmation() -> None:
-    service = ResearchService()
-    contract = _valid_contract()
-    task = await service.create(contract)
-    claims = service.suggest_atomic_claims(task.id)
-    assert len(claims) > 0
-    confirmed = await service.confirm_claims(
-        task.id, [c.claim_id for c in claims]
+async def test_queue_succeeds_after_confirmation(
+    app_session: AsyncSession,
+) -> None:
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    assert await service.queue(created.task_id) == TaskStatus.QUEUED
+    assert (await service.get_task(created.task_id)).status == TaskStatus.QUEUED
+    await app_session.rollback()
+
+
+async def test_unconfirmed_claims_are_discarded_not_deleted(
+    app_session: AsyncSession,
+) -> None:
+    """CLAUDE.md 5.3 forbids removing what the council once considered.
+
+    A claim the researcher set aside stays in the audit trail with a status that
+    says so, rather than vanishing from the record.
+    """
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    assert len(created.suggested_claims) >= 2
+    chosen = created.suggested_claims[0].claim_id
+
+    claims = await service.confirm_claims(created.task_id, (chosen,))
+    assert len(claims) == len(created.suggested_claims)
+    by_id = {claim.claim_id: claim.status for claim in claims}
+    assert by_id[chosen] == CLAIM_CONFIRMED
+    assert all(
+        by_id[claim.claim_id] == CLAIM_DISCARDED
+        for claim in created.suggested_claims
+        if claim.claim_id != chosen
     )
-    assert confirmed is True
-    queued = await service.queue(task.id)
-    assert queued.status == "QUEUED"
+    await app_session.rollback()
 
 
-def test_suite() -> None:
-    import asyncio
-    asyncio.run(test_create_persists_contract())
-    asyncio.run(test_queue_requires_claim_confirmation())
-    asyncio.run(test_queue_succeeds_after_confirmation())
+async def test_confirming_a_claim_from_another_task_is_rejected(
+    app_session: AsyncSession,
+) -> None:
+    """Claim ids are not capabilities: they must belong to the named task."""
+    service = _service(app_session)
+    first = await service.create(make_research_contract())
+    second = await service.create(make_research_contract())
+    foreign = second.suggested_claims[0].claim_id
+    with pytest.raises(ValueError, match="do not belong to task"):
+        await service.confirm_claims(first.task_id, (foreign,))
+    await app_session.rollback()
+
+
+async def test_confirming_an_empty_claim_set_is_rejected(
+    app_session: AsyncSession,
+) -> None:
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    with pytest.raises(ValueError, match="at least one atomic claim"):
+        await service.confirm_claims(created.task_id, ())
+    await app_session.rollback()
+
+
+async def test_claim_statements_round_trip_without_mangling(
+    app_session: AsyncSession,
+) -> None:
+    """Suggested claims are written in Chinese and must come back unchanged.
+
+    A client encoding mismatch corrupts them silently, and the corruption only
+    surfaces in an exported report where nobody can tell what the claim said.
+    """
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    written = {claim.claim_id: claim.statement for claim in created.suggested_claims}
+    assert any("一" <= character <= "鿿" for character in "".join(written.values()))
+
+    app_session.expunge_all()
+    read_back = await service.suggested_claims(created.task_id)
+    assert {claim.claim_id: claim.statement for claim in read_back} == written
+    await app_session.rollback()
+
+
+async def test_unknown_task_is_distinguishable_from_a_validation_error(
+    app_session: AsyncSession,
+) -> None:
+    """The API answers 404 for this and 422 for a bad payload."""
+    with pytest.raises(TaskNotFound):
+        await _service(app_session).get_task(uuid4())
+    await app_session.rollback()

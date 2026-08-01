@@ -1,0 +1,207 @@
+"""Persistence for research tasks, scopes, and atomic claims.
+
+The service layer above holds no state of its own. Every fact about a task lives
+in PostgreSQL, because CLAUDE.md 8 makes the database the source of truth and
+CLAUDE.md 10 requires a task to be resumable after the process that created it is
+gone.
+
+This repository owns three tables and nothing else. It does not touch the event
+ledger or the evidence graph: a research task is created and its claims are
+confirmed before any evidence exists, so mixing the two would let a caller write
+graph state through the wrong door.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from uuid import UUID, uuid4
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from packages.epistemo.contracts import TaskStatus
+from packages.research.atomization import AtomicClaimCandidate
+from packages.research.contracts import ResearchContract
+from packages.research.models import (
+    AtomicClaimModel,
+    ResearchScopeModel,
+    ResearchTaskModel,
+)
+
+CLAIM_SUGGESTED = "SUGGESTED"
+CLAIM_CONFIRMED = "CONFIRMED"
+CLAIM_DISCARDED = "DISCARDED"
+
+
+@dataclass(frozen=True, slots=True)
+class StoredClaim:
+    claim_id: UUID
+    statement: str
+    claim_type: str
+    scope: dict[str, object]
+    falsification_condition: str
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class StoredTask:
+    task_id: UUID
+    question: str
+    status: str
+    created_by: str
+
+
+class TaskNotFound(Exception):
+    """Raised when a task id does not exist.
+
+    Distinct from a validation error so the API can answer 404 rather than 400.
+    """
+
+
+class ResearchRepository:
+    """One instance per request, wrapping one session."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create_task(
+        self,
+        contract: ResearchContract,
+        candidates: tuple[AtomicClaimCandidate, ...],
+        created_by: str,
+    ) -> UUID:
+        """Persist a contract and its suggested claims in one transaction.
+
+        The task lands in AWAITING_CLAIM_CONFIRMATION rather than QUEUED: the
+        researcher directs the scope, so nothing starts researching until the
+        claims are confirmed.
+        """
+        task_id = uuid4()
+        self._session.add(
+            ResearchTaskModel(
+                id=uuid4(),
+                task_id=task_id,
+                question=contract.question,
+                status=TaskStatus.AWAITING_CLAIM_CONFIRMATION,
+                created_by=created_by,
+                wall_clock_minutes=contract.budget.wall_clock_minutes,
+                model_cost_usd=contract.budget.model_cost_usd,
+                tool_call_limit=contract.budget.tool_call_limit,
+                source_limit=contract.budget.source_limit,
+                user_evidence=contract.user_evidence.model_dump(mode="json"),
+            )
+        )
+        # Flushed before the dependent rows because their foreign key targets
+        # research_tasks.task_id, a unique column rather than the primary key.
+        # SQLAlchemy's unit of work orders inserts by primary key dependency, so
+        # without this the claims can reach the database first.
+        await self._session.flush()
+        scope = contract.scope
+        self._session.add(
+            ResearchScopeModel(
+                id=uuid4(),
+                task_id=task_id,
+                status=TaskStatus.AWAITING_CLAIM_CONFIRMATION,
+                created_by=created_by,
+                populations=list(scope.populations),
+                regions=list(scope.regions),
+                languages=list(scope.languages),
+                date_from=scope.date_from,
+                date_until=scope.date_until,
+                evidence_priorities=[str(p) for p in scope.evidence_priorities],
+                allow_preprints=scope.allow_preprints,
+            )
+        )
+        for candidate in candidates:
+            self._session.add(
+                AtomicClaimModel(
+                    id=candidate.claim_id,
+                    task_id=task_id,
+                    statement=candidate.statement,
+                    claim_type=str(candidate.claim_type),
+                    scope=dict(candidate.scope),
+                    falsification_condition=candidate.falsification_condition,
+                    status=CLAIM_SUGGESTED,
+                    created_by=created_by,
+                )
+            )
+        await self._session.flush()
+        return task_id
+
+    async def get_task(self, task_id: UUID) -> StoredTask:
+        row = await self._session.scalar(
+            select(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
+        )
+        if row is None:
+            raise TaskNotFound(str(task_id))
+        return StoredTask(
+            task_id=row.task_id,
+            question=row.question,
+            status=row.status,
+            created_by=row.created_by,
+        )
+
+    async def list_claims(self, task_id: UUID) -> tuple[StoredClaim, ...]:
+        result = await self._session.execute(
+            select(AtomicClaimModel)
+            .where(AtomicClaimModel.task_id == task_id)
+            .order_by(AtomicClaimModel.created_at, AtomicClaimModel.id)
+        )
+        return tuple(
+            StoredClaim(
+                claim_id=row.id,
+                statement=row.statement,
+                claim_type=row.claim_type,
+                scope=dict(row.scope),
+                falsification_condition=row.falsification_condition,
+                status=row.status,
+            )
+            for row in result.scalars()
+        )
+
+    async def confirm_claims(
+        self,
+        task_id: UUID,
+        claim_ids: tuple[UUID, ...],
+    ) -> tuple[StoredClaim, ...]:
+        """Mark the chosen claims confirmed and the rest discarded.
+
+        Discarded rather than deleted: CLAUDE.md 5.3 forbids physically removing
+        anything the council once considered, so a claim the researcher rejected
+        stays visible in the audit trail.
+        """
+        known = {claim.claim_id for claim in await self.list_claims(task_id)}
+        if not known:
+            raise TaskNotFound(str(task_id))
+        unknown = set(claim_ids) - known
+        if unknown:
+            raise ValueError(
+                f"claims do not belong to task {task_id}: {sorted(map(str, unknown))}"
+            )
+        if not claim_ids:
+            raise ValueError("at least one atomic claim must be confirmed")
+        await self._session.execute(
+            update(AtomicClaimModel)
+            .where(AtomicClaimModel.task_id == task_id)
+            .values(status=CLAIM_DISCARDED)
+        )
+        await self._session.execute(
+            update(AtomicClaimModel)
+            .where(
+                AtomicClaimModel.task_id == task_id,
+                AtomicClaimModel.id.in_(claim_ids),
+            )
+            .values(status=CLAIM_CONFIRMED)
+        )
+        await self._session.flush()
+        return await self.list_claims(task_id)
+
+    async def set_status(self, task_id: UUID, status: TaskStatus) -> None:
+        result = await self._session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(status=status)
+        )
+        if result.rowcount == 0:
+            raise TaskNotFound(str(task_id))
+        await self._session.flush()
