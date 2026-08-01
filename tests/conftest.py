@@ -154,6 +154,42 @@ async def projector_session(migrated_db: str) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def _role_session_factory(
+    admin_url: str,
+    username: str,
+    password: str,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    engine = create_async_engine(_role_url(admin_url, username, password))
+    try:
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def app_sessions(
+    migrated_db: str,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """A session factory, for code that opens and commits its own transactions.
+
+    The worker cannot borrow a caller's session: it commits the deliberation
+    before projecting so the projector reads durable events, which means it needs
+    to own the transaction boundary.
+    """
+    async for factory in _role_session_factory(migrated_db, APP_ROLE, APP_PASSWORD):
+        yield factory
+
+
+@pytest_asyncio.fixture
+async def projector_sessions(
+    migrated_db: str,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    async for factory in _role_session_factory(
+        migrated_db, PROJECTOR_ROLE, PROJECTOR_PASSWORD
+    ):
+        yield factory
+
+
 @pytest_asyncio.fixture
 async def api_client(migrated_db: str) -> AsyncIterator[Any]:
     """An HTTP client bound to the real ASGI app and the test database.
