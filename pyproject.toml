@@ -37,7 +37,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["packages", "apps"]
+packages = ["packages", "apps", "poliscope"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
