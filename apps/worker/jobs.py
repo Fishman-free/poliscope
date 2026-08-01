@@ -37,8 +37,11 @@ from packages.memory.adapter import create_memory_adapter
 from packages.memory.council_memory import CouncilMemory
 from packages.models.contracts import ModelGateway
 from packages.models.gateway import AuditedModelGateway
+from packages.papers.acquisition import SourceAcquisition
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
+from packages.tools.contracts import ToolGateway
+from packages.tools.gateway import AuditedToolGateway
 
 
 class TaskNotRunnable(Exception):
@@ -109,6 +112,7 @@ async def deliberate(
     task_id: UUID,
     deliberator: SeatDeliberator | None = None,
     gateway: ModelGateway | None = None,
+    tools: ToolGateway | None = None,
 ) -> TaskRunReport:
     """Run the seven rounds and persist the resulting events and status.
 
@@ -138,6 +142,15 @@ async def deliberate(
         # Process memory, per CLAUDE.md 6. It is created per run rather than per
         # process so one task's recall can never leak into another's.
         memory=CouncilMemory(create_memory_adapter(), task_id),
+        # Only when a tool provider is configured. Without one the acquisition
+        # round records requests and reports the gap, per CLAUDE.md 7 and 10.
+        acquirer=(
+            None
+            if tools is None
+            else SourceAcquisition(
+                session, AuditedToolGateway(tools, session), task_id, budget
+            )
+        ),
     )
     report = await orchestrator.run(
         task_id=task_id,
@@ -159,6 +172,7 @@ async def run_task(
     task_id: UUID,
     deliberator: SeatDeliberator | None = None,
     gateway: ModelGateway | None = None,
+    tools: ToolGateway | None = None,
 ) -> JobResult:
     """Deliberate, commit, then project.
 
@@ -169,7 +183,7 @@ async def run_task(
     """
     async with app_sessions() as session:
         try:
-            report = await deliberate(session, task_id, deliberator, gateway)
+            report = await deliberate(session, task_id, deliberator, gateway, tools)
             await session.commit()
         except BaseException:
             await session.rollback()

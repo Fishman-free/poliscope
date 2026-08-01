@@ -48,25 +48,30 @@ class BudgetTracker:
     def unfilled_evidence_slots(self) -> list[str]:
         return list(self._unfilled_slots)
 
+    # Each consumer checks *before* spending. Checking after meant a limit of N
+    # permitted N-1 uses and a limit of 1 permitted none, because the spend that
+    # brought the remainder to zero was itself rejected. A budget of one source
+    # must buy one source.
+
     def consume_wall_clock(self, minutes: int) -> None:
-        self._wall_clock_used += minutes
-        if self.wall_clock_remaining <= 0:
+        if self.wall_clock_remaining < minutes:
             raise BudgetExhausted("wall clock budget exhausted")
+        self._wall_clock_used += minutes
 
     def consume_model_cost(self, cost_usd: Decimal) -> None:
-        self._model_cost_used += cost_usd
-        if self.model_budget_remaining <= 0:
+        if self.model_budget_remaining < cost_usd:
             raise BudgetExhausted("model cost budget exhausted")
+        self._model_cost_used += cost_usd
 
     def consume_tool_call(self) -> None:
-        self._tool_calls_used += 1
         if self.tool_calls_remaining <= 0:
             raise BudgetExhausted("tool call budget exhausted")
+        self._tool_calls_used += 1
 
     def consume_source(self) -> None:
-        self._sources_used += 1
         if self.sources_remaining <= 0:
             raise BudgetExhausted("source budget exhausted")
+        self._sources_used += 1
 
     def mark_unfilled_slot(self, slot: str) -> None:
         self._unfilled_slots.append(slot)

@@ -31,6 +31,7 @@ from packages.models.contracts import ModelRequest, ModelResult, SchemaStatus
 from packages.models.models import ModelCallModel
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
+from packages.tools.contracts import ToolRequest, ToolResult
 
 pytestmark = pytest.mark.requires_docker
 
@@ -65,7 +66,9 @@ class _ScriptedGateway:
                 "update_condition": "a preregistered cohort study",
             }
         if phase is TaskPhase.ACQUISITION:
-            return {"requests": [f"cohort studies relevant to {seat}"]}
+            # A DOI rather than free text: the adapters resolve DOIs, and a
+            # request nobody can resolve is correctly reported as a gap.
+            return {"requests": ["doi 10.1234/shared-cohort"]}
         if phase is TaskPhase.CROSS_EXAMINATION:
             return {
                 "challenges": [
@@ -120,6 +123,29 @@ class _BrokenGateway:
 
     async def invoke(self, request: ModelRequest) -> ModelResult:
         raise RuntimeError("provider unreachable")
+
+
+class _StubProvider:
+    """A tool gateway that resolves any DOI, so acquisition can succeed."""
+
+    async def execute(self, request: ToolRequest) -> ToolResult:
+        doi = str(request.arguments["doi"])
+        return ToolResult(
+            call_id=uuid4(),
+            payload=FrozenDict(
+                {
+                    "id": f"https://openalex.org/{doi}",
+                    "title": f"Study of {doi}",
+                    "authors": ("A. Researcher",),
+                    "year": 2021,
+                    "type": "journal-article",
+                    "retracted": False,
+                }
+            ),
+            latency_ms=2,
+            retries=0,
+            error_code=None,
+        )
 
 
 async def _seed_queued_task(
@@ -197,7 +223,8 @@ async def test_a_full_council_run_reports_no_gaps(
     gateway = _ScriptedGateway(claim_id, uuid4())
 
     result = await run_task(
-        app_sessions, projector_sessions, task_id, gateway=gateway
+        app_sessions, projector_sessions, task_id, gateway=gateway,
+        tools=_StubProvider(),
     )
 
     assert result.run.unfilled_slots == ()

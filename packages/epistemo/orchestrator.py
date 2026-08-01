@@ -32,6 +32,7 @@ from packages.council.rounds.registry import (
     PhaseContext,
     PhaseOutcome,
     SeatDeliberator,
+    SourceAcquirer,
     UnavailableDeliberator,
     runner_for,
 )
@@ -188,6 +189,7 @@ class CouncilOrchestrator:
         deliberator: SeatDeliberator | None = None,
         seats: tuple[Seat, ...] = ORDERED_SEATS,
         memory: CouncilMemory | None = None,
+        acquirer: SourceAcquirer | None = None,
     ) -> None:
         self._ledger = ledger
         self._budget = budget
@@ -196,6 +198,7 @@ class CouncilOrchestrator:
         )
         self._seats = seats
         self._memory = memory
+        self._acquirer = acquirer
 
     async def run(
         self,
@@ -295,6 +298,7 @@ class CouncilOrchestrator:
             deliberator=self._deliberator,
             carried=dict(state.carried),
             recall=await self._recall(),
+            acquirer=self._acquirer,
         )
         try:
             outcome = await runner_for(phase)(context)

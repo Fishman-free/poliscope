@@ -66,6 +66,7 @@ EVIDENCE_REQUESTED = "EVIDENCE_REQUESTED"
 EVIDENCE_PUBLISHED = "EVIDENCE_PUBLISHED"
 CHALLENGE_RAISED = "CHALLENGE_RAISED"
 BOUNTY_ASSIGNED = "BOUNTY_ASSIGNED"
+SOURCE_REFUSED = "SOURCE_REFUSED"
 CONSENSUS_DRAFTED = "CONSENSUS_DRAFTED"
 FINAL_JUDGMENT = "FINAL_JUDGMENT"
 
@@ -128,6 +129,43 @@ class UnavailableDeliberator:
         return None
 
 
+class SourceAcquirer(Protocol):
+    """Resolves the seats' evidence requests into persisted sources.
+
+    Declared here rather than imported so ``council`` does not depend on
+    ``papers``; the implementation is
+    :class:`packages.papers.acquisition.SourceAcquisition`.
+    """
+
+    async def acquire(self, requests: list[tuple[Seat, str]]) -> AcquisitionLike: ...
+
+
+class AcquisitionLike(Protocol):
+    """The part of an acquisition result the round reads."""
+
+    @property
+    def acquired(self) -> tuple[AcquiredLike, ...]: ...
+
+    @property
+    def refused(self) -> tuple[RefusedLike, ...]: ...
+
+    @property
+    def unresolvable(self) -> tuple[str, ...]: ...
+
+
+class AcquiredLike(Protocol):
+    source_id: UUID
+    doi: str
+    title: str
+    evidence_level: str
+    already_known: bool
+
+
+class RefusedLike(Protocol):
+    query: str
+    reason: str
+
+
 @dataclass(frozen=True, slots=True)
 class PhaseContext:
     task_id: UUID
@@ -140,6 +178,9 @@ class PhaseContext:
     # Each seat's own private process recall, keyed by seat. A seat is only ever
     # handed its own entry; CLAUDE.md 3 keeps private state private.
     recall: Mapping[Seat, str] = field(default_factory=dict)
+    # None when no tool provider is configured. The acquisition round then records
+    # the requests and stops, rather than inventing sources.
+    acquirer: SourceAcquirer | None = None
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase."""
@@ -271,19 +312,23 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
 
 
 async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
-    """Turn each seat's evidence needs into recorded requests.
+    """Record each seat's evidence needs, then retrieve what can be retrieved.
 
-    The requests are process events, not Source nodes. A source only becomes
-    evidence once the paper pipeline has actually retrieved and verified it;
-    minting one here would be the fabrication CLAUDE.md 7 exists to prevent.
+    A request is a process event. A Source node is only emitted for a paper the
+    pipeline actually fetched, at the level its retrieval supports -- metadata
+    alone is Level B. Minting a Source from a request would be the fabrication
+    CLAUDE.md 7 exists to prevent, so with no acquirer configured this round
+    stops after the requests and the slots stay unfilled.
     """
     outputs, unfilled, absent = await _collect(context)
     round_ = AcquisitionRound()
     events: list[EmittedEvent] = []
+    all_requests: list[tuple[Seat, str]] = []
     for seat, output in sorted(outputs.items(), key=lambda kv: kv[0].value):
         requests = _strings(output.get("requests"))
         if not requests:
             continue
+        all_requests.extend((seat, item) for item in requests)
         result = await round_.run(seat, requests)
         events.append(
             EmittedEvent(
@@ -300,10 +345,55 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
                 idempotency_key=context.key("request", seat.value),
             )
         )
+
+    slots = list(unfilled)
+    if context.acquirer is None:
+        if all_requests:
+            slots.append("ACQUISITION:no_tool_provider")
+    elif all_requests:
+        acquisition = await context.acquirer.acquire(all_requests)
+        events.extend(
+            EmittedEvent(
+                event_type=EvidenceNodeType.SOURCE.value,
+                payload={
+                    "node_id": str(item.source_id),
+                    "doi": item.doi,
+                    "title": item.title,
+                    # The gate reads these to decide admission; passing the real
+                    # retrieval state rather than an optimistic default is what
+                    # makes stage three of CLAUDE.md 7.3 mean anything.
+                    "has_doi": True,
+                    "has_title": bool(item.title),
+                    "has_authors": True,
+                    "is_retracted": False,
+                },
+                idempotency_key=context.key("source", item.doi),
+                evidence_level=item.evidence_level,
+                source_id=item.source_id,
+            )
+            for item in acquisition.acquired
+        )
+        events.extend(
+            EmittedEvent(
+                event_type=SOURCE_REFUSED,
+                payload={"query": item.query, "reason": item.reason},
+                idempotency_key=context.key("refused", item.query),
+            )
+            for item in acquisition.refused
+        )
+        # A request nobody could resolve is a hole in the evidence, and
+        # CLAUDE.md 10 wants it counted rather than forgotten.
+        slots.extend(
+            f"ACQUISITION:unresolved:{query}" for query in acquisition.unresolvable
+        )
+        slots.extend(
+            f"ACQUISITION:refused:{item.query}" for item in acquisition.refused
+        )
+
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(
         events=tuple(events),
-        unfilled_slots=unfilled,
+        unfilled_slots=tuple(slots),
         absent_seats=absent,
     )
 
