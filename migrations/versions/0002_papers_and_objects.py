@@ -11,10 +11,22 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
+from packages.kernel.config import APP_ROLE
+from packages.kernel.privileges import FULL_DML, grant, revoke_all
+
 revision: str = "0002_papers_and_objects"
 down_revision: str | None = "0001_research_and_calls"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+PAPER_TABLES = (
+    "objects",
+    "sources",
+    "source_versions",
+    "studies",
+    "findings",
+    "citation_anchors",
+)
 
 
 def upgrade() -> None:
@@ -137,8 +149,16 @@ def upgrade() -> None:
         ["finding_id"],
     )
 
+    # The ingestion pipeline runs under the application role, so without these
+    # grants every paper fetch fails with a permission error at runtime. The
+    # projector receives its read access in revision 0003, where the tables it
+    # needs to validate against already exist.
+    revoke_all(APP_ROLE, PAPER_TABLES)
+    grant(APP_ROLE, FULL_DML, PAPER_TABLES)
+
 
 def downgrade() -> None:
+    revoke_all(APP_ROLE, PAPER_TABLES)
     op.drop_table("citation_anchors")
     op.drop_table("findings")
     op.drop_table("studies")
