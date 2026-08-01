@@ -1,0 +1,68 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Tooling caches ---
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.cover
+
+# --- Editors / IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Agent tooling ---
+.serena/
+.claude/settings.local.json
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Secrets and local config ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- Frontend (apps/web) ---
+node_modules/
+apps/web/dist/
+apps/web/coverage/
+apps/web/playwright-report/
+apps/web/test-results/
+apps/web/blob-report/
+apps/web/.vite/
+# Playwright screenshot baselines are intentionally tracked; only diffs are ignored.
+**/*-actual.png
+**/*-diff.png
+
+# --- Poliscope runtime artifacts ---
+# Uploaded PDFs and derived objects must never enter version control (CLAUDE.md 16).
+var/
+local_objects/
+*.local.json
