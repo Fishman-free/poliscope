@@ -20,6 +20,7 @@ honest description of what happened.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -42,6 +43,7 @@ from packages.epistemo.contracts import (
 )
 from packages.epistemo.state_machine import TaskStateMachine
 from packages.epistemo.stopping import StopReason, decide_stop
+from packages.memory.council_memory import CouncilMemory
 
 PHASE_FAILED = "PHASE_FAILED"
 PHASE_SKIPPED = "PHASE_SKIPPED"
@@ -185,6 +187,7 @@ class CouncilOrchestrator:
         budget: BudgetTracker,
         deliberator: SeatDeliberator | None = None,
         seats: tuple[Seat, ...] = ORDERED_SEATS,
+        memory: CouncilMemory | None = None,
     ) -> None:
         self._ledger = ledger
         self._budget = budget
@@ -192,6 +195,7 @@ class CouncilOrchestrator:
             deliberator if deliberator is not None else UnavailableDeliberator()
         )
         self._seats = seats
+        self._memory = memory
 
     async def run(
         self,
@@ -205,6 +209,9 @@ class CouncilOrchestrator:
         run_phases: list[TaskPhase] = []
         skipped: list[TaskPhase] = []
         stop = StopReason.CONTINUE
+
+        if self._memory is not None:
+            await self._memory.open(self._seats, question)
 
         for phase in PHASE_SEQUENCE:
             machine.transition_to(phase)
@@ -287,6 +294,7 @@ class CouncilOrchestrator:
             confirmed_claims=confirmed_claims,
             deliberator=self._deliberator,
             carried=dict(state.carried),
+            recall=await self._recall(),
         )
         try:
             outcome = await runner_for(phase)(context)
@@ -309,6 +317,7 @@ class CouncilOrchestrator:
         state.unfilled.extend(outcome.unfilled_slots)
         state.absent.update(outcome.absent_seats)
         state.carried.update(outcome.carry)
+        await self._remember(phase, outcome)
 
         await self._ledger.append(
             task_id=task_id,
@@ -321,6 +330,30 @@ class CouncilOrchestrator:
             idempotency_key=f"{phase.value}:completed",
         )
         state.events += 1
+
+    async def _recall(self) -> Mapping[Seat, str]:
+        if self._memory is None:
+            return {}
+        return await self._memory.recall(self._seats)
+
+    async def _remember(self, phase: TaskPhase, outcome: PhaseOutcome) -> None:
+        """Record what the round did in each participating seat's own memory.
+
+        An absent seat gets nothing: writing "you were unavailable" into its
+        private memory would let a later round mistake the record of a gap for
+        the seat's own reasoning. The gap is already on the ledger, where the
+        researcher can see it.
+        """
+        if self._memory is None:
+            return
+        summary = (
+            f"{phase.value}: {len(outcome.events)} events, "
+            f"{len(outcome.unfilled_slots)} unfilled slots"
+        )
+        for seat in self._seats:
+            if seat in outcome.absent_seats:
+                continue
+            await self._memory.remember(seat, phase.value, summary)
 
     async def _emit(
         self,

@@ -298,6 +298,45 @@ async def test_the_prompt_carries_the_question_and_the_confirmed_claims(
     assert all(claim_id in request.evidence_refs for request in gateway.calls)
 
 
+async def test_a_seat_is_given_its_own_recall_and_no_one_elses(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Private memory that never reaches a prompt is decoration.
+
+    CLAUDE.md 6 puts process memory in MemoBrain so later rounds can use it, and
+    CLAUDE.md 3 keeps it private. Both only mean something at the prompt: the
+    later rounds must carry recall, and it must be the asking seat's own.
+    """
+    task_id, claim_id = await _seed_queued_task(app_sessions)
+    gateway = _ScriptedGateway(claim_id, uuid4())
+
+    await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
+
+    later = [
+        request
+        for request in gateway.calls
+        if TaskPhase(request.purpose) is TaskPhase.FINAL_REJUDGMENT
+    ]
+    assert later, "final rejudgment must have asked the seats"
+    for request in later:
+        prompt = request.messages[1].content
+        assert "Your private recall:" in prompt
+        # The recall is seeded with the question and grown one line per round,
+        # so a seat that had been handed the council's shared memory would show
+        # seven times as many phase markers as it ran.
+        assert prompt.count(TaskPhase.PRECOMMITMENT.value) <= 2
+
+    first = [
+        request
+        for request in gateway.calls
+        if TaskPhase(request.purpose) is TaskPhase.PRECOMMITMENT
+    ]
+    assert all(
+        "Your private recall:" in request.messages[1].content for request in first
+    )
+
+
 def test_a_scripted_payload_matches_what_the_rounds_read() -> None:
     """Guards the seam between the prompt schema names and the runners' keys.
 

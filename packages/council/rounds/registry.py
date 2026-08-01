@@ -137,6 +137,9 @@ class PhaseContext:
     confirmed_claims: tuple[UUID, ...]
     deliberator: SeatDeliberator
     carried: Mapping[str, object] = field(default_factory=dict)
+    # Each seat's own private process recall, keyed by seat. A seat is only ever
+    # handed its own entry; CLAUDE.md 3 keeps private state private.
+    recall: Mapping[Seat, str] = field(default_factory=dict)
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase."""

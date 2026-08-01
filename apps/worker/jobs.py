@@ -33,6 +33,8 @@ from packages.epistemo.orchestrator import CouncilOrchestrator, TaskRunReport
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.evidence.sql_projector import ProjectionReport, SqlGraphProjector
 from packages.kernel.database import canonical_uuid
+from packages.memory.adapter import create_memory_adapter
+from packages.memory.council_memory import CouncilMemory
 from packages.models.contracts import ModelGateway
 from packages.models.gateway import AuditedModelGateway
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
@@ -133,6 +135,9 @@ async def deliberate(
         ledger=SqlEventLedger(session),
         budget=budget,
         deliberator=deliberator,
+        # Process memory, per CLAUDE.md 6. It is created per run rather than per
+        # process so one task's recall can never leak into another's.
+        memory=CouncilMemory(create_memory_adapter(), task_id),
     )
     report = await orchestrator.run(
         task_id=task_id,

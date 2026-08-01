@@ -104,11 +104,16 @@ def _system_prompt(seat: Seat, phase: TaskPhase) -> str:
     )
 
 
-def _user_prompt(context: PhaseContext) -> str:
+def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     lines = [f"Research question: {context.question}"]
     if context.confirmed_claims:
         joined = ", ".join(str(claim) for claim in context.confirmed_claims)
         lines.append(f"Confirmed atomic claims: {joined}")
+    # This seat's own recall only. Handing a seat the whole council's memory
+    # would collapse the seven private states CLAUDE.md 3 requires into one.
+    private = context.recall.get(seat, "")
+    if private:
+        lines.append(f"Your private recall: {private}")
     for key in sorted(context.carried):
         lines.append(f"{key}: {context.carried[key]!r}")
     return "\n".join(lines)
@@ -138,7 +143,7 @@ class GatewayDeliberator:
             model_class=PHASE_MODEL_CLASSES.get(phase, ModelClass.MEDIUM),
             messages=(
                 ModelMessage(role="system", content=_system_prompt(seat, phase)),
-                ModelMessage(role="user", content=_user_prompt(ctx)),
+                ModelMessage(role="user", content=_user_prompt(seat, ctx)),
             ),
             output_schema=PHASE_OUTPUT_SCHEMAS.get(phase, "SeatOutput"),
             evidence_refs=ctx.confirmed_claims,
