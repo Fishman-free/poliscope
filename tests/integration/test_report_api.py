@@ -17,7 +17,6 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.worker.jobs import run_task
@@ -27,8 +26,6 @@ from packages.reports.safety import SAFETY_HEADER, sanitize_export
 from packages.reports.service import ReportService, looks_like_mental_health
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
-
-pytestmark = pytest.mark.requires_docker
 
 MENTAL_HEALTH_QUESTION = "Does adolescent social media use cause depressive symptoms?"
 NEUTRAL_QUESTION = "Does municipal broadband lower household internet prices?"

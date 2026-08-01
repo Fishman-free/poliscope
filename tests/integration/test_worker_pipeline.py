@@ -35,8 +35,6 @@ from packages.evidence.models import (
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
 
-pytestmark = pytest.mark.requires_docker
-
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
 
 

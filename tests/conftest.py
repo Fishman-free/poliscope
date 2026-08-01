@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 from collections.abc import AsyncIterator, Iterator
 from decimal import Decimal
 from pathlib import Path
@@ -45,6 +46,47 @@ def _role_url(admin_url: str, username: str, password: str) -> str:
 def _alembic_config(admin_url: str) -> Config:
     os.environ["POLISCOPE_MIGRATOR_DATABASE_URL"] = admin_url
     return Config(ROOT / "alembic.ini")
+
+
+def docker_is_available() -> bool:
+    """Whether a Docker daemon can actually be reached.
+
+    Checked once per session and cached by the caller. Without this the
+    container-backed tests fail with a connection error that reads like a broken
+    test rather than a missing prerequisite.
+    """
+    try:
+        completed = subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    """Skip the container-backed tests when there is no Docker to run them on.
+
+    Skipped rather than passed: CLAUDE.md 12.3 forbids claiming a feature works
+    on a run that did not exercise it, and a silently-green suite on a machine
+    with no database would do exactly that. The skip reason says what is missing.
+    """
+    if not any(item.get_closest_marker("requires_docker") for item in items):
+        return
+    if docker_is_available():
+        return
+    skip = pytest.mark.skip(
+        reason="needs a Docker daemon for the PostgreSQL test container"
+    )
+    for item in items:
+        if item.get_closest_marker("requires_docker"):
+            item.add_marker(skip)
 
 
 def _postgres_container() -> PostgresContainer:

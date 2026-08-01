@@ -12,7 +12,6 @@ from collections.abc import Mapping
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -32,8 +31,6 @@ from packages.models.models import ModelCallModel
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
 from packages.tools.contracts import ToolRequest, ToolResult
-
-pytestmark = pytest.mark.requires_docker
 
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
 
