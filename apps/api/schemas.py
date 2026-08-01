@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from packages.kernel.contracts import ContractModel, FrozenDict
+from packages.kernel.contracts import (
+    ContractModel,
+    FrozenDict,
+    thaw_for_serialization,
+)
 
 
 class SafetyNotice(ContractModel):
@@ -41,18 +45,38 @@ class SSEEvent(ContractModel):
     payload: FrozenDict[str, object]
 
     def format_sse(self) -> str:
+        """Render one frame.
+
+        Deliberately no ``event:`` line. SSE dispatches a typed frame *only* to
+        listeners registered for that exact type, so putting the event kind
+        there meant any client had to enumerate every kind the backend can emit
+        -- and silently dropped the ones it had not heard of. An audit trail
+        that quietly omits event types it does not recognise is the one thing
+        this stream must never do (CLAUDE.md 7, 11).
+
+        Untyped frames all arrive on the default channel, so nothing can be
+        lost. ``kind`` is in the body, so filtering is still possible; it is now
+        the client's choice rather than the wire's silent default.
+        """
         import json
+
+        # thaw_for_serialization, not dict(): the payload is frozen recursively,
+        # so a nested object arrives as a FrozenDict inside a tuple and
+        # json.dumps raises on it. That raise happened mid-stream, inside the
+        # response generator, so the browser saw the connection simply end --
+        # the audit trail stopped at the first event with a nested payload and
+        # said nothing. A shallow dict() call is not enough here.
         data = json.dumps(
             {
                 "event_id": self.event_id,
                 "task_id": self.task_id,
                 "kind": self.kind,
                 "workspace_version": self.workspace_version,
-                "payload": dict(self.payload),
+                "payload": thaw_for_serialization(self.payload),
             },
             ensure_ascii=False,
         )
-        return f"id: {self.event_id}\nevent: {self.kind}\ndata: {data}\n\n"
+        return f"id: {self.event_id}\ndata: {data}\n\n"
 
 
 class CreateTaskRequest(ContractModel):

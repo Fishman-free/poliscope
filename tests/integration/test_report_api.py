@@ -90,8 +90,8 @@ async def test_the_brief_states_its_gaps_rather_than_omitting_them(
     assert brief.has_gaps
     assert set(brief.absent_seats)
     assert brief.findings == ()
-    assert any("seats could not deliberate" in item for item in brief.limitations)
-    assert any("No study finding was admitted" in item for item in brief.limitations)
+    assert any("未能参与" in item for item in brief.limitations)
+    assert any("没有任何研究发现被采纳" in item for item in brief.limitations)
 
 
 async def test_limitations_are_rendered_beside_the_conclusions(

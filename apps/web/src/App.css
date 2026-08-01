@@ -1,0 +1,182 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* Translucent chrome with content scrolling under it, rather than an opaque
+ * strip that permanently costs vertical space. */
+.app__chrome {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  background: var(--chrome-bg, color-mix(in srgb, var(--surface-0) 78%, transparent));
+  backdrop-filter: var(--chrome-blur, blur(20px) saturate(180%));
+  border-bottom: 1px solid var(--line);
+}
+
+.app__identity {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.app__wordmark {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-size: 1.0625rem;
+}
+
+.app__method {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.app__open {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.app__open-label {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.app__open-input {
+  width: min(30ch, 40vw);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font-size: var(--text-small);
+}
+
+.app__task {
+  padding: var(--space-5) var(--space-5) 0;
+}
+
+.app__task-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.app__task-head h1 {
+  max-width: 62ch;
+}
+
+.app__task-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.app__task-id {
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+}
+
+.app__tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.app__tab {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-4);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  color: var(--ink-3);
+  transition: color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.app__tab:hover {
+  color: var(--ink-1);
+}
+
+.app__tab--on {
+  color: var(--ink-1);
+  border-bottom-color: var(--accent);
+}
+
+.app__tab span:first-child {
+  font-size: var(--text-body);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.app__tab-hint {
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+}
+
+.app__main {
+  flex: 1;
+  padding: var(--space-5);
+  min-height: 0;
+}
+
+.app__placeholder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+  max-width: 60ch;
+  padding-top: var(--space-7);
+}
+
+.app__placeholder code {
+  padding: 0.1em 0.4em;
+  background: var(--surface-2);
+  border-radius: var(--radius-1);
+}
+
+.app__placeholder-note {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
+.app__error {
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid color-mix(in srgb, var(--refuted) 35%, transparent);
+  background: var(--refuted-soft);
+  border-radius: var(--radius-3);
+  max-width: 68ch;
+}
+
+.app__error strong {
+  color: var(--refuted);
+}
+
+.app__error p {
+  margin-top: var(--space-2);
+  font-size: var(--text-small);
+}
+
+.app__error-note {
+  color: var(--ink-3);
+}

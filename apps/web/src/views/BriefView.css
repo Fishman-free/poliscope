@@ -1,0 +1,156 @@
+.brief {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.brief__safety {
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid color-mix(in srgb, var(--provisional) 35%, transparent);
+  background: var(--provisional-soft);
+  border-radius: var(--radius-3);
+  color: var(--ink-1);
+  font-size: var(--text-small);
+  line-height: 1.5;
+}
+
+.brief__safety strong {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--provisional);
+}
+
+/* Two equal columns. Equal, not 2:1 -- the layout is the claim that
+ * limitations carry the same weight as conclusions. */
+.brief__columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .brief__columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.brief__column h3 {
+  margin-bottom: var(--space-2);
+  color: var(--ink-2);
+}
+
+.brief__column h3:not(:first-child) {
+  margin-top: var(--space-5);
+}
+
+/* A left rule, not a coloured box: the limitations must read as part of the
+ * same argument, not as a warning banner people learn to skip. */
+.brief__column--limits {
+  border-left: 2px solid var(--line-strong);
+  padding-left: var(--space-5);
+}
+
+@media (max-width: 900px) {
+  .brief__column--limits {
+    border-left: none;
+    border-top: 2px solid var(--line-strong);
+    padding-left: 0;
+    padding-top: var(--space-4);
+  }
+}
+
+.brief__list,
+.brief__limits,
+.brief__claims {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.brief__list li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.brief__limits li {
+  position: relative;
+  padding-left: var(--space-4);
+  color: var(--ink-2);
+}
+
+.brief__limits li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--provisional);
+}
+
+.brief__claim-statement {
+  font-weight: 500;
+}
+
+.brief__claim-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--space-3);
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
+.brief__claim-meta dt {
+  font-variant-numeric: tabular-nums;
+}
+
+.brief__claim-meta dd {
+  margin: 0;
+}
+
+.brief__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-5);
+}
+
+.brief__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-4);
+}
+
+.brief__ai-notice {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  padding: var(--space-3) var(--space-1);
+}
+
+.button {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  font-size: var(--text-small);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.button:hover {
+  background: var(--surface-2);
+}
+
+/* Feedback on press, not on release. */
+.button:active {
+  transform: scale(0.98);
+  background: var(--surface-3);
+}

@@ -1,0 +1,79 @@
+.audit__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+
+.audit__stream {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  margin-bottom: var(--space-4);
+}
+
+.audit__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-4);
+  flex-shrink: 0;
+}
+
+/* Static, not pulsing. A blinking dot on a page a researcher reads for
+ * twenty minutes is the "meaningless animation" CLAUDE.md 11 rules out. */
+.audit__dot--live {
+  background: var(--admitted);
+}
+
+.audit__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.audit__row {
+  display: grid;
+  grid-template-columns: 4.5rem max-content 1fr;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.audit__row:last-child {
+  border-bottom: none;
+}
+
+/* A left rule rather than a filled row: refusals must be findable at a glance
+ * without turning the trail into a wall of red. */
+.audit__row--refusal {
+  border-left: 3px solid var(--refuted);
+  padding-left: calc(var(--space-2) - 3px);
+  background: color-mix(in srgb, var(--refuted-soft) 55%, transparent);
+}
+
+.audit__seq {
+  color: var(--ink-4);
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit__summary {
+  color: var(--ink-2);
+  font-size: var(--text-small);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 700px) {
+  .audit__row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+}

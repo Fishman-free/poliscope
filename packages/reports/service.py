@@ -121,46 +121,49 @@ def _limitations(brief: ResearchBrief) -> tuple[str, ...]:
 
     Generated from the same state the conclusions are, so a limitation cannot be
     forgotten when a conclusion is added.
+
+    Written in Simplified Chinese to match the rest of the researcher-facing
+    surface (CLAUDE.md 15). The limitations were previously the only English
+    text in a Chinese brief, which is precisely the section a reader must not
+    skim past.
     """
     limits: list[str] = []
     if brief.absent_seats:
         limits.append(
-            f"{len(set(brief.absent_seats))} of 7 seats could not deliberate in at "
-            "least one round; their perspective is missing from the conclusions."
+            f"7 个席位中有 {len(set(brief.absent_seats))} 个在至少一轮中未能参与，"
+            "其视角未进入本报告结论。"
         )
     if brief.skipped_phases:
         limits.append(
-            f"Rounds not reached: {', '.join(sorted(set(brief.skipped_phases)))}. "
-            "The protocol did not complete."
+            f"未执行的轮次：{'、'.join(sorted(set(brief.skipped_phases)))}。"
+            "议会协议未走完。"
         )
     if brief.failed_phases:
         limits.append(
-            f"Rounds that failed: {', '.join(sorted(set(brief.failed_phases)))}."
+            f"执行失败的轮次：{'、'.join(sorted(set(brief.failed_phases)))}。"
         )
     if brief.unadmitted_events:
         limits.append(
-            f"{len(brief.unadmitted_events)} submissions were refused by the "
-            "evidence gate and are not part of any conclusion."
+            f"{len(brief.unadmitted_events)} 项提交被证据门拒绝，"
+            "未参与任何结论；相关记录保留在账本中可供审计。"
         )
     if not brief.findings:
         limits.append(
-            "No study finding was admitted, so nothing here is grounded in "
-            "retrieved source text."
+            "没有任何研究发现被采纳，因此本报告的结论均未建立在已取回的原文之上。"
         )
     if brief.paper_count and brief.independent_cluster_count < brief.paper_count:
         limits.append(
-            f"{brief.paper_count} papers reduce to "
-            f"{brief.independent_cluster_count} independent evidence clusters; "
-            "paper count overstates corroboration."
+            f"{brief.paper_count} 篇论文归并为 "
+            f"{brief.independent_cluster_count} 个独立证据簇；"
+            "直接引用论文数量会夸大佐证强度。"
         )
     if brief.refuted_or_withdrawn:
         limits.append(
-            f"{len(brief.refuted_or_withdrawn)} nodes were refuted, narrowed, or "
-            "withdrawn and are retained for audit rather than deleted."
+            f"{len(brief.refuted_or_withdrawn)} 个节点已被反驳、收窄或撤回，"
+            "按可审计要求保留而未删除。"
         )
     limits.append(
-        "Model confidence is not statistical uncertainty and does not replace "
-        "expert judgment."
+        "模型置信度不等于统计不确定性，也不替代专家判断。"
     )
     return tuple(limits)
 

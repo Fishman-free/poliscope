@@ -66,3 +66,5 @@ apps/web/.vite/
 var/
 local_objects/
 *.local.json
+apps/web/node_modules/
+apps/web/dist/

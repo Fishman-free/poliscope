@@ -1,0 +1,89 @@
+@import "./tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  font-size: var(--text-body);
+  line-height: 1.55;
+  color: var(--ink-1);
+  background: var(--surface-1);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  /* Tracking tightens as size grows; leading loosens as size shrinks. */
+  letter-spacing: -0.015em;
+  line-height: 1.2;
+}
+
+h1 {
+  font-size: var(--text-display);
+  letter-spacing: -0.022em;
+  line-height: 1.15;
+}
+
+h2 {
+  font-size: var(--text-title);
+}
+
+h3 {
+  font-size: var(--text-body);
+  letter-spacing: -0.005em;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* Focus is never removed, only replaced. A researcher auditing a long trail
+ * navigates by keyboard, and an invisible focus ring makes that impossible. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-1);
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  letter-spacing: 0;
+}
+
+/* Reduced motion: keep the information the transition carried, drop the travel.
+ * Opacity changes stay because they signal "this is new"; movement goes. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+    transition-property: opacity, background-color, border-color, color !important;
+    scroll-behavior: auto !important;
+  }
+}

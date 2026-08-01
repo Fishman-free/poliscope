@@ -1,0 +1,185 @@
+.map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-4);
+  height: 100%;
+  min-height: 480px;
+}
+
+@media (max-width: 1000px) {
+  .map {
+    grid-template-columns: 1fr;
+  }
+}
+
+.map--empty {
+  display: block;
+  padding: var(--space-6);
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  min-height: 0;
+}
+
+.map__canvas {
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  overflow: hidden;
+  min-height: 480px;
+}
+
+.map__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.map__legend,
+.map__inspector {
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  padding: var(--space-4);
+}
+
+.map__legend h3,
+.map__inspector h3 {
+  margin-bottom: var(--space-3);
+  color: var(--ink-2);
+}
+
+.map__legend ul {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.map__legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.map__legend-edge {
+  display: inline-block;
+  width: 28px;
+  border-top: 2px dashed var(--refuted);
+  flex-shrink: 0;
+}
+
+.map__toggle {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+  font-size: var(--text-small);
+  cursor: pointer;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.map__toggle-note {
+  grid-column: 2;
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.4;
+}
+
+.map__inspector-type {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+}
+
+.map__inspector-id {
+  margin-top: var(--space-1);
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+  word-break: break-all;
+}
+
+.map__payload {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-2);
+  font-family: var(--mono);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  overflow: auto;
+  max-height: 320px;
+}
+
+/* React Flow node styling. Status is carried by border weight and a left bar
+ * as well as by colour, so the map still reads without colour. */
+.react-flow__node.map-node {
+  width: 220px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-2);
+  border: 1px solid var(--line-strong);
+  border-left-width: 4px;
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font-size: var(--text-small);
+  line-height: 1.4;
+  text-align: left;
+  box-shadow: var(--shadow-1);
+  transition: opacity var(--duration-standard) var(--ease-standard);
+}
+
+.react-flow__node.map-node--admitted {
+  border-left-color: var(--admitted);
+}
+
+.react-flow__node.map-node--provisional {
+  border-left-color: var(--provisional);
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.react-flow__node.map-node--refuted {
+  border-left-color: var(--refuted);
+}
+
+.react-flow__node.map-node--unknown {
+  border-left-color: var(--unknown);
+}
+
+/* Dimming, never removal. */
+.map--dim-refuted .react-flow__node.map-node--refuted {
+  opacity: 0.42;
+}
+
+.react-flow__node.map-node.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.react-flow__edge.map-edge .react-flow__edge-path {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.react-flow__edge.map-edge--opposing .react-flow__edge-path {
+  stroke: var(--refuted);
+}
+
+.react-flow__edge-text {
+  font-size: 10px;
+  fill: var(--ink-3);
+}
+
+.react-flow__controls button {
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-2);
+  fill: currentColor;
+}
