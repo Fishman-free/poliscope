@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from apps.api.dependencies import AppState
-from apps.api.routers import stream, tasks, workspace
+from apps.api.routers import reports, stream, tasks, workspace
 
 
 @asynccontextmanager
@@ -35,6 +35,7 @@ app = FastAPI(title="Poliscope API", lifespan=lifespan)
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(workspace.router, prefix="/api/workspace", tags=["workspace"])
 app.include_router(stream.router, prefix="/api/stream", tags=["stream"])
+app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 
 
 @app.get("/health", tags=["health"])

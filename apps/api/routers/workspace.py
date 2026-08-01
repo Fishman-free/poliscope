@@ -13,15 +13,19 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import String, cast, distinct, func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.dependencies import SessionDep
 from apps.api.schemas import SafetyNotice, WorkspaceSnapshot
+from packages.evidence.independence import LineageLink, cluster_evidence
 from packages.evidence.models import GraphEdgeModel, GraphNodeModel
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
+from packages.kernel.database import canonical_uuid
 from packages.papers.models import SourceModel
+from packages.reports.json_export import to_dict
+from packages.reports.service import ReportService
 from packages.research.repository import ResearchRepository, TaskNotFound
 
 router = APIRouter()
@@ -101,26 +105,32 @@ async def _evidence_counts(
 
     CLAUDE.md 7.4 requires both numbers to reach the interface, because papers
     that share a dataset, a sample, or a research team are not independent
-    evidence and a single count invites exactly that mistake. Clusters are keyed
-    on canonical DOI here; richer lineage narrows this further once the lineage
-    edges are populated.
+    evidence and a single count invites exactly that mistake.
+
+    Only one dependency is derivable from what the database currently records: a
+    shared canonical DOI, which means two source rows describe one work. Dataset
+    reuse, sample overlap, and team overlap need lineage edges that are not yet
+    captured, so the number below is an *upper bound* on independence. It is
+    reported rather than assumed correct, and it is computed by the same
+    clustering used everywhere else so that adding lineage later changes the
+    input and not the rule.
     """
-    papers = await session.scalar(
-        select(func.count())
-        .select_from(SourceModel)
-        .where(SourceModel.task_id == task_id)
+    result = await session.execute(
+        select(SourceModel.id, SourceModel.canonical_doi).where(
+            SourceModel.task_id == task_id
+        )
     )
-    # A source with no canonical DOI counts as its own cluster: unknown identity
-    # must not silently merge two papers into one piece of evidence.
-    cluster_key = func.coalesce(
-        SourceModel.canonical_doi, cast(SourceModel.id, String)
+    rows = list(result)
+    sources = [canonical_uuid(row.id) for row in rows]
+    # A source with no canonical DOI stays its own cluster: unknown identity must
+    # not silently merge two papers into one piece of evidence.
+    dependencies: tuple[LineageLink, ...] = tuple(
+        (canonical_uuid(row.id), "PREPRINT_VERSION_OF", row.canonical_doi)
+        for row in rows
+        if row.canonical_doi
     )
-    clusters = await session.scalar(
-        select(func.count(distinct(cluster_key)))
-        .select_from(SourceModel)
-        .where(SourceModel.task_id == task_id)
-    )
-    return int(papers or 0), int(clusters or 0)
+    clusters = cluster_evidence(sources, dependencies)
+    return clusters.paper_count, clusters.independent_cluster_count
 
 
 @router.get("/{task_id}", response_model=WorkspaceSnapshot)
@@ -133,6 +143,10 @@ async def get_workspace(task_id: UUID, session: SessionDep) -> WorkspaceSnapshot
             detail=f"unknown task {task_id}",
         ) from error
 
+    # The brief is built from the same session and the same moment as the graph
+    # below, so the Research Brief panel cannot show a different conclusion from
+    # the Controversy Map beside it.
+    brief = to_dict(await ReportService(session).build(task_id))
     paper_count, cluster_count = await _evidence_counts(session, task_id)
     version = await SqlEventLedger(session).latest_sequence(task_id)
     task_payload: dict[str, Any] = {
@@ -143,7 +157,7 @@ async def get_workspace(task_id: UUID, session: SessionDep) -> WorkspaceSnapshot
     }
     return WorkspaceSnapshot(
         task=FrozenDict(task_payload),
-        brief=FrozenDict({}),
+        brief=FrozenDict(brief),
         seats=(),
         graph=await _graph(session, task_id),
         blindspots=await _nodes_of_type(session, task_id, BLINDSPOT_NODE_TYPE),

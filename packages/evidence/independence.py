@@ -6,6 +6,10 @@ from uuid import UUID
 
 from packages.evidence.lineage import MERGING_DEPENDENCIES
 
+# (source_ref, dependency_type, group_key). The group key names the thing the
+# two sources have in common: a dataset, a cohort, a canonical DOI.
+LineageLink = tuple[UUID, str, str]
+
 
 @dataclass(frozen=True, slots=True)
 class ClusterResult:
@@ -17,14 +21,24 @@ class ClusterResult:
 
 def cluster_evidence(
     sources: list[UUID],
-    dependencies: tuple[tuple[UUID, str], ...],
+    dependencies: tuple[LineageLink, ...],
 ) -> ClusterResult:
     """Group sources into independent evidence clusters.
 
-    ``dependencies`` lists ``(source_ref, dep_type)`` tuples. When two
-    sources share the same verified dep_type in MERGING_DEPENDENCIES,
-    they are merged into one cluster. SAME_RESEARCH_TEAM alone does
-    NOT merge evidence.
+    ``dependencies`` lists ``(source_ref, dep_type, group_key)`` triples. Two
+    sources merge when they share both a dependency type in
+    ``MERGING_DEPENDENCIES`` and the same ``group_key`` -- the dataset name, the
+    cohort id, the canonical DOI, whatever the dependency is *about*.
+
+    The group key is not decoration. Grouping on the type alone merged every
+    source ever marked SAME_DATASET into a single cluster, so two studies of one
+    dataset and two studies of a different dataset were reported as one piece of
+    evidence instead of two, understating the independence CLAUDE.md 7.4 exists
+    to measure.
+
+    SAME_RESEARCH_TEAM never merges. Shared authorship is a dependency worth
+    showing the researcher, but two datasets from one lab are still two
+    datasets.
     """
     source_set = set(sources)
     parent: dict[UUID, UUID] = {s: s for s in sources}
@@ -42,15 +56,15 @@ def cluster_evidence(
         if ra != rb:
             parent[ra] = rb
 
-    # Group sources by their verified dependency type
-    by_type: dict[str, list[UUID]] = {}
-    for source_ref, dep_type in dependencies:
+    # Group sources by (dependency type, what the dependency is about).
+    by_key: dict[tuple[str, str], list[UUID]] = {}
+    for source_ref, dep_type, group_key in dependencies:
         if dep_type not in MERGING_DEPENDENCIES:
             continue
         if source_ref in source_set:
-            by_type.setdefault(dep_type, []).append(source_ref)
+            by_key.setdefault((dep_type, group_key), []).append(source_ref)
 
-    for _dep_type, group in by_type.items():
+    for _key, group in by_key.items():
         if len(group) < 2:
             continue
         first = group[0]
