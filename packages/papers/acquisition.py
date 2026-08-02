@@ -112,6 +112,7 @@ class SourceAcquisition:
             canonical_doi=normalize_doi(normalized.doi),
             title=normalized.title,
             provider_ids=dict(normalized.provider_ids),
+            authors=list(normalized.authors),
         )
         self._session.add(row)
         await self._session.flush()

@@ -432,12 +432,13 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 **影响证据质量：**
 
-3. **证据谱系边没有落库。** 独立证据簇目前只能按 canonical DOI 合并，是独立性的**上界**。数据集复用、样本重叠、团队重叠需要一张 lineage 表——`packages/papers/models.py` 现有的 `Source`/`Study` 表尚未持久化作者列表或数据集标识符，这是自动识别 `SAME_DATASET`/`SAME_RESEARCH_TEAM` 之前要先解决的建模问题。
 4. **`packages/evidence/lifecycle.py`、`consistency.py`、`repository.py` 无生产调用者。**
-5. **盲证据评审、独立双抽取、来源多样性约束、对抗式检索四种防止「共享证据错误」的机制尚未实现。** 设计见[设计思路](#设计思路从-memobrain-到-epistemobrain)和设计规格第 5、7 节；目前证据独立性只靠 canonical DOI 合并，不靠这四种机制兜底。
+5. **盲证据评审、独立双抽取、来源多样性约束、对抗式检索四种防止「共享证据错误」的机制尚未实现。** 设计见[设计思路](#设计思路从-memobrain-到-epistemobrain)和设计规格第 5、7 节；目前证据独立性只靠 canonical DOI 与作者/数据集谱系合并，不靠这四种机制兜底。
 6. **`Fork`、`Merge`、`Resurrect` 三个新增记忆操作尚未实现。** 目前无法为无法调和的冲突分叉平行研究路径，也无法在新证据出现时主动复活被隔离的假设——`Quarantine` 的状态机允许 `RESURRECTED` 状态，但没有触发它的代码路径。
 
 > 原第 4、5 项（Dialectical Fold 未接线；DebateCapsule 与 DissentCertificate 未产出）已解决：`run_joint_modeling` 和 `run_final_rejudgment`（`packages/council/rounds/registry.py`）现在分别产出 `DebateCapsule` 和 `DissentCertificate` 事件，前端「少数意见与异议」面板不再恒为空。同时修复了一个此前未记录的 bug：`apps/api/routers/workspace.py` 与 `packages/reports/service.py` 的 `dissents` 字段此前都错误地查询 `DebateCapsule` 节点类型，现已改为查询 `DissentCertificate`。
+>
+> 原第 3 项（证据谱系边没有落库）**部分解决，不对称**：`sources` 表新增了 `authors`（JSONB）与 `dataset_id`（可空字符串）两列（迁移 `0006_source_lineage_fields`），`packages/evidence/lineage_detection.py` 新增 `detect_lineage()` 统一取代此前 `reports/service.py` 与 `workspace.py` 里重复的内联 DOI 拼接逻辑。`authors` 是**端到端真实接线**：OpenAlex/Crossref 适配器本就返回作者列表，此前只是在 `SourceAcquisition._persist()` 里被丢弃，现在会落库并驱动 `SAME_RESEARCH_TEAM` 边（只标注，不合并独立证据簇计数，见 CLAUDE.md 7.4）。`dataset_id` 是**仅完成建模、未接通真实数据**：目前没有任何适配器能从 DOI 查询解析出数据集标识符，这一列和 `SAME_DATASET` 检测逻辑只经过合成数据的单元测试验证，生产环境中每一行的 `dataset_id` 实际上恒为 `NULL`，等一个真正能提取数据集标识（例如论文 Data Availability 声明）的抽取路径接入之后才会真正发挥作用。
 
 **尚未开始：**
 

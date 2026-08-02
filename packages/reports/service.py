@@ -25,7 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.evidence.contracts import EvidenceNodeType
-from packages.evidence.independence import LineageLink, cluster_evidence
+from packages.evidence.independence import cluster_evidence
+from packages.evidence.lineage_detection import LineageSourceRow, detect_lineage
 from packages.evidence.models import GraphNodeModel, ScientificEventModel
 from packages.kernel.database import canonical_uuid
 from packages.papers.models import SourceModel
@@ -192,15 +193,24 @@ class ReportService:
 
     async def _clusters(self, task_id: UUID) -> tuple[int, int]:
         result = await self._session.execute(
-            select(SourceModel.id, SourceModel.canonical_doi).where(
-                SourceModel.task_id == task_id
-            )
+            select(
+                SourceModel.id,
+                SourceModel.canonical_doi,
+                SourceModel.dataset_id,
+                SourceModel.authors,
+            ).where(SourceModel.task_id == task_id)
         )
         rows = list(result)
-        dependencies: tuple[LineageLink, ...] = tuple(
-            (canonical_uuid(row.id), "PREPRINT_VERSION_OF", row.canonical_doi)
-            for row in rows
-            if row.canonical_doi
+        dependencies = detect_lineage(
+            [
+                LineageSourceRow(
+                    source_id=canonical_uuid(row.id),
+                    canonical_doi=row.canonical_doi,
+                    dataset_id=row.dataset_id,
+                    authors=tuple(row.authors),
+                )
+                for row in rows
+            ]
         )
         clustered = cluster_evidence(
             [canonical_uuid(row.id) for row in rows], dependencies

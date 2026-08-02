@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.dependencies import SessionDep
 from apps.api.schemas import SafetyNotice, WorkspaceSnapshot
-from packages.evidence.independence import LineageLink, cluster_evidence
+from packages.evidence.independence import cluster_evidence
+from packages.evidence.lineage_detection import LineageSourceRow, detect_lineage
 from packages.evidence.models import GraphEdgeModel, GraphNodeModel
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
@@ -107,27 +108,38 @@ async def _evidence_counts(
     that share a dataset, a sample, or a research team are not independent
     evidence and a single count invites exactly that mistake.
 
-    Only one dependency is derivable from what the database currently records: a
-    shared canonical DOI, which means two source rows describe one work. Dataset
-    reuse, sample overlap, and team overlap need lineage edges that are not yet
-    captured, so the number below is an *upper bound* on independence. It is
-    reported rather than assumed correct, and it is computed by the same
-    clustering used everywhere else so that adding lineage later changes the
+    Shared canonical DOI (two rows describing one work) and shared
+    ``dataset_id`` both merge clusters. Shared authorship never merges --
+    CLAUDE.md 4 treats two datasets from one lab as two datasets -- but is
+    still detected so a future view can surface it. No current provider
+    adapter resolves a dataset identifier, so in practice ``dataset_id`` is
+    ``None`` for essentially every row today; this is an upper bound on
+    independence, not a guarantee, and is computed by the same clustering used
+    everywhere else so that wiring a real dataset-id source later changes the
     input and not the rule.
     """
     result = await session.execute(
-        select(SourceModel.id, SourceModel.canonical_doi).where(
-            SourceModel.task_id == task_id
-        )
+        select(
+            SourceModel.id,
+            SourceModel.canonical_doi,
+            SourceModel.dataset_id,
+            SourceModel.authors,
+        ).where(SourceModel.task_id == task_id)
     )
     rows = list(result)
     sources = [canonical_uuid(row.id) for row in rows]
     # A source with no canonical DOI stays its own cluster: unknown identity must
     # not silently merge two papers into one piece of evidence.
-    dependencies: tuple[LineageLink, ...] = tuple(
-        (canonical_uuid(row.id), "PREPRINT_VERSION_OF", row.canonical_doi)
-        for row in rows
-        if row.canonical_doi
+    dependencies = detect_lineage(
+        [
+            LineageSourceRow(
+                source_id=canonical_uuid(row.id),
+                canonical_doi=row.canonical_doi,
+                dataset_id=row.dataset_id,
+                authors=tuple(row.authors),
+            )
+            for row in rows
+        ]
     )
     clusters = cluster_evidence(sources, dependencies)
     return clusters.paper_count, clusters.independent_cluster_count
