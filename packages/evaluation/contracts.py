@@ -15,8 +15,9 @@ class EvalResult(ContractModel):
     blindspot_recall: float
     blindspot_precision: float
     citation_entailment: float
+    evidence_independence: float | None = None
     causal_over_inference: float
     dissent_preservation: float
     false_consensus: float
     drift: float
-    cost_per_blindspot: float
+    cost_per_blindspot: float | None = None

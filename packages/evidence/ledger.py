@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -110,3 +110,31 @@ class EventLedger:
         return [
             entry for entry in self._entries.values() if entry.status == "admitted"
         ]
+
+    def list_for_task(self, task_id: UUID) -> list[LedgerEntry]:
+        """All entries for one task, in sequence order.
+
+        Used by the deterministic evaluator (packages/evaluation/harness.py) to
+        read back a run's full event stream -- admitted, quarantined, and
+        process-only alike -- without reaching into ``_entries`` directly.
+        """
+        return sorted(
+            (entry for entry in self._entries.values() if entry.task_id == task_id),
+            key=lambda entry: entry.sequence,
+        )
+
+    def set_status(self, event_id: UUID, status: str) -> LedgerEntry:
+        """Move an entry from ``pending`` to its verdict after gate evaluation.
+
+        The in-memory ledger predates any gate being wired to it, so ``append``
+        alone had no way to record a disposition decided after the fact. This is
+        the minimal extension the deterministic evaluator needs, not a
+        duplicate of ``SqlEventLedger`` -- that class persists to Postgres and
+        the projector decides status by writing a new row instead.
+        """
+        entry = self._entries.get(event_id)
+        if entry is None:
+            raise KeyError(f"unknown event: {event_id}")
+        updated = replace(entry, status=status)
+        self._entries[event_id] = updated
+        return updated

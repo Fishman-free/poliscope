@@ -16,7 +16,7 @@ passing an AI derivation off as evidence.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 
 from packages.council.contracts import Seat
@@ -142,21 +142,57 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     return "\n".join(lines)
 
 
+def generic_system_prompt(seat: Seat, phase: TaskPhase) -> str:
+    """One undifferentiated researcher voice, with no seat identity at all.
+
+    Used by :func:`packages.evaluation.harness.generic_debate_deliberator` to
+    build the "Fixed Multi-Agent Debate" baseline from design spec 11.3: several
+    copies of the same generic agent debating, rather than seven role-specialised
+    seats. Deliberately does not read ``ROLE_SPECS`` or ``SEAT_INSTRUCTIONS`` --
+    the whole point of this baseline is the *absence* of CLAUDE.md 3's per-seat
+    specialization, so every seat must receive an identical prompt.
+    """
+    return (
+        "You are a research assistant debating a contested empirical question "
+        "alongside several other copies of yourself. No individual area of "
+        "expertise is assigned to you; weigh the question from every angle.\n"
+        "Ground every judgment in a retrievable source. Say plainly when the "
+        "evidence does not support an answer; an admitted gap is a correct "
+        "answer and a confident guess is not.\n"
+        f"Current round: {phase.value}. Reply only with the requested schema."
+    )
+
+
+SystemPromptBuilder = Callable[[Seat, TaskPhase], str]
+UserPromptBuilder = Callable[[Seat, PhaseContext], str]
+
+
 class GatewayDeliberator:
     """Produces one seat's structured output for one phase, via the gateway.
 
     Stateless per call. The gateway handles retries, cost accounting, and the
     audit row; this class only decides what to ask and what to do when the
     answer is unusable.
+
+    ``system_prompt``/``user_prompt`` default to the real council's per-seat
+    specialised prompts. They are injectable so the evaluation harness can reuse
+    every other piece of this class -- request shaping, budget consumption,
+    schema-quarantine handling -- for baselines that must NOT specialise by
+    seat, instead of re-implementing that machinery a second time.
     """
 
     def __init__(
         self,
         gateway: ModelGateway,
         budget: BudgetTracker | None = None,
+        *,
+        system_prompt: SystemPromptBuilder = _system_prompt,
+        user_prompt: UserPromptBuilder = _user_prompt,
     ) -> None:
         self._gateway = gateway
         self._budget = budget
+        self._system_prompt = system_prompt
+        self._user_prompt = user_prompt
 
     def _request(self, seat: Seat, phase: TaskPhase, ctx: PhaseContext) -> ModelRequest:
         return ModelRequest(
@@ -165,8 +201,8 @@ class GatewayDeliberator:
             purpose=phase.value,
             model_class=PHASE_MODEL_CLASSES.get(phase, ModelClass.MEDIUM),
             messages=(
-                ModelMessage(role="system", content=_system_prompt(seat, phase)),
-                ModelMessage(role="user", content=_user_prompt(seat, ctx)),
+                ModelMessage(role="system", content=self._system_prompt(seat, phase)),
+                ModelMessage(role="user", content=self._user_prompt(seat, ctx)),
             ),
             output_schema=PHASE_OUTPUT_SCHEMAS.get(phase, "SeatOutput"),
             evidence_refs=ctx.confirmed_claims,
@@ -224,5 +260,8 @@ __all__ = [
     "PHASE_OUTPUT_SCHEMAS",
     "SEAT_INSTRUCTIONS",
     "GatewayDeliberator",
+    "SystemPromptBuilder",
+    "UserPromptBuilder",
     "deliberator_for",
+    "generic_system_prompt",
 ]

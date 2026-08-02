@@ -453,9 +453,17 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 **尚未开始：**
 
-9. **ForesightBlindspot 评测基准。** 语料与验收矩阵的骨架在 `packages/evaluation/`，五个对照组和消融实验都还没跑。
+9. ~~ForesightBlindspot 评测基准。语料与验收矩阵的骨架在 `packages/evaluation/`，五个对照组和消融实验都还没跑。~~ **已解决，但完成度不对称，见下方说明。**
 10. **Evolution View 与 Blindspot Radar。** 工作台快照里 `evolution` 和 `seats` 恒为空数组。
 11. **快照 / 暂停 / 恢复的端到端路径。** `CouncilMemory.snapshot/restore` 与 `restore_task_state` 都有实现和测试，但没有暴露成 API 或 CLI 操作。
+
+> 原第 9 项（ForesightBlindspot 评测基准）**已接入，但完成度不对称：**
+> - **五个对照组——完整闭环。** `packages/evaluation/harness.py::run_baseline()` 支持全部 `BaselineVariant`（Single-Agent Deep Research、Fixed Multi-Agent Debate、Council + Linear Context、Council + MemoBrain 无 Evidence Engine、完整 Poliscope），每一级只比上一级多打开一个能力（席位数、prompt 专业化、`SharedLinearMemoryAdapter` 强制共享记忆、`FullEvidenceGate` 有无），且用无数据库依赖的 `EvalLedger` 跑通，`tests/unit/test_evaluation_harness.py` 逐条断言了这些差异确实存在，而不只是「跑起来了」。
+> - **打分函数——完整闭环，代码可计算部分。** `packages/evaluation/scoring.py` 提供 `score_blindspots`（Recall/Precision）、`score_citation_entailment`、`score_evidence_independence`、`score_dissent_preservation`、`cost_per_valid_blindspot`，全部复用生产环境本身的判定规则（`verify_citation_entailment`、`detect_lineage`/`cluster_evidence`、`CausalUpgradePolicy`），不重新发明一套平行标准。
+> - **`score_causal_overclaim`——在当前生产接线下恒为 `None`，这是一个真实存在、尚待解决的缺口，不是评测框架本身的缺陷。** 追踪到根源：全仓库唯一产出 `Claim` 事件的路径是 `packages/council/rounds/registry.py::_fork_events`（Fork 机制），它硬编码 `claim_type="correlational"`，从未设置 `study_design` 字段——也就是说没有任何一条生产路径会产出因果类型的 `Claim` 事件，无论跑哪个基线。`tests/unit/test_evaluation_demo_case.py` 的端到端演示案例对此显式断言 `score_causal_overclaim(...) is None` 并注释了原因，而不是绕开真实编排去手造一个生产环境不可能产出的因果 Claim 事件来让分数看起来能用。修复需要给 Fork 之外再补一条能识别并标记因果主张 `study_design` 的路径，目前不在本版范围内。
+> - **人工标注 Kappa/Alpha——只搭了统计骨架，没有标注数据。** `packages/evaluation/agreement.py` 里 `cohen_kappa`/`krippendorff_alpha_nominal` 两个统计函数本身完整、已用合成数据单测验证；但 `load_human_annotations()` 按 CLAUDE.md 第 7 条故意抛出 `HumanAnnotationsNotCollected`，因为目前没有任何标注 UI、招募或培训流程——这是独立于本模块的产品工作，不是一个缺失的公式。
+> - **端到端演示案例——1 个，覆盖完整 Poliscope 基线。** `tests/unit/test_evaluation_demo_case.py` 用脚本化的 `ModelGateway`/`SourceAcquirer`/`FindingExtractor`（复用 `scripts/seed_demo_task.py` 与既有单测已验证过的三方 fake 模式）跑通一次完整的 8 阶段议会，验证 Blindspot Recall/Precision、Citation Entailment、Evidence Independence、Dissent Preservation 四项打分都能从一次真实（脚本化）议会运行中算出非平凡的值，而不是只喂给打分函数手造的 `LedgerEntry`。
+> - **尚未做到的部分：** 真实厂商模型网关 + 真实论文语料的时间切片评测语料尚未策划（受限于[第 1、2 项](#已知缺口)本身尚缺真实凭证）；五个基线之间的正式对比报告/消融实验表尚未作为一次真实实验跑出来记录——框架支持（`BaselineVariant` 枚举本身就是消融维度），但目前只有单测层面验证了「每一级确实不同」，没有产出一份实际的对照数字。
 
 ---
 
@@ -495,7 +503,7 @@ Poliscope 以 [MemoBrain](https://github.com/qhjqhj00/MemoBrain) 作为执行记
 - Evidence Lineage Graph
 - ForesightBlindspot 时间切片评测
 
-其中 Dialectical Fold、Dissent Certificate 与 Fork/Merge/Resurrect 已接入主流程（完成度不对称，见上文）；Evidence Lineage Graph 部分接入（`authors` 端到端真实接线，`dataset_id` 仅完成建模）；ForesightBlindspot 目前尚未接入，见[已知缺口](#已知缺口)。
+其中 Dialectical Fold、Dissent Certificate 与 Fork/Merge/Resurrect 已接入主流程（完成度不对称，见上文）；Evidence Lineage Graph 部分接入（`authors` 端到端真实接线，`dataset_id` 仅完成建模）；ForesightBlindspot 五个基线与打分函数已接入并有端到端演示案例验证，但因果过度推断打分恒为 `None`、真实语料评测与消融实验尚未跑（完成度不对称，见上文）。
 
 ---
 

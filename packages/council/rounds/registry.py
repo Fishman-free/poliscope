@@ -495,6 +495,14 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
                     "has_title": bool(item.title),
                     "has_authors": True,
                     "is_retracted": False,
+                    # Carried alongside the DB row (SourceModel.authors/dataset_id,
+                    # which production lineage detection reads directly -- see
+                    # apps/api/routers/workspace.py) so a DB-less event stream, such
+                    # as packages.evaluation.harness.EvalLedger, can compute the same
+                    # SAME_DATASET/SAME_RESEARCH_TEAM lineage from the event payload
+                    # alone.
+                    "authors": list(item.authors),
+                    "dataset_id": item.dataset_id,
                 },
                 idempotency_key=context.key("source", item.doi),
                 evidence_level=item.evidence_level,
