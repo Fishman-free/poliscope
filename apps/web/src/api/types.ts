@@ -88,15 +88,90 @@ export interface TaskSummary {
   created_by: string;
 }
 
+/** One seat's precommitment, straight off ``PRECOMMITMENT_SEALED``. */
+export interface SeatPrecommitment {
+  confidence: number | null;
+  update_condition: string | null;
+}
+
+/** One seat's challenge, straight off ``CHALLENGE_RAISED``. */
+export interface SeatChallenge {
+  claim_id: string | null;
+  statement: string | null;
+  is_fatal: boolean | null;
+}
+
+/** One seat's final judgment, straight off ``FINAL_JUDGMENT``. */
+export interface SeatFinalJudgment {
+  final_judgment: string | null;
+  confidence: number | null;
+  has_dissent: boolean | null;
+}
+
+/** Per-seat council summary. Absent phases stay visible as `null`/`[]`, not
+ * omitted -- an unavailable seat must not silently vanish from the panel. */
+export interface SeatSummary {
+  seat: string;
+  precommitment: SeatPrecommitment | null;
+  challenges_raised: SeatChallenge[];
+  final_judgment: SeatFinalJudgment | null;
+  unavailable_phases: string[];
+}
+
+/** A claim-referencing timeline entry: a Claim (incl. a fork), a challenge,
+ * or a dissent. `claim_id` is `null` when the production code has no claim
+ * to name for this event -- shown as such, never coerced to an empty string. */
+export interface EvolutionEntry {
+  sequence: number;
+  event_type: string;
+  status: string;
+  claim_id: string | null;
+  payload: Record<string, unknown>;
+}
+
+/** The flattened node shape `_nodes_of_type()` returns: id/status plus the
+ * node's own payload spread in -- structurally distinct from `BriefNode`,
+ * whose payload stays nested. Do not reuse `BriefNode` for these fields. */
+export interface WorkspaceNode {
+  id: string;
+  status: string;
+  [key: string]: unknown;
+}
+
+/** A Blindspot's own `kind`, not to be confused with its `node_type` (always
+ * "Blindspot"). "bounty" carries all five scored dimensions; the source-
+ * diversity check does not score anything, and must be shown as unscored
+ * rather than defaulted to 0 -- a 0 would misrepresent it as investigated
+ * and found low-impact. */
+export type BlindspotKind = "bounty" | "source_diversity" | string;
+
+export interface WorkspaceBlindspot extends WorkspaceNode {
+  statement?: string;
+  kind?: BlindspotKind;
+  score?: string;
+  impact?: string;
+  uncertainty?: string;
+  investigability?: string;
+  novelty?: string;
+  normalized_cost?: string;
+  source_refs?: string[];
+}
+
+export const BLINDSPOT_KIND_LABELS: Record<string, string> = {
+  bounty: "议会提名",
+  source_diversity: "来源单一",
+  adversarial_retrieval: "对抗式检索",
+};
+
 export interface WorkspaceSnapshot {
   task: TaskSummary;
   brief: ResearchBrief;
-  seats: Record<string, unknown>[];
+  seats: SeatSummary[];
   graph: EvidenceGraph;
-  blindspots: Record<string, unknown>[];
-  discriminating_studies: Record<string, unknown>[];
-  dissents: Record<string, unknown>[];
-  evolution: Record<string, unknown>[];
+  blindspots: WorkspaceBlindspot[];
+  discriminating_studies: WorkspaceNode[];
+  dissents: WorkspaceNode[];
+  evolution: EvolutionEntry[];
   paper_count: number;
   independent_cluster_count: number;
   workspace_version: number;
@@ -145,6 +220,7 @@ export const NODE_TYPE_LABELS: Record<string, string> = {
   Blindspot: "盲点",
   DebateCapsule: "争论胶囊",
   DiscriminatingStudy: "可区分性研究",
+  DissentCertificate: "异议证书",
 };
 
 export const EDGE_TYPE_LABELS: Record<string, string> = {

@@ -16,16 +16,22 @@ import { fetchReportMarkdown } from "./api/client";
 import { useWorkspace } from "./api/useWorkspace";
 import { Badge, Spinner, type Tone } from "./components/primitives";
 import { AuditView } from "./views/AuditView";
+import { BlindspotRadarView } from "./views/BlindspotRadarView";
 import { BriefView } from "./views/BriefView";
+import { CouncilView } from "./views/CouncilView";
+import { EvolutionView } from "./views/EvolutionView";
 import { MapView } from "./views/MapView";
 
 import "./App.css";
 
-type Tab = "brief" | "map" | "audit";
+type Tab = "brief" | "map" | "council" | "radar" | "evolution" | "audit";
 
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "brief", label: "Research Brief", hint: "结论与局限并排" },
   { id: "map", label: "Controversy Map", hint: "证据图与争议结构" },
+  { id: "council", label: "Council", hint: "7 人议会状态" },
+  { id: "radar", label: "Blindspot Radar", hint: "影响 x 可调查性" },
+  { id: "evolution", label: "Evolution View", hint: "主张分叉与异议时间线" },
   { id: "audit", label: "Audit Trail", hint: "事件账本与拒绝记录" },
 ];
 
@@ -197,6 +203,13 @@ export function App() {
                   />
                 ) : null}
                 {tab === "map" ? <MapView graph={snapshot.graph} /> : null}
+                {tab === "council" ? <CouncilView seats={snapshot.seats} /> : null}
+                {tab === "radar" ? (
+                  <BlindspotRadarView blindspots={snapshot.blindspots} />
+                ) : null}
+                {tab === "evolution" ? (
+                  <EvolutionView entries={snapshot.evolution} />
+                ) : null}
                 {tab === "audit" ? (
                   <AuditView events={events} streamOpen={stream === "open"} />
                 ) : null}

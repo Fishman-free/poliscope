@@ -1,0 +1,139 @@
+.radar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-4);
+}
+
+@media (max-width: 1000px) {
+  .radar {
+    grid-template-columns: 1fr;
+  }
+}
+
+.radar__plot {
+  width: 100%;
+  height: auto;
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+}
+
+.radar__axis {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.radar__axis-label {
+  font-size: 11px;
+  fill: var(--ink-3);
+}
+
+.radar__point {
+  cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.radar__point:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.radar__point--admitted {
+  fill: color-mix(in srgb, var(--admitted) 65%, transparent);
+  stroke: var(--admitted);
+}
+
+.radar__point--provisional {
+  fill: color-mix(in srgb, var(--provisional) 65%, transparent);
+  stroke: var(--provisional);
+}
+
+.radar__point--refuted {
+  fill: color-mix(in srgb, var(--refuted) 55%, transparent);
+  stroke: var(--refuted);
+}
+
+.radar__point--unknown {
+  fill: color-mix(in srgb, var(--unknown) 55%, transparent);
+  stroke: var(--unknown);
+}
+
+.radar__point--selected {
+  stroke-width: 2.5;
+}
+
+.radar__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.radar__inspector,
+.radar__unscored {
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  padding: var(--space-4);
+}
+
+.radar__inspector h3,
+.radar__unscored h3 {
+  margin-bottom: var(--space-3);
+  color: var(--ink-2);
+}
+
+.radar__inspector-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.radar__kind-label {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.radar__statement {
+  font-size: var(--text-small);
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.radar__payload {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-2);
+  font-family: var(--mono);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  overflow: auto;
+  max-height: 260px;
+}
+
+.radar__unscored-note {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.4;
+  margin-bottom: var(--space-3);
+}
+
+.radar__unscored-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.radar__unscored-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+  cursor: pointer;
+}

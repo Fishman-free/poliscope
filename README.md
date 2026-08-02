@@ -454,7 +454,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 **尚未开始：**
 
 9. ~~ForesightBlindspot 评测基准。语料与验收矩阵的骨架在 `packages/evaluation/`，五个对照组和消融实验都还没跑。~~ **已解决，但完成度不对称，见下方说明。**
-10. **Evolution View 与 Blindspot Radar。** 工作台快照里 `evolution` 和 `seats` 恒为空数组。
+10. ~~Evolution View 与 Blindspot Radar。工作台快照里 `evolution` 和 `seats` 恒为空数组。~~ **已解决，见下方说明。**
 11. **快照 / 暂停 / 恢复的端到端路径。** `CouncilMemory.snapshot/restore` 与 `restore_task_state` 都有实现和测试，但没有暴露成 API 或 CLI 操作。
 
 > 原第 9 项（ForesightBlindspot 评测基准）**已接入，但完成度不对称：**
@@ -464,6 +464,13 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 > - **人工标注 Kappa/Alpha——只搭了统计骨架，没有标注数据。** `packages/evaluation/agreement.py` 里 `cohen_kappa`/`krippendorff_alpha_nominal` 两个统计函数本身完整、已用合成数据单测验证；但 `load_human_annotations()` 按 CLAUDE.md 第 7 条故意抛出 `HumanAnnotationsNotCollected`，因为目前没有任何标注 UI、招募或培训流程——这是独立于本模块的产品工作，不是一个缺失的公式。
 > - **端到端演示案例——1 个，覆盖完整 Poliscope 基线。** `tests/unit/test_evaluation_demo_case.py` 用脚本化的 `ModelGateway`/`SourceAcquirer`/`FindingExtractor`（复用 `scripts/seed_demo_task.py` 与既有单测已验证过的三方 fake 模式）跑通一次完整的 8 阶段议会，验证 Blindspot Recall/Precision、Citation Entailment、Evidence Independence、Dissent Preservation 四项打分都能从一次真实（脚本化）议会运行中算出非平凡的值，而不是只喂给打分函数手造的 `LedgerEntry`。
 > - **尚未做到的部分：** 真实厂商模型网关 + 真实论文语料的时间切片评测语料尚未策划（受限于[第 1、2 项](#已知缺口)本身尚缺真实凭证）；五个基线之间的正式对比报告/消融实验表尚未作为一次真实实验跑出来记录——框架支持（`BaselineVariant` 枚举本身就是消融维度），但目前只有单测层面验证了「每一级确实不同」，没有产出一份实际的对照数字。
+>
+> 原第 10 项（Evolution View 与 Blindspot Radar）**已解决，前后端都接线：**
+> - **后端——完整闭环。** `apps/api/routers/workspace.py::_seats()` 从事件账本按席位聚合 `PRECOMMITMENT_SEALED`/`CHALLENGE_RAISED`/`FINAL_JUDGMENT`/`SEAT_UNAVAILABLE` 四类过程事件，恒定按 `ORDERED_SEATS` 列出全部七个席位，缺席的席位显示为空字段而不是从列表消失。`_evolution()` 取 `Claim`（含 Fork 产出的锚点与新主张）、`CHALLENGE_RAISED`、`DissentCertificate` 三类会指名某个主张的事件，按账本序号（而不是到达顺序）排成时间线。`run_blindspot_bounty` 的 `Blindspot` 事件载荷同时携带 `impact`/`uncertainty`/`investigability`/`novelty`/`normalized_cost` 五个原始维度，不再只有一个合成分数。`tests/integration/test_workspace_seats_evolution.py` 用一次脚本化议会（含一次致命分叉、一次非致命质询、一次异议）端到端验证两个面板都是真实数据，不是占位符。
+> - **前端——三个新视图，而不是计划最初写的两个。** `apps/web` 新增 Council（`views/CouncilView.tsx`，按席位展示预承诺 / 提出的质询 / 最终复判 / 缺席轮次）、Blindspot Radar（`views/BlindspotRadarView.tsx`，影响 x 可调查性散点图、点大小表不确定性）、Evolution View（`views/EvolutionView.tsx`，主张分叉/质询/异议时间线）。多加 Council 视图是因为 CLAUDE.md 第 11 条本就把「7 人议会状态」列为独立必需面板，而后端 `_seats()` 已经不再恒为空——不把它接到界面上，就是把这次刚刚修掉的「后端有数据、前端从不展示」的缺口原样复制到 seats 字段上。
+> - **Blindspot Radar 手写 SVG，不引入新依赖。** `apps/web/package.json` 里除 `@xyflow/react`（React Flow）外没有任何图表库；一张只有三个编码维度（影响、可调查性、不确定性）的散点图不构成引入 recharts/visx/d3 的理由（KISS/YAGNI）。
+> - **未评分盲点不画在原点。** 来源多样性检查产出的 `Blindspot`（`kind: "source_diversity"`）没有 `impact`/`uncertainty`/`investigability` 任何一项，`BlindspotRadarView` 把这类盲点单独列在图表旁的「未评分盲点」区块，而不是把缺失字段当成 0 画在坐标原点——CLAUDE.md 第 7 条要求区分「未测量」与「测量出的零值」。
+> - **无法做到的部分：** 没有轮次会为某个 `Claim` 发出连续的「置信度变化」事件，所以 Evolution View 只能展示分叉 / 质询 / 异议这几个离散事件，画不出连续曲线；这是生产编排本身的缺口，不是前端渲染的裁剪。
 
 ---
 
