@@ -455,7 +455,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 9. ~~ForesightBlindspot 评测基准。语料与验收矩阵的骨架在 `packages/evaluation/`，五个对照组和消融实验都还没跑。~~ **已解决，但完成度不对称，见下方说明。**
 10. ~~Evolution View 与 Blindspot Radar。工作台快照里 `evolution` 和 `seats` 恒为空数组。~~ **已解决，见下方说明。**
-11. **快照 / 暂停 / 恢复的端到端路径。** `CouncilMemory.snapshot/restore` 与 `restore_task_state` 都有实现和测试，但没有暴露成 API 或 CLI 操作。
+11. ~~快照 / 暂停 / 恢复的端到端路径。`CouncilMemory.snapshot/restore` 与 `restore_task_state` 都有实现和测试，但没有暴露成 API 或 CLI 操作。~~ **已解决，但范围收窄，见下方说明。**
 
 > 原第 9 项（ForesightBlindspot 评测基准）**已接入，但完成度不对称：**
 > - **五个对照组——完整闭环。** `packages/evaluation/harness.py::run_baseline()` 支持全部 `BaselineVariant`（Single-Agent Deep Research、Fixed Multi-Agent Debate、Council + Linear Context、Council + MemoBrain 无 Evidence Engine、完整 Poliscope），每一级只比上一级多打开一个能力（席位数、prompt 专业化、`SharedLinearMemoryAdapter` 强制共享记忆、`FullEvidenceGate` 有无），且用无数据库依赖的 `EvalLedger` 跑通，`tests/unit/test_evaluation_harness.py` 逐条断言了这些差异确实存在，而不只是「跑起来了」。
@@ -464,6 +464,10 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 > - **人工标注 Kappa/Alpha——只搭了统计骨架，没有标注数据。** `packages/evaluation/agreement.py` 里 `cohen_kappa`/`krippendorff_alpha_nominal` 两个统计函数本身完整、已用合成数据单测验证；但 `load_human_annotations()` 按 CLAUDE.md 第 7 条故意抛出 `HumanAnnotationsNotCollected`，因为目前没有任何标注 UI、招募或培训流程——这是独立于本模块的产品工作，不是一个缺失的公式。
 > - **端到端演示案例——1 个，覆盖完整 Poliscope 基线。** `tests/unit/test_evaluation_demo_case.py` 用脚本化的 `ModelGateway`/`SourceAcquirer`/`FindingExtractor`（复用 `scripts/seed_demo_task.py` 与既有单测已验证过的三方 fake 模式）跑通一次完整的 8 阶段议会，验证 Blindspot Recall/Precision、Citation Entailment、Evidence Independence、Dissent Preservation 四项打分都能从一次真实（脚本化）议会运行中算出非平凡的值，而不是只喂给打分函数手造的 `LedgerEntry`。
 > - **尚未做到的部分：** 真实厂商模型网关 + 真实论文语料的时间切片评测语料尚未策划（受限于[第 1、2 项](#已知缺口)本身尚缺真实凭证）；五个基线之间的正式对比报告/消融实验表尚未作为一次真实实验跑出来记录——框架支持（`BaselineVariant` 枚举本身就是消融维度），但目前只有单测层面验证了「每一级确实不同」，没有产出一份实际的对照数字。
+>
+> 原第 11 项（快照 / 暂停 / 恢复）**已解决，但范围比标题字面意思窄——是「暂停认领」，不是「打断在跑的议会」：**
+> - **暂停即阻止认领——完整闭环。** `deliberate()`（`apps/worker/jobs.py`）把一个任务的完整 8 阶段议会跑在一次未提交事务里，中途没有任何既有的中断机制（只有 `_check_budget()` 处理预算耗尽），而 `CouncilMemory`（`packages/memory/council_memory.py`）每次 `deliberate()` 调用都通过 `create_memory_adapter()` 现造一个全新的 `InMemoryMemoryAdapter()`，没有任何跨调用持久化的状态可供跑到一半时快照。所以能诚实交付的最小可行范围是队列层面：`apps/worker/main.py::claim_queued_tasks()` 本就严格只选 `WHERE status == TaskStatus.QUEUED`，`ResearchService.pause()`/`resume()`（`packages/research/service.py`）把任务在 `QUEUED`⇄`PAUSED` 之间搬动，新增的 `POST /api/tasks/{id}/pause`、`POST /api/tasks/{id}/resume` 端点和对应的 `poliscope pause`/`poliscope resume` CLI 子命令都只做这一件事——一个被暂停的任务在被恢复之前，永远不会被任何 worker 认领，且这个保证不需要改动 orchestrator 或 worker 认领逻辑一行代码。`tests/integration/test_worker_pipeline.py::test_a_paused_task_is_never_claimed_until_resumed` 用真实数据库和真实 worker 认领路径端到端验证：暂停的任务在 `drain()` 里被跳过，恢复后才在下一次 `drain()` 里被认领并跑完。
+> - **真正的「跑到一半打断再续跑」——不在本版范围内，是一个真实存在、尚待解决的缺口。** 这需要往 `CouncilOrchestrator` 的阶段循环里注入暂停检查回调、把「一次议会一次提交」的事务语义拆开、并真正接一个持久化的快照列——这是编排器层面的改动，不是 API/CLI 薄封装能做到的，按 CLAUDE.md 第 17 条不拿「更容易实现」当理由静默降级，这里显式记录为尚未做到，而不是把「暂停认领」包装成看起来更大的「暂停执行」。
 >
 > 原第 10 项（Evolution View 与 Blindspot Radar）**已解决，前后端都接线：**
 > - **后端——完整闭环。** `apps/api/routers/workspace.py::_seats()` 从事件账本按席位聚合 `PRECOMMITMENT_SEALED`/`CHALLENGE_RAISED`/`FINAL_JUDGMENT`/`SEAT_UNAVAILABLE` 四类过程事件，恒定按 `ORDERED_SEATS` 列出全部七个席位，缺席的席位显示为空字段而不是从列表消失。`_evolution()` 取 `Claim`（含 Fork 产出的锚点与新主张）、`CHALLENGE_RAISED`、`DissentCertificate` 三类会指名某个主张的事件，按账本序号（而不是到达顺序）排成时间线。`run_blindspot_bounty` 的 `Blindspot` 事件载荷同时携带 `impact`/`uncertainty`/`investigability`/`novelty`/`normalized_cost` 五个原始维度，不再只有一个合成分数。`tests/integration/test_workspace_seats_evolution.py` 用一次脚本化议会（含一次致命分叉、一次非致命质询、一次异议）端到端验证两个面板都是真实数据，不是占位符。

@@ -16,7 +16,11 @@ from apps.api.dependencies import SessionDep
 from apps.api.schemas import ConfirmClaimsRequest, CreateTaskRequest
 from packages.research.contracts import ResearchContract
 from packages.research.repository import ResearchRepository, TaskNotFound
-from packages.research.service import ResearchService, UnconfirmedClaims
+from packages.research.service import (
+    InvalidPauseState,
+    ResearchService,
+    UnconfirmedClaims,
+)
 
 router = APIRouter()
 
@@ -103,6 +107,42 @@ async def confirm_claims(
             {"id": str(claim.claim_id), "status": claim.status} for claim in claims
         ],
     }
+
+
+@router.post("/{task_id}/pause")
+async def pause_task(task_id: UUID, session: SessionDep) -> dict[str, Any]:
+    """Keep a queued task from being claimed until it is resumed.
+
+    Only a QUEUED task can be paused: a task already running finishes its one
+    uncommitted phase sequence regardless (see ResearchService.pause), and a
+    task still awaiting claim confirmation was never going to be claimed in the
+    first place.
+    """
+    try:
+        new_status = await _service(session).pause(task_id)
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
+    except InvalidPauseState as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    return {"task_id": str(task_id), "status": new_status}
+
+
+@router.post("/{task_id}/resume")
+async def resume_task(task_id: UUID, session: SessionDep) -> dict[str, Any]:
+    """Move a paused task back to QUEUED so a worker can claim it again."""
+    try:
+        new_status = await _service(session).resume(task_id)
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
+    except InvalidPauseState as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    return {"task_id": str(task_id), "status": new_status}
 
 
 @router.get("/{task_id}")

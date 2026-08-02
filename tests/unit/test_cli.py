@@ -27,6 +27,8 @@ SUBCOMMANDS: tuple[tuple[list[str], dict[str, object]], ...] = (
         {"task_id": "t", "claim_ids": ["a", "b"]},
     ),
     (["status", "--task-id", "t"], {"task_id": "t"}),
+    (["pause", "--task-id", "t"], {"task_id": "t"}),
+    (["resume", "--task-id", "t"], {"task_id": "t"}),
     (["watch", "--task-id", "t"], {"task_id": "t"}),
     (["export", "--task-id", "t"], {"task_id": "t", "export_format": "markdown"}),
 )
@@ -142,6 +144,38 @@ def test_export_writes_requested_file(
         == exit_codes.OK
     )
     assert destination.read_text(encoding="utf-8") == "# Research Brief\n"
+
+
+async def test_pause_and_resume_request_the_endpoints_that_actually_exist() -> None:
+    """Same failure mode as export: a stubbed client cannot catch a dead route."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"task_id": "abc", "status": "PAUSED"})
+
+    transport = httpx.MockTransport(handler)
+    async with CLIClient("http://poliscope.test", transport=transport) as client:
+        await client.pause("abc")
+        await client.resume("abc")
+
+    assert [request.method for request in seen] == ["POST", "POST"]
+    assert [request.url.path for request in seen] == [
+        "/api/tasks/abc/pause",
+        "/api/tasks/abc/resume",
+    ]
+
+
+def test_pause_command_prints_the_new_status(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def pause(*_: object, **__: object) -> dict[str, Any]:
+        return {"task_id": "t", "status": "PAUSED"}
+
+    monkeypatch.setattr(CLIClient, "pause", pause)
+    assert main(["pause", "--task-id", "t"]) == exit_codes.OK
+    assert "PAUSED" in capsys.readouterr().out
 
 
 async def test_export_requests_the_endpoint_that_actually_exists() -> None:

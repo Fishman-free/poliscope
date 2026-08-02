@@ -121,6 +121,12 @@ class CLIClient:
     async def workspace(self, task_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/api/workspace/{task_id}")
 
+    async def pause(self, task_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/api/tasks/{task_id}/pause")
+
+    async def resume(self, task_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/api/tasks/{task_id}/resume")
+
     async def export(self, task_id: str, export_format: str) -> str:
         """Fetch the research brief in the requested format.
 

@@ -345,3 +345,57 @@ async def test_the_worker_picks_up_a_queued_task_on_its_own(
 
     assert task_id in {result.task_id for result in results}
     assert await _status(app_sessions, task_id) == TaskStatus.COMPLETED_WITH_GAPS
+
+
+async def test_a_paused_task_is_never_claimed_until_resumed(
+    migrated_db: str,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Pausing needs no orchestrator change: claim_queued_tasks only ever
+    selects TaskStatus.QUEUED, so flipping a task to PAUSED keeps it out of
+    every future drain() until something moves it back to QUEUED -- the same
+    seam apps/api/routers/tasks.py's pause/resume endpoints use.
+    """
+    from tests.conftest import (
+        APP_PASSWORD,
+        APP_ROLE,
+        PROJECTOR_PASSWORD,
+        PROJECTOR_ROLE,
+        _role_url,
+    )
+
+    running_task, _ = await _seed_queued_task(app_sessions)
+    paused_task, _ = await _seed_queued_task(app_sessions)
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == paused_task)
+            .values(status=TaskStatus.PAUSED)
+        )
+        await session.commit()
+
+    context = WorkerContext.from_urls(
+        _role_url(migrated_db, APP_ROLE, APP_PASSWORD),
+        _role_url(migrated_db, PROJECTOR_ROLE, PROJECTOR_PASSWORD),
+    )
+    try:
+        first_pass = await drain(context, limit=10)
+        assert {result.task_id for result in first_pass} == {running_task}
+        assert await _status(app_sessions, paused_task) == TaskStatus.PAUSED
+
+        async with app_sessions() as session:
+            await session.execute(
+                update(ResearchTaskModel)
+                .where(ResearchTaskModel.task_id == paused_task)
+                .values(status=TaskStatus.QUEUED)
+            )
+            await session.commit()
+
+        second_pass = await drain(context, limit=10)
+        assert {result.task_id for result in second_pass} == {paused_task}
+        assert await _status(app_sessions, paused_task) in (
+            TaskStatus.COMPLETED,
+            TaskStatus.COMPLETED_WITH_GAPS,
+        )
+    finally:
+        await context.dispose()

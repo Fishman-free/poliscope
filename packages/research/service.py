@@ -28,6 +28,10 @@ class UnconfirmedClaims(Exception):
     """Raised when queueing before atomic claims are confirmed."""
 
 
+class InvalidPauseState(Exception):
+    """Raised when pause/resume is attempted from a status that forbids it."""
+
+
 @dataclass(frozen=True, slots=True)
 class CreatedTask:
     task_id: UUID
@@ -82,9 +86,48 @@ class ResearchService:
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
 
+    async def pause(self, task_id: UUID) -> str:
+        """Move a QUEUED task to PAUSED so the worker never claims it.
+
+        ``deliberate()`` always runs a task's full phase sequence in one
+        uncommitted transaction (packages/epistemo/orchestrator.py), so there is
+        no durable mid-run state today to snapshot and interrupt -- pausing a
+        task that is already claimed and running would have nothing to stop.
+        The honest, well-tested seam is upstream of that: ``claim_queued_tasks``
+        (apps/worker/main.py) only ever selects ``TaskStatus.QUEUED`` rows, so a
+        task moved to PAUSED before a worker claims it simply never gets run,
+        with no orchestrator change required.
+        """
+        task = await self._repository.get_task(task_id)
+        if task.status != TaskStatus.QUEUED:
+            raise InvalidPauseState(
+                f"task {task_id} is {task.status}, not {TaskStatus.QUEUED}; "
+                "only a queued task can be paused"
+            )
+        await self._repository.set_status(task_id, TaskStatus.PAUSED)
+        return TaskStatus.PAUSED
+
+    async def resume(self, task_id: UUID) -> str:
+        """Move a PAUSED task back to QUEUED so the worker can claim it again.
+
+        Requeueing an already-run task is proven idempotent by
+        ``test_replaying_a_requeued_task_duplicates_nothing`` -- every event's
+        idempotency key is derived from phase and seat, so a resumed run
+        replays as a no-op wherever it had already made progress.
+        """
+        task = await self._repository.get_task(task_id)
+        if task.status != TaskStatus.PAUSED:
+            raise InvalidPauseState(
+                f"task {task_id} is {task.status}, not {TaskStatus.PAUSED}; "
+                "only a paused task can be resumed"
+            )
+        await self._repository.set_status(task_id, TaskStatus.QUEUED)
+        return TaskStatus.QUEUED
+
 
 __all__ = [
     "CreatedTask",
+    "InvalidPauseState",
     "ResearchService",
     "TaskNotFound",
     "UnconfirmedClaims",

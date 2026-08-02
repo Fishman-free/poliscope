@@ -27,6 +27,8 @@ EPILOG = """\
 examples:
   poliscope start --contract research.json
   poliscope status --task-id 7f3a... --json
+  poliscope pause --task-id 7f3a...
+  poliscope resume --task-id 7f3a...
   poliscope watch --task-id 7f3a... --last-event-id 41
   poliscope export --task-id 7f3a... --format markdown --output brief.md
 
@@ -107,6 +109,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.add_argument("--task-id", required=True, metavar="UUID")
     status.set_defaults(handler=_cmd_status)
+
+    pause = subparsers.add_parser(
+        "pause",
+        help="keep a queued task from being claimed until it is resumed",
+        description=(
+            "Moves a QUEUED task to PAUSED. Only a task still waiting for a "
+            "worker can be paused; one already running finishes its current "
+            "pass regardless."
+        ),
+    )
+    pause.add_argument("--task-id", required=True, metavar="UUID")
+    pause.set_defaults(handler=_cmd_pause)
+
+    resume = subparsers.add_parser(
+        "resume",
+        help="move a paused task back to the run queue",
+    )
+    resume.add_argument("--task-id", required=True, metavar="UUID")
+    resume.set_defaults(handler=_cmd_resume)
 
     watch = subparsers.add_parser(
         "watch",
@@ -212,6 +233,24 @@ async def _cmd_status(client: CLIClient, args: argparse.Namespace) -> int:
     notice = snapshot.get("safety_notice") or {}
     if notice:
         print(f"\n{notice.get('medical_disclaimer', '')}")
+    return exit_codes.OK
+
+
+async def _cmd_pause(client: CLIClient, args: argparse.Namespace) -> int:
+    payload = await client.pause(args.task_id)
+    if args.as_json:
+        _print_json(payload)
+    else:
+        print(f"status     {payload.get('status', '?')}")
+    return exit_codes.OK
+
+
+async def _cmd_resume(client: CLIClient, args: argparse.Namespace) -> int:
+    payload = await client.resume(args.task_id)
+    if args.as_json:
+        _print_json(payload)
+    else:
+        print(f"status     {payload.get('status', '?')}")
     return exit_codes.OK
 
 

@@ -143,6 +143,68 @@ async def test_unknown_task_returns_404(api_client: httpx.AsyncClient) -> None:
     assert (await api_client.get(f"/api/tasks/{uuid4()}")).status_code == 404
 
 
+async def test_pausing_a_queued_task_then_resuming_returns_it_to_queued(
+    api_client: httpx.AsyncClient,
+) -> None:
+    created = await _create(api_client)
+    chosen = created["suggested_claims"][0]["id"]
+    await api_client.post(
+        f"/api/tasks/{created['task_id']}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+
+    paused = await api_client.post(f"/api/tasks/{created['task_id']}/pause")
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["status"] == TaskStatus.PAUSED
+    readback = await api_client.get(f"/api/tasks/{created['task_id']}")
+    assert readback.json()["status"] == TaskStatus.PAUSED
+
+    resumed = await api_client.post(f"/api/tasks/{created['task_id']}/resume")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == TaskStatus.QUEUED
+    readback = await api_client.get(f"/api/tasks/{created['task_id']}")
+    assert readback.json()["status"] == TaskStatus.QUEUED
+
+
+async def test_pausing_a_task_awaiting_claim_confirmation_is_refused(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """A task nothing was ever going to claim cannot be meaningfully paused."""
+    created = await _create(api_client)
+    response = await api_client.post(f"/api/tasks/{created['task_id']}/pause")
+    assert response.status_code == 409
+    assert "not" in response.json()["detail"]
+
+
+async def test_resuming_a_task_that_is_not_paused_is_refused(
+    api_client: httpx.AsyncClient,
+) -> None:
+    created = await _create(api_client)
+    chosen = created["suggested_claims"][0]["id"]
+    await api_client.post(
+        f"/api/tasks/{created['task_id']}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+    response = await api_client.post(f"/api/tasks/{created['task_id']}/resume")
+    assert response.status_code == 409
+
+
+async def test_pausing_an_unknown_task_returns_404(
+    api_client: httpx.AsyncClient,
+) -> None:
+    assert (
+        await api_client.post(f"/api/tasks/{uuid4()}/pause")
+    ).status_code == 404
+
+
+async def test_resuming_an_unknown_task_returns_404(
+    api_client: httpx.AsyncClient,
+) -> None:
+    assert (
+        await api_client.post(f"/api/tasks/{uuid4()}/resume")
+    ).status_code == 404
+
+
 async def test_an_invalid_contract_is_rejected_with_422(
     api_client: httpx.AsyncClient,
 ) -> None:

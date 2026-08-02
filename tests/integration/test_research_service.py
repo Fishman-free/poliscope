@@ -21,7 +21,11 @@ from packages.research.repository import (
     ResearchRepository,
     TaskNotFound,
 )
-from packages.research.service import ResearchService, UnconfirmedClaims
+from packages.research.service import (
+    InvalidPauseState,
+    ResearchService,
+    UnconfirmedClaims,
+)
 from tests.factories import make_research_contract
 
 
@@ -148,4 +152,53 @@ async def test_unknown_task_is_distinguishable_from_a_validation_error(
     """The API answers 404 for this and 422 for a bad payload."""
     with pytest.raises(TaskNotFound):
         await _service(app_session).get_task(uuid4())
+    await app_session.rollback()
+
+
+async def test_pausing_a_queued_task_then_resuming_returns_it_to_queued(
+    app_session: AsyncSession,
+) -> None:
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+
+    assert await service.pause(created.task_id) == TaskStatus.PAUSED
+    assert (await service.get_task(created.task_id)).status == TaskStatus.PAUSED
+
+    assert await service.resume(created.task_id) == TaskStatus.QUEUED
+    assert (await service.get_task(created.task_id)).status == TaskStatus.QUEUED
+    await app_session.rollback()
+
+
+async def test_pausing_a_task_that_is_not_queued_is_rejected(
+    app_session: AsyncSession,
+) -> None:
+    """A task still awaiting claim confirmation was never going to be run."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    with pytest.raises(InvalidPauseState):
+        await service.pause(created.task_id)
+    await app_session.rollback()
+
+
+async def test_resuming_a_task_that_is_not_paused_is_rejected(
+    app_session: AsyncSession,
+) -> None:
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    with pytest.raises(InvalidPauseState):
+        await service.resume(created.task_id)
+    await app_session.rollback()
+
+
+async def test_pausing_an_unknown_task_raises_not_found(
+    app_session: AsyncSession,
+) -> None:
+    with pytest.raises(TaskNotFound):
+        await _service(app_session).pause(uuid4())
     await app_session.rollback()
