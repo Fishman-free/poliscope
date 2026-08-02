@@ -42,10 +42,10 @@ Poliscope 组织 7 名具有互补认识能力的 AI 科学家，全程参与问
 | 六个 CLI 子命令 | 逐条对真实 API 手工验证 |
 | 三个前端视图（Research Brief / Controversy Map / Audit Trail） | 真实数据 + 浏览器截图核对，无控制台错误 |
 
-**尚未接入真实供应商的：**
+**尚未接入真实厂商凭证的：**
 
-- **模型网关没有任何厂商实现。** 系统不会因此假装科学家发言了——它把每个席位记为「缺席」，任务以 `COMPLETED_WITH_GAPS` 结束，并在报告的「局限与未知」中逐条列出未填的证据槽位。接一个 `ModelGateway` 实现即可，其余代码不用改。
-- **工具网关同理。** 没有工具供应商时，取证轮只记录请求，不会凭空生成 Source 节点。
+- **模型网关已有真实实现（`OpenAICompatibleModelGateway`），但尚未连真实凭证。** 对接任意 OpenAI-Chat-Completions 兼容端点（DeepSeek / LongCat / 国内中转站），已接入 `apps/worker`；共享的传输重试策略见 `packages/kernel/http_retry.py`。`POLISCOPE_MODEL_API_KEY` 留空时行为不变——每个席位记为「缺席」，任务以 `COMPLETED_WITH_GAPS` 结束，并在报告的「局限与未知」中逐条列出未填的证据槽位。目前只经过 `httpx.MockTransport` 单元测试验证，尚未打过真实厂商的网络。
+- **工具网关已有真实实现（`HttpToolGateway`），同样尚未连真实凭证。** 直接对接 OpenAlex、Crossref、Unpaywall、Semantic Scholar 的公开 REST API，已接入 `apps/worker`。OpenAlex / Crossref / Semantic Scholar 无需任何凭证即可工作；仅 Unpaywall 的使用条款要求每次请求带联系邮箱（`POLISCOPE_TOOLS_CONTACT_EMAIL`），未设置时只有该供应商的调用会报错，其余三个不受影响。同样只经过 `httpx.MockTransport` 单元测试验证，尚未打过真实厂商的网络。
 - **全文解析与 StudyFinding 抽取未接线。** 因此目前只能产出 Level B（仅元数据）的 Source，产不出 Level A 的 StudyFinding，证据图上也就没有 `DERIVED_FROM` 边。
 
 完整清单见 [已知缺口](#已知缺口)。
@@ -381,8 +381,8 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 **阻塞真实使用：**
 
-1. **模型网关无厂商实现。** 现状是每个席位都记为缺席。需要一个实现 `ModelGateway` 协议的类；`GatewayDeliberator` 和其余代码不用改。
-2. **工具网关无真实数据源实现。** 四个适配器（OpenAlex / Crossref / Unpaywall / Semantic Scholar）都已写好并走网关，但网关本身只有录制回放实现。
+1. **模型网关无真实厂商凭证。** `OpenAICompatibleModelGateway`（`packages/models/openai_compatible.py`）已实现并接入 `apps/worker`，对接任意 DeepSeek / LongCat / 国内中转站等 OpenAI-Chat-Completions 兼容端点；仅经 `httpx.MockTransport` 单元测试验证，尚未填入真实 `POLISCOPE_MODEL_API_KEY` 跑通一次真实调用。
+2. **工具网关无真实厂商凭证。** `HttpToolGateway`（`packages/tools/http_gateway.py`）已实现并接入 `apps/worker`，直接调用 OpenAlex / Crossref / Unpaywall / Semantic Scholar 的真实公开 API；OpenAlex / Crossref / Semantic Scholar 无需凭证，仅 Unpaywall 需要 `POLISCOPE_TOOLS_CONTACT_EMAIL`。同样仅经 `httpx.MockTransport` 单元测试验证，尚未打过真实网络。
 3. **全文解析与 StudyFinding 抽取未接线。** `packages/papers/` 的 parser 与 packet 存在但没有调用者，所以拿不到 Level A 证据，也就没有引用锚点。
 
 **影响证据质量：**

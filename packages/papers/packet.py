@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from uuid import uuid4
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from packages.kernel.contracts import FrozenDict
 
@@ -26,6 +26,16 @@ from .contracts import (
 )
 from .parser import PageText, locate_quote
 
+# Fixed at import time via uuid5(NAMESPACE_URL, ...), which is itself
+# deterministic -- not a random seed. Every id minted below derives from this
+# plus stable inputs, so replaying the same source + quote reproduces the
+# same node identity instead of colliding on idempotency keys (CLAUDE.md 10).
+_NAMESPACE = uuid5(NAMESPACE_URL, "https://poliscope.internal/papers/packet")
+
+
+def _deterministic_id(*parts: str) -> UUID:
+    return uuid5(_NAMESPACE, "␟".join(parts))
+
 
 def source_version_hash(source: Mapping[str, object]) -> str:
     from packages.kernel.contracts import thaw_for_serialization
@@ -46,6 +56,7 @@ def build_evidence_level(has_full_text: bool, has_anchor: bool) -> EvidenceLevel
 
 def build_packet(
     *,
+    source_id: UUID,
     source: dict[str, object],
     pages: list[PageText],
     study_question: str,
@@ -65,11 +76,18 @@ def build_packet(
     code_availability: AvailabilityStatus = AvailabilityStatus.NOT_REPORTED,
     preregistration: AvailabilityStatus = AvailabilityStatus.NOT_REPORTED,
 ) -> PaperEvidencePacket:
-    """Assemble a PaperEvidencePacket from parsed PDF pages and model output."""
+    """Assemble a PaperEvidencePacket from parsed PDF pages and model output.
+
+    ``source_id`` must be the caller's already-persisted ``SourceModel.id`` --
+    this function used to mint its own unrelated ``uuid4()`` here, which meant
+    the resulting ``SourceVersion.source_id`` could never match a real
+    ``sources.id`` row. Every id derived below is deterministic (see
+    ``_deterministic_id``) so replaying the same source version and quote is
+    idempotent rather than creating duplicate nodes on re-run.
+    """
     version_hash = source_version_hash(source)
-    source_id = uuid4()
     source_version = SourceVersion(
-        id=uuid4(),
+        id=_deterministic_id("source_version", str(source_id), version_hash),
         source_id=source_id,
         version_hash=version_hash,
         created_at="",
@@ -96,7 +114,9 @@ def build_packet(
     )
 
     finding = StudyFindingCandidate(
-        id=uuid4(),
+        id=_deterministic_id(
+            "finding", str(source_version.id), finding_statement, exact_quote
+        ),
         statement=finding_statement,
         origin=origin,
         effect=EffectEstimate(direction=effect_direction),
@@ -104,7 +124,9 @@ def build_packet(
     )
 
     study = StudyPacket(
-        id=uuid4(),
+        id=_deterministic_id(
+            "study", str(source_version.id), study_question, design
+        ),
         research_question=study_question,
         sample=SampleDescription(population=population),
         design=(

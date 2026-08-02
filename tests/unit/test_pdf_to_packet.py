@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -55,6 +56,7 @@ def test_build_packet_from_pages() -> None:
         "title": "Digital behavior and wellbeing",
     }
     packet = build_packet(
+        source_id=uuid4(),
         source=source,
         pages=pages,
         study_question="Does screen time affect wellbeing?",

@@ -10,6 +10,7 @@ from packages.evidence.contracts import (
     AdmissionDecision,
     AdmissionDisposition,
     ClaimType,
+    EvidenceNodeType,
     ScientificEventCandidate,
 )
 from packages.evidence.method_auditor import (
@@ -213,7 +214,12 @@ class FullEvidenceGate:
             if not source_ok:
                 source_detail = _source_failure_detail(src)
         else:
-            source_ok = candidate.event_type != "FINDING"
+            # This used to compare against the literal string "FINDING", which
+            # never matched EvidenceNodeType.STUDY_FINDING's real value
+            # ("StudyFinding") -- a StudyFinding event missing its source_id
+            # always fell through to the "not a finding, so no source needed"
+            # default instead of being caught here.
+            source_ok = candidate.event_type != EvidenceNodeType.STUDY_FINDING.value
         findings.append(
             AuditFinding(
                 stage=AuditStage.SOURCE, passed=source_ok, detail=source_detail

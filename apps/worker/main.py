@@ -26,7 +26,12 @@ from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
 from packages.epistemo.contracts import TaskStatus
 from packages.kernel.config import DatabaseConfig
 from packages.kernel.database import create_database_engine, create_session_factory
+from packages.models.contracts import ModelGateway
+from packages.models.openai_compatible import gateway_from_env
 from packages.research.models import ResearchTaskModel
+from packages.tools.contracts import ToolGateway
+from packages.tools.fulltext_fetcher import FullTextFetcher, fulltext_fetcher_from_env
+from packages.tools.http_gateway import tool_gateway_from_env
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +40,42 @@ POLL_INTERVAL_SECONDS = 2.0
 
 @dataclass(slots=True)
 class WorkerContext:
-    """The two identities a worker needs, created once per process."""
+    """The two identities a worker needs, created once per process.
+
+    ``gateway`` is ``None`` whenever no vendor is configured -- CLAUDE.md 10's
+    honest gap, not an error. :func:`gateway_from_env` returns ``None`` only
+    when ``POLISCOPE_MODEL_API_KEY`` is simply unset; if it is set but the
+    rest of the configuration is broken, it raises rather than guessing.
+
+    ``tools`` has no such "unset" state: OpenAlex, Crossref, and Semantic
+    Scholar need no credential, so :func:`tool_gateway_from_env` always
+    returns a working gateway. Only the Unpaywall operation can still fail,
+    and only lazily, if ``POLISCOPE_TOOLS_CONTACT_EMAIL`` is missing when it
+    is actually called.
+
+    ``fulltext_fetcher`` has the same "always present" shape as ``tools``:
+    downloading an already-resolved open-access URL needs no vendor
+    credential of its own, so :func:`fulltext_fetcher_from_env` always
+    returns a working fetcher.
+    """
 
     app_engine: AsyncEngine
     projector_engine: AsyncEngine
     app_sessions: async_sessionmaker[AsyncSession]
     projector_sessions: async_sessionmaker[AsyncSession]
+    gateway: ModelGateway | None = None
+    tools: ToolGateway | None = None
+    fulltext_fetcher: FullTextFetcher | None = None
 
     @classmethod
-    def from_urls(cls, app_url: str, projector_url: str) -> WorkerContext:
+    def from_urls(
+        cls,
+        app_url: str,
+        projector_url: str,
+        gateway: ModelGateway | None = None,
+        tools: ToolGateway | None = None,
+        fulltext_fetcher: FullTextFetcher | None = None,
+    ) -> WorkerContext:
         app_engine = create_database_engine(app_url)
         projector_engine = create_database_engine(projector_url)
         return cls(
@@ -51,6 +83,9 @@ class WorkerContext:
             projector_engine=projector_engine,
             app_sessions=create_session_factory(app_engine),
             projector_sessions=create_session_factory(projector_engine),
+            gateway=gateway,
+            tools=tools,
+            fulltext_fetcher=fulltext_fetcher,
         )
 
     @classmethod
@@ -58,9 +93,16 @@ class WorkerContext:
         return cls.from_urls(
             DatabaseConfig.app_url_from_env(),
             DatabaseConfig.projector_url_from_env(),
+            gateway_from_env(),
+            tool_gateway_from_env(),
+            fulltext_fetcher_from_env(),
         )
 
     async def dispose(self) -> None:
+        for provider in (self.gateway, self.tools, self.fulltext_fetcher):
+            aclose = getattr(provider, "aclose", None)
+            if callable(aclose):
+                await aclose()
         await self.app_engine.dispose()
         await self.projector_engine.dispose()
 
@@ -100,7 +142,12 @@ async def run_one(context: WorkerContext, task_id: UUID) -> JobResult | None:
     """
     try:
         return await run_task(
-            context.app_sessions, context.projector_sessions, task_id
+            context.app_sessions,
+            context.projector_sessions,
+            task_id,
+            gateway=context.gateway,
+            tools=context.tools,
+            fulltext_fetcher=context.fulltext_fetcher,
         )
     except TaskNotRunnable:
         # Another worker finished it between the claim and the run.

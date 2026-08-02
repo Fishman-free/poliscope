@@ -12,6 +12,8 @@ from collections.abc import Mapping
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+import fitz  # type: ignore[import-untyped]
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,8 +33,13 @@ from packages.models.models import ModelCallModel
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
 from packages.tools.contracts import ToolRequest, ToolResult
+from packages.tools.fulltext_fetcher import FullTextFetcher
 
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
+SHARED_COHORT_DOI = "10.1234/shared-cohort"
+SHARED_COHORT_QUOTE = (
+    "We found a significant association between screen time and anxiety."
+)
 
 
 class _ScriptedGateway:
@@ -54,6 +61,36 @@ class _ScriptedGateway:
         self._schema_status = schema_status
 
     def _payload(self, request: ModelRequest) -> dict[str, object]:
+        if request.output_schema == "StudyFindingExtraction":
+            # A system-level call from FindingExtractor, not one of the seven
+            # seats' phase requests -- request.purpose is "finding_extraction",
+            # which is not a TaskPhase value, so this must be checked before
+            # the TaskPhase(...) conversion below.
+            return {
+                "study_question": QUESTION,
+                "population": "adolescents",
+                "design": "cross_sectional",
+                "exposure_variable": "screen_time",
+                "outcome_variable": "anxiety",
+                "analysis_method": "linear regression",
+                "finding_statement": "Screen time correlates with anxiety.",
+                "origin": "SOURCE_TEXT",
+                "effect_direction": "positive",
+                "exact_quote": SHARED_COHORT_QUOTE,
+                "author_conclusions": ["Screen time matters."],
+                "author_limitations": ["Self-reported."],
+                "data_availability": "restricted",
+                "code_availability": "unavailable",
+                "preregistration": "not_reported",
+                "method_quality": {
+                    "directness": 0.8,
+                    "design_quality": 0.75,
+                    "measurement_quality": 0.7,
+                    "precision": 0.65,
+                    "replicability": 0.6,
+                    "external_validity": 0.55,
+                },
+            }
         phase = TaskPhase(request.purpose)
         seat = request.actor
         if phase is TaskPhase.PRECOMMITMENT:
@@ -65,7 +102,7 @@ class _ScriptedGateway:
         if phase is TaskPhase.ACQUISITION:
             # A DOI rather than free text: the adapters resolve DOIs, and a
             # request nobody can resolve is correctly reported as a gap.
-            return {"requests": ["doi 10.1234/shared-cohort"]}
+            return {"requests": [f"doi {SHARED_COHORT_DOI}"]}
         if phase is TaskPhase.CROSS_EXAMINATION:
             return {
                 "challenges": [
@@ -108,7 +145,7 @@ class _ScriptedGateway:
             payload=FrozenDict(self._payload(request)),
             input_tokens=100,
             output_tokens=50,
-            cost_usd=0,
+            cost_usd=Decimal("0"),
             latency_ms=12,
             retries=0,
             schema_status=self._schema_status,
@@ -123,10 +160,29 @@ class _BrokenGateway:
 
 
 class _StubProvider:
-    """A tool gateway that resolves any DOI, so acquisition can succeed."""
+    """A tool gateway that resolves any DOI, so acquisition can succeed.
+
+    Also answers the Unpaywall lookup FindingExtractor makes for each freshly
+    acquired source, so the full run can reach Level A rather than stopping at
+    the metadata-only Level B that acquisition alone produces.
+    """
 
     async def execute(self, request: ToolRequest) -> ToolResult:
         doi = str(request.arguments["doi"])
+        if request.tool_name == "unpaywall":
+            return ToolResult(
+                call_id=uuid4(),
+                payload=FrozenDict(
+                    {
+                        "url": f"https://example.test/{doi}.pdf",
+                        "oa_status": "gold",
+                        "oa_version": "publishedVersion",
+                    }
+                ),
+                latency_ms=2,
+                retries=0,
+                error_code=None,
+            )
         return ToolResult(
             call_id=uuid4(),
             payload=FrozenDict(
@@ -143,6 +199,22 @@ class _StubProvider:
             retries=0,
             error_code=None,
         )
+
+
+def _fake_fulltext_fetcher() -> FullTextFetcher:
+    """A FullTextFetcher backed by an in-memory PDF containing the exact quote
+    _ScriptedGateway claims, so FindingExtractor's citation check succeeds
+    without any real network access."""
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), SHARED_COHORT_QUOTE)
+    content = bytes(document.tobytes())
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=content)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return FullTextFetcher(client=client)
 
 
 async def _seed_queued_task(
@@ -220,8 +292,12 @@ async def test_a_full_council_run_reports_no_gaps(
     gateway = _ScriptedGateway(claim_id, uuid4())
 
     result = await run_task(
-        app_sessions, projector_sessions, task_id, gateway=gateway,
+        app_sessions,
+        projector_sessions,
+        task_id,
+        gateway=gateway,
         tools=_StubProvider(),
+        fulltext_fetcher=_fake_fulltext_fetcher(),
     )
 
     assert result.run.unfilled_slots == ()

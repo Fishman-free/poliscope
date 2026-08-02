@@ -180,6 +180,43 @@ class RefusedLike(Protocol):
     def reason(self) -> str: ...
 
 
+class FindingExtractor(Protocol):
+    """Turns one already-acquired Source's open access full text into a
+    StudyFinding.
+
+    Declared here rather than imported so ``council`` does not depend on
+    ``papers``; the implementation is
+    :class:`packages.papers.finding_extraction.FindingExtractor`.
+    """
+
+    async def extract(self, source_id: UUID, doi: str) -> FindingExtractionLike: ...
+
+
+class FindingExtractionLike(Protocol):
+    # Read-only properties, not attributes: the implementation is a frozen
+    # dataclass, and a mutable attribute in a Protocol demands a settable one.
+    @property
+    def ok(self) -> bool: ...
+
+    @property
+    def reason(self) -> str: ...
+
+    @property
+    def finding_id(self) -> UUID | None: ...
+
+    @property
+    def evidence_level(self) -> str: ...
+
+    @property
+    def exact_quote(self) -> str: ...
+
+    @property
+    def finding_statement(self) -> str: ...
+
+    @property
+    def method_quality(self) -> Mapping[str, float]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class PhaseContext:
     task_id: UUID
@@ -195,6 +232,10 @@ class PhaseContext:
     # None when no tool provider is configured. The acquisition round then records
     # the requests and stops, rather than inventing sources.
     acquirer: SourceAcquirer | None = None
+    # None when no tool/model provider is configured. The acquisition round then
+    # records an unfilled slot per newly acquired source instead of leaving a
+    # Level B source with no StudyFinding attempt at all.
+    finding_extractor: FindingExtractor | None = None
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase."""
@@ -333,6 +374,14 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     alone is Level B. Minting a Source from a request would be the fabrication
     CLAUDE.md 7 exists to prevent, so with no acquirer configured this round
     stops after the requests and the slots stay unfilled.
+
+    Each freshly acquired Source is then handed to ``context.finding_extractor``
+    (when configured) in an attempt to reach Level A: a StudyFinding event is
+    only emitted for a quote the extractor actually located in the source's own
+    text, never for a downgraded or fabricated Level B stand-in. A source the
+    extractor could not turn into a finding -- no open access copy, an
+    unparsable PDF, or an unlocatable quote -- is recorded as an unfilled slot
+    instead.
     """
     outputs, unfilled, absent = await _collect(context)
     round_ = AcquisitionRound()
@@ -387,6 +436,42 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
             )
             for item in acquisition.acquired
         )
+        for item in acquisition.acquired:
+            # A source dedup-hit against an already-persisted row was either
+            # extracted in an earlier run or already failed and recorded --
+            # re-running it here would spend tool/model budget on a result
+            # this round cannot change, so only fresh sources are attempted.
+            if context.finding_extractor is None or item.already_known:
+                continue
+            extraction = await context.finding_extractor.extract(
+                item.source_id, item.doi
+            )
+            if extraction.ok and extraction.finding_id is not None:
+                events.append(
+                    EmittedEvent(
+                        event_type=EvidenceNodeType.STUDY_FINDING.value,
+                        payload={
+                            "doi": item.doi,
+                            "finding_statement": extraction.finding_statement,
+                            # Stage 4 (CITATION_ENTAILMENT) and Stage 5
+                            # (METHOD_QUALITY) of the evidence gate only run
+                            # for real when these two payload shapes are
+                            # present -- packages/evidence/gate.py.
+                            "exact_quote": extraction.exact_quote,
+                            "method_quality": dict(extraction.method_quality),
+                        },
+                        idempotency_key=context.key(
+                            "finding", str(extraction.finding_id)
+                        ),
+                        evidence_level=extraction.evidence_level,
+                        source_id=item.source_id,
+                        finding_id=extraction.finding_id,
+                    )
+                )
+            else:
+                slots.append(
+                    f"ACQUISITION:no_finding:{item.doi}:{extraction.reason}"
+                )
         events.extend(
             EmittedEvent(
                 event_type=SOURCE_REFUSED,

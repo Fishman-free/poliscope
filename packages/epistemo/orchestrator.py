@@ -29,6 +29,7 @@ from packages.council.contracts import ALL_SEATS, Seat
 from packages.council.rounds.registry import (
     PHASE_COMPLETED,
     PHASE_STARTED,
+    FindingExtractor,
     PhaseContext,
     PhaseOutcome,
     SeatDeliberator,
@@ -190,6 +191,7 @@ class CouncilOrchestrator:
         seats: tuple[Seat, ...] = ORDERED_SEATS,
         memory: CouncilMemory | None = None,
         acquirer: SourceAcquirer | None = None,
+        finding_extractor: FindingExtractor | None = None,
     ) -> None:
         self._ledger = ledger
         self._budget = budget
@@ -199,6 +201,7 @@ class CouncilOrchestrator:
         self._seats = seats
         self._memory = memory
         self._acquirer = acquirer
+        self._finding_extractor = finding_extractor
 
     async def run(
         self,
@@ -299,6 +302,7 @@ class CouncilOrchestrator:
             carried=dict(state.carried),
             recall=await self._recall(),
             acquirer=self._acquirer,
+            finding_extractor=self._finding_extractor,
         )
         try:
             outcome = await runner_for(phase)(context)

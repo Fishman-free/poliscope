@@ -51,7 +51,7 @@ class _RequestingGateway:
             payload=FrozenDict(payload),
             input_tokens=10,
             output_tokens=5,
-            cost_usd=0,
+            cost_usd=Decimal("0"),
             latency_ms=1,
             retries=0,
             schema_status=SchemaStatus.OK,
@@ -185,7 +185,10 @@ async def test_one_paper_costs_one_fetch_however_many_seats_asked(
         tools=tools,
     )
 
-    assert len(tools.calls) == 1
+    # One OpenAlex metadata lookup plus one Unpaywall open-access lookup for the
+    # freshly acquired source's finding-extraction attempt -- both made exactly
+    # once per paper, never once per seat.
+    assert len(tools.calls) == 2
     assert len(await _sources(app_sessions, task_id)) == 1
 
 
@@ -258,7 +261,10 @@ async def test_an_exhausted_source_budget_refuses_rather_than_overspends(
         tools=tools,
     )
 
-    assert len(tools.calls) == 1
+    # One OpenAlex lookup for the sole source the budget allows, plus one
+    # Unpaywall lookup for that source's finding-extraction attempt. The
+    # budget-refused DOI never reaches either tool call.
+    assert len(tools.calls) == 2
     assert any(
         "budget" in slot or "refused" in slot for slot in result.run.unfilled_slots
     )

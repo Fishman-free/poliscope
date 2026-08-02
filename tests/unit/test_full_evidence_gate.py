@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from packages.evidence.contracts import (
     AdmissionDisposition,
+    EvidenceNodeType,
     ScientificEventCandidate,
 )
 from packages.evidence.gate import AuditStage, FullEvidenceGate
@@ -14,7 +15,7 @@ def _candidate(**over: Any) -> ScientificEventCandidate:
     base: dict[str, Any] = dict(
         id=uuid4(),
         task_id=uuid4(),
-        event_type="FINDING",
+        event_type=EvidenceNodeType.STUDY_FINDING.value,
         payload={
             "claim_type": "correlational",
             "study_design": "cross_sectional",
@@ -64,3 +65,21 @@ async def test_full_gate_blocks_missing_source() -> None:
     candidate = _candidate(source_id=None)
     decision = await gate.audit(candidate)
     assert decision.disposition == AdmissionDisposition.QUARANTINE
+
+
+async def test_stage_source_itself_fails_for_sourceless_study_finding() -> None:
+    """Regression: Stage 3 used to compare event_type against the literal
+    string "FINDING", which never equals EvidenceNodeType.STUDY_FINDING's
+    real value ("StudyFinding"). A StudyFinding event missing its source_id
+    silently fell through to "not a finding, no source needed" and passed
+    Stage 3 -- asserted here directly on the SOURCE finding, not just the
+    final disposition, so a regression can't hide behind some other stage
+    also happening to quarantine.
+    """
+    gate = FullEvidenceGate()
+    candidate = _candidate(source_id=None)
+    decision = await gate.audit(candidate)
+    source_finding = next(
+        item for item in decision.audit_findings if item.stage == AuditStage.SOURCE
+    )
+    assert source_finding.passed is False

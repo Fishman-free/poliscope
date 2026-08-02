@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
@@ -39,7 +40,7 @@ class ModelResult(ContractModel):
     payload: FrozenDict[str, object]
     input_tokens: int
     output_tokens: int
-    cost_usd: int
+    cost_usd: Decimal
     latency_ms: int
     retries: int
     schema_status: SchemaStatus

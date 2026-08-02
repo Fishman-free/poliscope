@@ -38,9 +38,11 @@ from packages.memory.council_memory import CouncilMemory
 from packages.models.contracts import ModelGateway
 from packages.models.gateway import AuditedModelGateway
 from packages.papers.acquisition import SourceAcquisition
+from packages.papers.finding_extraction import FindingExtractor
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
 from packages.tools.contracts import ToolGateway
+from packages.tools.fulltext_fetcher import FullTextFetcher
 from packages.tools.gateway import AuditedToolGateway
 
 
@@ -113,6 +115,7 @@ async def deliberate(
     deliberator: SeatDeliberator | None = None,
     gateway: ModelGateway | None = None,
     tools: ToolGateway | None = None,
+    fulltext_fetcher: FullTextFetcher | None = None,
 ) -> TaskRunReport:
     """Run the seven rounds and persist the resulting events and status.
 
@@ -151,6 +154,21 @@ async def deliberate(
                 session, AuditedToolGateway(tools, session), task_id, budget
             )
         ),
+        # Needs both a tool provider (open access lookup) and a model provider
+        # (extraction call); missing either leaves every acquired source at
+        # Level B and the gap recorded, same honesty rule as acquirer above.
+        finding_extractor=(
+            None
+            if tools is None or gateway is None
+            else FindingExtractor(
+                session,
+                AuditedToolGateway(tools, session),
+                AuditedModelGateway(gateway, session),
+                task_id,
+                budget,
+                fulltext_fetcher=fulltext_fetcher,
+            )
+        ),
     )
     report = await orchestrator.run(
         task_id=task_id,
@@ -173,6 +191,7 @@ async def run_task(
     deliberator: SeatDeliberator | None = None,
     gateway: ModelGateway | None = None,
     tools: ToolGateway | None = None,
+    fulltext_fetcher: FullTextFetcher | None = None,
 ) -> JobResult:
     """Deliberate, commit, then project.
 
@@ -183,7 +202,9 @@ async def run_task(
     """
     async with app_sessions() as session:
         try:
-            report = await deliberate(session, task_id, deliberator, gateway, tools)
+            report = await deliberate(
+                session, task_id, deliberator, gateway, tools, fulltext_fetcher
+            )
             await session.commit()
         except BaseException:
             await session.rollback()

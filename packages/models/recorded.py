@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -55,7 +56,7 @@ class RecordedModelGateway:
             payload=cast(dict[str, object], result["payload"]),
             input_tokens=int(result["input_tokens"]),
             output_tokens=int(result["output_tokens"]),
-            cost_usd=int(result["cost_usd"]),
+            cost_usd=Decimal(str(result["cost_usd"])),
             latency_ms=int(result["latency_ms"]),
             retries=int(result["retries"]),
             schema_status=SchemaStatus(result["schema_status"]),

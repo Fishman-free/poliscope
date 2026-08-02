@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import suppress
-from decimal import Decimal
 
 from packages.council.contracts import Seat
 from packages.council.roles import ROLE_SPECS
@@ -174,7 +173,7 @@ class GatewayDeliberator:
             # raised: the next phase sees the empty budget and stops, and
             # discarding this answer would throw away work already paid for.
             with suppress(BudgetExhausted):
-                self._budget.consume_model_cost(Decimal(result.cost_usd))
+                self._budget.consume_model_cost(result.cost_usd)
 
         if result.schema_status is SchemaStatus.QUARANTINED:
             # CLAUDE.md 10: structured output that could not be repaired is

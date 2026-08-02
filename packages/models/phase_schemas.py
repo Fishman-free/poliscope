@@ -1,0 +1,243 @@
+"""JSON Schemas for the seven structured outputs the council's rounds expect.
+
+The field names here are not invented -- they are read directly out of
+``packages/council/rounds/registry.py``, the only code that actually consumes
+a seat's answer, and the schema *names* match
+``packages.council.deliberation.PHASE_OUTPUT_SCHEMAS`` exactly. If a round's
+expected field changes, this file and the registry must change together, or a
+real vendor call will parse cleanly while feeding the wrong shape downstream.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Final
+
+PRECOMMITMENT_OUTPUT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "initial_judgment": {"type": "string"},
+        "confidence": {"type": "number", "description": "0 to 1"},
+        "blindspots": {"type": "array", "items": {"type": "string"}},
+        "update_condition": {"type": "string"},
+    },
+    "required": ["initial_judgment", "confidence", "blindspots", "update_condition"],
+}
+
+ACQUISITION_REQUESTS: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "requests": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["requests"],
+}
+
+EVIDENCE_PROJECTION: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "evidence_items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source_id": {
+                        "type": "string",
+                        "description": (
+                            "UUID of a Source already returned by acquisition"
+                        ),
+                    },
+                    "anchor_summary": {"type": "string"},
+                    "level": {"type": "string", "description": "A, B, C, or D"},
+                },
+                "required": ["source_id", "anchor_summary", "level"],
+            },
+        },
+    },
+    "required": ["evidence_items"],
+}
+
+CHALLENGE_SET: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "challenges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim_id": {
+                        "type": "string",
+                        "description": "UUID of a confirmed atomic claim",
+                    },
+                    "statement": {"type": "string"},
+                    "is_fatal": {"type": "boolean"},
+                },
+                "required": ["claim_id", "statement", "is_fatal"],
+            },
+        },
+    },
+    "required": ["challenges"],
+}
+
+BLINDSPOT_NOMINATIONS: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "blindspots": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "a UUID4 you generate for this blindspot",
+                    },
+                    "statement": {"type": "string"},
+                    "impact": {"type": "number", "description": "0 to 1"},
+                    "uncertainty": {"type": "number", "description": "0 to 1"},
+                    "investigability": {"type": "number", "description": "0 to 1"},
+                    "novelty": {"type": "number", "description": "0 to 1"},
+                    "normalized_cost": {"type": "number", "description": "0 to 1"},
+                },
+                "required": [
+                    "id",
+                    "statement",
+                    "impact",
+                    "uncertainty",
+                    "investigability",
+                    "novelty",
+                    "normalized_cost",
+                ],
+            },
+        },
+    },
+    "required": ["blindspots"],
+}
+
+JOINT_MODEL_CONTRIBUTION: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "boundary_conditions": {"type": "array", "items": {"type": "string"}},
+        "falsification_conditions": {"type": "array", "items": {"type": "string"}},
+        "unresolved_conflicts": {"type": "array", "items": {"type": "string"}},
+        "strongest_opposition_refs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "UUIDs of the confirmed claims this seat opposes most",
+        },
+    },
+    "required": [
+        "boundary_conditions",
+        "falsification_conditions",
+        "unresolved_conflicts",
+        "strongest_opposition_refs",
+    ],
+}
+
+FINAL_JUDGMENT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "final_judgment": {"type": "string"},
+    },
+    "required": ["final_judgment"],
+}
+
+# System-level schema for packages.papers.finding_extraction.FindingExtractor --
+# not one of the seven seat phase schemas above, so it is not subject to the
+# seat/phase consistency contract that governs PHASE_OUTPUT_SCHEMAS. It shapes
+# a single system model call that turns parsed PDF pages into a
+# StudyFindingCandidate (packages/papers/contracts.py) via
+# packages/papers/packet.py::build_packet(). The six method_quality sub-fields
+# are exactly packages.evidence.gate._METHOD_SCORE_KEYS -- naming them anything
+# else would leave Stage 5 of the evidence gate auditing nothing.
+STUDY_FINDING_EXTRACTION: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "study_question": {"type": "string"},
+        "population": {"type": "string"},
+        "design": {
+            "type": "string",
+            "description": (
+                "cross_sectional, longitudinal, experimental, "
+                "quasi_experimental, qualitative, meta_analysis, or other"
+            ),
+        },
+        "exposure_variable": {"type": "string"},
+        "outcome_variable": {"type": "string"},
+        "analysis_method": {"type": "string"},
+        "finding_statement": {"type": "string"},
+        "origin": {
+            "type": "string",
+            "description": "SOURCE_TEXT if stated by the authors, else AI_DERIVED",
+        },
+        "effect_direction": {
+            "type": "string",
+            "description": "positive, negative, null, or mixed",
+        },
+        "exact_quote": {
+            "type": "string",
+            "description": (
+                "Verbatim text copied from the paper that supports the "
+                "finding -- must be locatable in the source pages as-is."
+            ),
+        },
+        "author_conclusions": {"type": "array", "items": {"type": "string"}},
+        "author_limitations": {"type": "array", "items": {"type": "string"}},
+        "data_availability": {
+            "type": "string",
+            "description": "public, restricted, unavailable, or not_reported",
+        },
+        "code_availability": {
+            "type": "string",
+            "description": "public, restricted, unavailable, or not_reported",
+        },
+        "preregistration": {
+            "type": "string",
+            "description": "public, restricted, unavailable, or not_reported",
+        },
+        "method_quality": {
+            "type": "object",
+            "properties": {
+                "directness": {"type": "number", "description": "0 to 1"},
+                "design_quality": {"type": "number", "description": "0 to 1"},
+                "measurement_quality": {"type": "number", "description": "0 to 1"},
+                "precision": {"type": "number", "description": "0 to 1"},
+                "replicability": {"type": "number", "description": "0 to 1"},
+                "external_validity": {"type": "number", "description": "0 to 1"},
+            },
+            "required": [
+                "directness",
+                "design_quality",
+                "measurement_quality",
+                "precision",
+                "replicability",
+                "external_validity",
+            ],
+        },
+    },
+    "required": [
+        "study_question",
+        "population",
+        "design",
+        "exposure_variable",
+        "outcome_variable",
+        "analysis_method",
+        "finding_statement",
+        "origin",
+        "effect_direction",
+        "exact_quote",
+        "method_quality",
+    ],
+}
+
+# Keyed by the exact schema name strings in
+# packages.council.deliberation.PHASE_OUTPUT_SCHEMAS.
+PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
+    "PrecommitmentOutput": PRECOMMITMENT_OUTPUT,
+    "AcquisitionRequests": ACQUISITION_REQUESTS,
+    "EvidenceProjection": EVIDENCE_PROJECTION,
+    "ChallengeSet": CHALLENGE_SET,
+    "BlindspotNominations": BLINDSPOT_NOMINATIONS,
+    "JointModelContribution": JOINT_MODEL_CONTRIBUTION,
+    "FinalJudgment": FINAL_JUDGMENT,
+    "StudyFindingExtraction": STUDY_FINDING_EXTRACTION,
+}
+
+__all__ = ["PHASE_OUTPUT_JSON_SCHEMAS"]

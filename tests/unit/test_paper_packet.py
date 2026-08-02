@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from packages.kernel.contracts import FrozenDict
@@ -16,6 +18,8 @@ from packages.papers.packet import (
     source_version_hash,
 )
 from packages.papers.parser import PageText
+
+_SOURCE_ID = uuid4()
 
 
 def _source() -> dict[str, object]:
@@ -39,6 +43,7 @@ def _pages() -> list[PageText]:
 
 def _build_valid_packet() -> PaperEvidencePacket:
     return build_packet(
+        source_id=_SOURCE_ID,
         source=_source(),
         pages=_pages(),
         study_question="Does digital behavior affect mental health?",
@@ -96,6 +101,7 @@ def test_packet_anchor_page_matches_exact_quote() -> None:
 
 def test_packet_missing_quote_downgrades_to_b() -> None:
     packet = build_packet(
+        source_id=_SOURCE_ID,
         source=_source(),
         pages=_pages(),
         study_question="q",
@@ -132,6 +138,7 @@ def test_packet_immutability() -> None:
 
 def test_packet_anchor_verification_mismatch_when_quote_missing() -> None:
     packet = build_packet(
+        source_id=_SOURCE_ID,
         source=_source(),
         pages=[PageText(page_number=1, text="unrelated text")],
         study_question="q",
@@ -149,3 +156,51 @@ def test_packet_anchor_verification_mismatch_when_quote_missing() -> None:
     anchor = packet.studies[0].findings[0].anchors[0]
     assert anchor.page is None
     assert anchor.verification_status == VerificationStatus.LOCATION_MISMATCH
+
+
+def test_packet_source_version_id_is_derived_from_caller_supplied_source_id() -> None:
+    """Regression: build_packet() used to mint its own disconnected uuid4()
+
+    for source_id, so SourceVersion.source_id could never match a real,
+    already-persisted SourceModel.id. The caller's id must now flow through
+    untouched.
+    """
+    packet = _build_valid_packet()
+    assert packet.source_version.source_id == _SOURCE_ID
+
+
+def test_packet_ids_are_deterministic_across_replay() -> None:
+    """CLAUDE.md 10: replaying the same source + quote must be idempotent,
+
+    not mint a new node identity each time.
+    """
+    first = _build_valid_packet()
+    second = _build_valid_packet()
+    assert first.source_version.id == second.source_version.id
+    assert first.studies[0].id == second.studies[0].id
+    assert first.studies[0].findings[0].id == second.studies[0].findings[0].id
+
+
+def test_packet_ids_differ_for_different_source_ids() -> None:
+    """Two distinct sources must not collide on the same derived node id."""
+    other_source_id = uuid4()
+    other = build_packet(
+        source_id=other_source_id,
+        source=_source(),
+        pages=_pages(),
+        study_question="Does digital behavior affect mental health?",
+        population="adolescents",
+        design="longitudinal",
+        exposure_variable="screen_time",
+        outcome_variable="anxiety",
+        analysis_method="linear regression",
+        finding_statement="Screen time associates with anxiety.",
+        origin="SOURCE_TEXT",
+        effect_direction="positive",
+        exact_quote="We found a significant association between screen "
+        "time and anxiety.",
+        extraction_agent="measurement_scientist",
+    )
+    baseline = _build_valid_packet()
+    assert other.source_version.id != baseline.source_version.id
+    assert other.studies[0].findings[0].id != baseline.studies[0].findings[0].id

@@ -119,7 +119,7 @@ class _Gateway:
             payload=FrozenDict(self._payload(request)),
             input_tokens=800,
             output_tokens=240,
-            cost_usd=0,
+            cost_usd=Decimal("0"),
             latency_ms=430,
             retries=0,
             schema_status=SchemaStatus.OK,
