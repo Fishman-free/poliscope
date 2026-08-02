@@ -26,7 +26,8 @@ from packages.council.deliberation import (
 )
 from packages.council.rounds.registry import SEAT_UNAVAILABLE
 from packages.epistemo.contracts import TaskPhase, TaskStatus
-from packages.evidence.models import ScientificEventModel
+from packages.evidence.contracts import EvidenceNodeType
+from packages.evidence.models import GraphNodeModel, ScientificEventModel
 from packages.kernel.contracts import FrozenDict
 from packages.models.contracts import ModelRequest, ModelResult, SchemaStatus
 from packages.models.models import ModelCallModel
@@ -135,6 +136,17 @@ class _ScriptedGateway:
                 "unresolved_conflicts": ["Effect direction across sexes."],
             }
         if phase is TaskPhase.FINAL_REJUDGMENT:
+            if seat == Seat.ADVERSARY_FALSIFIER.value:
+                # Exactly one dissenting seat, so a full run exercises the
+                # DissentCertificate path (CLAUDE.md 16 acceptance criterion
+                # 10) without turning every other seat's judgment into a
+                # dissent too.
+                return {
+                    "final_judgment": (
+                        f"{seat}: I dissent -- the causal claim overreaches "
+                        "the cross-sectional evidence."
+                    )
+                }
             return {"final_judgment": f"{seat}: narrowed, not withdrawn"}
         return {}
 
@@ -304,6 +316,41 @@ async def test_a_full_council_run_reports_no_gaps(
     assert result.run.absent_seats == frozenset()
     assert result.run.final_status == TaskStatus.COMPLETED
     assert SEAT_UNAVAILABLE not in await _event_types(app_sessions, task_id)
+
+    # _ScriptedGateway's JOINT_MODELING answer already supplies non-empty
+    # boundary_conditions/unresolved_conflicts, so CLAUDE.md 5.2's Dialectical
+    # Fold must actually have produced a DebateCapsule node on the evidence
+    # graph -- not just a CONSENSUS_DRAFTED process event.
+    async with app_sessions() as session:
+        capsule_nodes = (
+            await session.execute(
+                select(GraphNodeModel).where(
+                    GraphNodeModel.task_id == task_id,
+                    GraphNodeModel.node_type
+                    == EvidenceNodeType.DEBATE_CAPSULE.value,
+                )
+            )
+        ).scalars().all()
+    assert len(capsule_nodes) == 1
+    assert capsule_nodes[0].status == "active"
+
+    # _ScriptedGateway's FINAL_REJUDGMENT answer makes exactly one seat
+    # (ADVERSARY_FALSIFIER) dissent, so CLAUDE.md 16 acceptance criterion 10
+    # must actually have produced a DissentCertificate node on the evidence
+    # graph, not just a FINAL_JUDGMENT process event with has_dissent=True.
+    async with app_sessions() as session:
+        dissent_nodes = (
+            await session.execute(
+                select(GraphNodeModel).where(
+                    GraphNodeModel.task_id == task_id,
+                    GraphNodeModel.node_type
+                    == EvidenceNodeType.DISSENT_CERTIFICATE.value,
+                )
+            )
+        ).scalars().all()
+    assert len(dissent_nodes) == 1
+    assert dissent_nodes[0].status == "active"
+    assert dissent_nodes[0].payload["author"] == Seat.ADVERSARY_FALSIFIER.value
 
 
 async def test_every_model_call_is_audited(

@@ -97,7 +97,8 @@ EpistemoBrain 是无投票权的组织脑，不是第 8 名科学家，也不能
 - `Context`；
 - `Blindspot`；
 - `DebateCapsule`；
-- `DiscriminatingStudy`。
+- `DiscriminatingStudy`；
+- `DissentCertificate`。
 
 首版正式边：
 

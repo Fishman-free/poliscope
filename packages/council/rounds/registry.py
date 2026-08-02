@@ -27,6 +27,7 @@ from typing import Protocol
 from uuid import UUID
 
 from packages.council.contracts import Seat
+from packages.council.dissent import issue_dissent
 from packages.council.rounds.acquisition import AcquisitionRound
 from packages.council.rounds.blindspot_bounty import (
     BlindspotBountyHandler,
@@ -55,8 +56,9 @@ from packages.council.rounds.precommitment import (
 )
 from packages.epistemo.contracts import TaskPhase
 from packages.evidence.contracts import EvidenceNodeType
+from packages.evidence.dialectical_fold import DebateCapsule
 
-# Process event types. None of these is one of the nine formal node types, so
+# Process event types. None of these is one of the ten formal node types, so
 # the projector records them and refuses to turn them into evidence.
 PHASE_STARTED = "PHASE_STARTED"
 PHASE_COMPLETED = "PHASE_COMPLETED"
@@ -717,6 +719,58 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
                 idempotency_key=context.key("consensus"),
             )
         )
+        # A capsule is only worth folding when there is something to fold: a
+        # consensus with no recorded boundary and no recorded conflict is not
+        # a debate, it is an agreement, and CLAUDE.md 5.2 requires a Dialectical
+        # Fold to preserve both -- there would be nothing to preserve.
+        if result.boundary_conditions and result.unresolved_conflicts:
+            source_refs = tuple(
+                dict.fromkeys((*result.supporting_refs, *result.opposing_refs))
+            )
+            try:
+                capsule = DebateCapsule(
+                    common_ground=(result.conditional_consensus,),
+                    strongest_support=result.supporting_refs,
+                    strongest_opposition=result.opposing_refs,
+                    hinge_variables=result.hinge_variables,
+                    boundary_conditions=result.boundary_conditions,
+                    unresolved_conflicts=result.unresolved_conflicts,
+                    falsification_conditions=result.falsification_conditions,
+                    source_refs=source_refs,
+                )
+            except ValueError:
+                # A required dialectical field came back empty (e.g. no
+                # confirmed claims to hang hinge variables off of) -- an
+                # honest gap, not a fabricated capsule.
+                unfilled = (*unfilled, "JOINT_MODELING:no_capsule_fold")
+            else:
+                events.append(
+                    EmittedEvent(
+                        event_type=EvidenceNodeType.DEBATE_CAPSULE.value,
+                        payload={
+                            "common_ground": list(capsule.common_ground),
+                            "strongest_support": [
+                                str(item) for item in capsule.strongest_support
+                            ],
+                            "strongest_opposition": [
+                                str(item) for item in capsule.strongest_opposition
+                            ],
+                            "hinge_variables": list(capsule.hinge_variables),
+                            "boundary_conditions": list(capsule.boundary_conditions),
+                            "unresolved_conflicts": list(capsule.unresolved_conflicts),
+                            "falsification_conditions": list(
+                                capsule.falsification_conditions
+                            ),
+                            "source_refs": [
+                                str(item) for item in capsule.source_refs
+                            ],
+                        },
+                        idempotency_key=context.key("debate_capsule"),
+                        evidence_level="A",
+                    )
+                )
+        else:
+            unfilled = (*unfilled, "JOINT_MODELING:no_capsule_fold")
     else:
         unfilled = (
             *unfilled,
@@ -777,6 +831,37 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
         )
         for judgment in result.judgments
     ]
+    dissenters = [judgment for judgment in result.judgments if judgment.has_dissent]
+    if dissenters and context.confirmed_claims:
+        # The first confirmed claim is the MVP target for a dissent: a seat
+        # dissenting about several claims separately is future scope. Every
+        # dissent still needs a real Claim to attach to -- issuing one against
+        # nothing would produce a DissentCertificate the graph cannot anchor.
+        target_id = context.confirmed_claims[0]
+        for judgment in dissenters:
+            certificate = issue_dissent(
+                author=judgment.seat,
+                target_id=target_id,
+                statement=judgment.final_judgment,
+                reason=f"最终复判判定为异议：{judgment.final_judgment}",
+                evidence_refs=judgment.evidence_refs,
+            )
+            events.append(
+                EmittedEvent(
+                    event_type=EvidenceNodeType.DISSENT_CERTIFICATE.value,
+                    payload={
+                        "author": certificate.author.value,
+                        "target_id": str(certificate.target_id),
+                        "statement": certificate.statement,
+                        "reason": certificate.reason,
+                        "withdrawal_condition": certificate.withdrawal_condition,
+                    },
+                    idempotency_key=context.key("dissent", judgment.seat.value),
+                    evidence_level="A",
+                )
+            )
+    elif dissenters:
+        unfilled = (*unfilled, "FINAL_REJUDGMENT:no_dissent_target")
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(
         events=tuple(events),

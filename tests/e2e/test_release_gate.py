@@ -8,7 +8,7 @@ def test_all_council_seats_present() -> None:
 
 def test_all_evidence_node_types_defined() -> None:
     from packages.evidence.contracts import EvidenceNodeType
-    assert len(EvidenceNodeType) == 9
+    assert len(EvidenceNodeType) == 10
 
 
 def test_all_evidence_edge_types_defined() -> None:

@@ -12,6 +12,7 @@ Poliscope 组织 7 名具有互补认识能力的 AI 科学家，全程参与问
 
 ## 目录
 
+- [设计思路：从 MemoBrain 到 EpistemoBrain](#设计思路从-memobrain-到-epistemobrain)
 - [先读这一节：当前真实状态](#先读这一节当前真实状态)
 - [设计上的五个硬约束](#设计上的五个硬约束)
 - [快速开始](#快速开始)
@@ -24,6 +25,50 @@ Poliscope 组织 7 名具有互补认识能力的 AI 科学家，全程参与问
 - [已知缺口](#已知缺口)
 - [安全与伦理](#安全与伦理)
 - [许可证与归属](#许可证与归属)
+
+---
+
+## 设计思路：从 MemoBrain 到 EpistemoBrain
+
+这一节说的是「为什么这样设计」，不是「跑到哪一步了」——运行状态请看下一节和文末的[已知缺口](#已知缺口)。
+
+### 起点：一个单智能体的记忆压缩器，管不了一个科学共同体
+
+Poliscope 的执行记忆基座是 [MemoBrain](https://github.com/qhjqhj00/MemoBrain)。它的原始设定是给**一个** Agent 用的：这个 Agent 自己检索、自己推理、自己在 token 预算见底之前把已经走过的路压缩掉，留下还有用的部分。`Flush` 隔离走不通的分支，`Fold` 压缩已完成的子任务，`Recall` 在预算内重建工作上下文——三个动作服务同一个目的：让一个大脑在有限记忆里跑得更远。
+
+我们最早的直觉是「在 MemoBrain 外面套七个 Agent」——每个科学家一份 MemoBrain 实例，问题不就解决了？没有。原因不是工程量，是这三个动作压根没有回答一个更根本的问题：**当七个独立认知主体需要共享、交换、审计彼此的证据时，谁的记忆图是准的？**
+
+如果直接把某个科学家的 MemoBrain ReasoningGraph 当成最终的证据地图，会依次出这些问题：工具调用步骤和学术证据混在一张图里，分不清谁是证据谁是过程；一个科学家的中间猜测被用户误当成事实；`Fold` 把还没解决的争议一起压缩掉；一篇论文里的三个不同发现，没法在图上分别挂到三个不同结论上；界面最终没法讲清楚「这个结论现在有多大争议」。这些不是可以靠 Prompt 调好的小毛病，是「过程记忆」和「科研证据」这两个概念本来就不是一回事——前者回答「这个科学家是怎么做到的」，后者回答「我们现在对这个问题知道什么」。
+
+所以第一个决定是**双图分离**：MemoBrain 继续做它最擅长的事，管理 Process Graph；证据的正式状态另外建一张 Evidence Graph，只认原子主张、研究发现、构念、情境和盲点这些学术对象。两张图之间不是各管各的，而是靠一本可审计的 Scientific Event Ledger 联动——过程产生候选证据，证据暴露认知缺口，缺口再触发新一轮调查（详见[证据治理](#证据治理)）。
+
+### 一个更麻烦的问题：七个科学家不会自动带来七倍可靠性
+
+七人议会解决的是「视角单一」——一个 Agent 读论文，容易只看到自己那一路的解释。但视角多样性和证据独立性是两件不同的事，混为一谈会埋下更隐蔽的风险：如果七名科学家读到的是同一份错误摘要、同一篇被撤稿的论文、同一条张冠李戴的引用，系统反而可能把**共享的证据错误**包装成看起来众口一词的「共识」——七个人同时说错，比一个人说错更有迷惑性，因为它看起来像是被反复验证过的。
+
+这也是为什么「论文数量不等于独立证据数量」被写进了[设计上的五个硬约束](#设计上的五个硬约束)，而不只是一句提醒：六篇论文如果共享同一个数据集、同一个研究团队，本质上是一份证据被讲了六遍。证据谱系（谁复用了谁的数据、谁是谁的预印本、谁是谁的扩展研究）决定的是**独立证据簇**的数量，这个数字才是真正该被信任的分母——而不是论文篇数。
+
+### 记忆操作不能直接照搬，得先问「这个动作在科研场景里意味着什么」
+
+MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则每一个都会制造事故：
+
+- **`Flush` → `Quarantine`（隔离，而不是清空）。** 一条被反驳的主张不会消失，只会换状态：`PROPOSED → SUPPORTED → CONTESTED → QUARANTINED → RESURRECTED / REJECTED`。隔离记录必须写清楚是谁反驳的、缺什么证据、满足什么条件可以复活。普通 `Flush` 是为「确认没用了」设计的；一条科研主张在被证伪之前，谁也不能替它下这个判断。
+- **`Fold` → `Dialectical Fold`（辩证折叠，而不是压缩字数）。** 一场争议只有在产出了共同认识、最强支持、最强反对、铰链变量、适用边界、未解决冲突和证伪条件之后，才允许被折叠成一个 `DebateCapsule`。这不是把长文本变短文本，是把一场争议变成它自身「最小充分表示」——原始节点仍在，用户仍能从 capsule 点回原文。
+- **`Recall` → `Perspective Recall`（角色化召回，而不是同一份摘要发给所有人）。** `Context_i = ProcessRecall_i + EvidenceProjection_i`：每个席位拿到的是自己的私有过程记忆，加上从同一张证据图生成的、专属于自己关注维度的切片——因果专家看到的是混杂变量和反向因果攻击，测量专家看到的是构念冲突和数据来源。让七个人都读同一份摘要，图省事，但也是制造观点同质化最快的办法。
+
+### 一次被我们自己推翻的方案：动态选组 vs 七人全程
+
+早期方案想用一个 `CoalitionScore` 公式，给每个研究任务动态挑选一个「最适合」的科学家子集，理由是省成本、还能体现「智能调度」。这个方案后来被我们自己否决了：任何一次省略某个角色的调度，都在赌这个角色这次用不上——但争议问题的盲点恰恰常常出现在被认为「用不上」的那个维度上。测量专家看似和因果争议无关，但自报告偏差经常就是那场因果争议的真正根源。
+
+所以最终决定是**每个任务七人全程参与**，成本用别的方式控制，而不是靠减人：每轮发言有预算（一个主动作 + 一个质询，没有新信息就 `PASS`）、语义去重后才触发重推理、复杂判断用强模型/格式化用轻量模型分层调用、七人共享同一份检索缓存而不是各查各的。工程上更麻烦，但换来的是「不会因为调度算法的一次误判，漏掉本该被发现的盲点」。
+
+### 认识论路由：让证据图自己提出下一步该查什么
+
+七人议会不是机械地跑满七轮就算完成。证据图发现缺口后会生成「盲点悬赏」，按影响、不确定性、可调查性、新颖度和成本打分排出优先级，再广播给七人认领——**是证据状态在驱动下一步调查方向，而不是主持人按预定台本依次点名发言**。这也是为什么产品里 Blindspot 是一等公民对象，而不是报告末尾的一段「局限性」文字。
+
+### 尚在设计、还没接线的部分
+
+`Fork`（对无法调和的冲突分叉出平行研究路径）、`Merge`（为看似矛盾的两个结果找到能同时解释它们的边界变量）、`Resurrect`（新证据满足复活条件时主动唤醒被隔离的假设），以及盲证据评审、独立双抽取、来源多样性约束、对抗式检索这四种专门对抗「共享证据错误」的机制，目前都还停留在设计规格（见 [`docs/superpowers/specs/2026-07-31-poliscope-design.md`](docs/superpowers/specs/2026-07-31-poliscope-design.md) 第 5、7 节）里，尚未接入主流程——具体缺口见[已知缺口](#已知缺口)。写在这里是因为它们是「为什么这套架构长这样」叙事里绕不开的一部分，不代表它们已经能用。
 
 ---
 
@@ -41,12 +86,13 @@ Poliscope 组织 7 名具有互补认识能力的 AI 科学家，全程参与问
 | 证据门六阶段审核、A–D 分级、因果越级隔离 | 集成测试，关键项经变异测试自证 |
 | 六个 CLI 子命令 | 逐条对真实 API 手工验证 |
 | 三个前端视图（Research Brief / Controversy Map / Audit Trail） | 真实数据 + 浏览器截图核对，无控制台错误 |
+| 全文获取 → 解析 → StudyFinding 抽取 → 引用锚点核验 | 单元测试（程序化生成 PDF fixture，无需网络）+ 集成测试断言 `DERIVED_FROM` 边真正出现在证据图上 |
+| 联合建模 → Dialectical Fold → `DebateCapsule`；最终复判 → 异议 → `DissentCertificate` | 单元测试覆盖两条产出路径与「无边界/无冲突则不折叠」「无异议目标则记未填槽位」两条弃权路径；集成测试断言完整任务运行后证据图上真的出现对应节点 |
 
 **尚未接入真实厂商凭证的：**
 
 - **模型网关已有真实实现（`OpenAICompatibleModelGateway`），但尚未连真实凭证。** 对接任意 OpenAI-Chat-Completions 兼容端点（DeepSeek / LongCat / 国内中转站），已接入 `apps/worker`；共享的传输重试策略见 `packages/kernel/http_retry.py`。`POLISCOPE_MODEL_API_KEY` 留空时行为不变——每个席位记为「缺席」，任务以 `COMPLETED_WITH_GAPS` 结束，并在报告的「局限与未知」中逐条列出未填的证据槽位。目前只经过 `httpx.MockTransport` 单元测试验证，尚未打过真实厂商的网络。
 - **工具网关已有真实实现（`HttpToolGateway`），同样尚未连真实凭证。** 直接对接 OpenAlex、Crossref、Unpaywall、Semantic Scholar 的公开 REST API，已接入 `apps/worker`。OpenAlex / Crossref / Semantic Scholar 无需任何凭证即可工作；仅 Unpaywall 的使用条款要求每次请求带联系邮箱（`POLISCOPE_TOOLS_CONTACT_EMAIL`），未设置时只有该供应商的调用会报错，其余三个不受影响。同样只经过 `httpx.MockTransport` 单元测试验证，尚未打过真实厂商的网络。
-- **全文解析与 StudyFinding 抽取未接线。** 因此目前只能产出 Level B（仅元数据）的 Source，产不出 Level A 的 StudyFinding，证据图上也就没有 `DERIVED_FROM` 边。
 
 完整清单见 [已知缺口](#已知缺口)。
 
@@ -279,9 +325,9 @@ PRECOMMITMENT → ACQUISITION → EVIDENCE_EXCHANGE → CROSS_EXAMINATION
 ### 双图隔离
 
 - **Process Graph**：科学家的任务、工具调用、失败路线、质询、决策。由 MemoBrain 管理，允许 Fold 与 Recall。**过程节点不会自动成为正式证据。**
-- **Evidence Graph**：9 种节点、12 种边。只有 Graph Projector 能写。
+- **Evidence Graph**：10 种节点、12 种边。只有 Graph Projector 能写。
 
-节点：`ResearchQuestion`、`Claim`、`Source`、`StudyFinding`、`Construct`、`Context`、`Blindspot`、`DebateCapsule`、`DiscriminatingStudy`。
+节点：`ResearchQuestion`、`Claim`、`Source`、`StudyFinding`、`Construct`、`Context`、`Blindspot`、`DebateCapsule`、`DiscriminatingStudy`、`DissentCertificate`。DissentCertificate 由本阶段（阶段 2）新增接线，见下文[已知缺口](#已知缺口)第 5 项的更新说明。
 
 边：`SUPPORTS`、`REFUTES`、`QUALIFIES`、`CONTRADICTS`、`CONFOUNDS`、`MEDIATES`、`MODERATES`、`OPERATIONALIZES`、`DERIVED_FROM`、`APPLIES_IN`、`EXPOSES`、`TESTS`。
 
@@ -383,20 +429,21 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 1. **模型网关无真实厂商凭证。** `OpenAICompatibleModelGateway`（`packages/models/openai_compatible.py`）已实现并接入 `apps/worker`，对接任意 DeepSeek / LongCat / 国内中转站等 OpenAI-Chat-Completions 兼容端点；仅经 `httpx.MockTransport` 单元测试验证，尚未填入真实 `POLISCOPE_MODEL_API_KEY` 跑通一次真实调用。
 2. **工具网关无真实厂商凭证。** `HttpToolGateway`（`packages/tools/http_gateway.py`）已实现并接入 `apps/worker`，直接调用 OpenAlex / Crossref / Unpaywall / Semantic Scholar 的真实公开 API；OpenAlex / Crossref / Semantic Scholar 无需凭证，仅 Unpaywall 需要 `POLISCOPE_TOOLS_CONTACT_EMAIL`。同样仅经 `httpx.MockTransport` 单元测试验证，尚未打过真实网络。
-3. **全文解析与 StudyFinding 抽取未接线。** `packages/papers/` 的 parser 与 packet 存在但没有调用者，所以拿不到 Level A 证据，也就没有引用锚点。
 
 **影响证据质量：**
 
-4. **证据谱系边没有落库。** 独立证据簇目前只能按 canonical DOI 合并，是独立性的**上界**。数据集复用、样本重叠、团队重叠需要一张 lineage 表。
-5. **Dialectical Fold 未接线。** `packages/evidence/dialectical_fold.py` 有实现和测试，但编排器不调用它。
-6. **DebateCapsule 与 DissentCertificate 未产出。** 因此前端「少数意见与异议」面板目前恒为空。
-7. **`packages/evidence/lifecycle.py`、`consistency.py`、`repository.py` 无生产调用者。**
+3. **证据谱系边没有落库。** 独立证据簇目前只能按 canonical DOI 合并，是独立性的**上界**。数据集复用、样本重叠、团队重叠需要一张 lineage 表——`packages/papers/models.py` 现有的 `Source`/`Study` 表尚未持久化作者列表或数据集标识符，这是自动识别 `SAME_DATASET`/`SAME_RESEARCH_TEAM` 之前要先解决的建模问题。
+4. **`packages/evidence/lifecycle.py`、`consistency.py`、`repository.py` 无生产调用者。**
+5. **盲证据评审、独立双抽取、来源多样性约束、对抗式检索四种防止「共享证据错误」的机制尚未实现。** 设计见[设计思路](#设计思路从-memobrain-到-epistemobrain)和设计规格第 5、7 节；目前证据独立性只靠 canonical DOI 合并，不靠这四种机制兜底。
+6. **`Fork`、`Merge`、`Resurrect` 三个新增记忆操作尚未实现。** 目前无法为无法调和的冲突分叉平行研究路径，也无法在新证据出现时主动复活被隔离的假设——`Quarantine` 的状态机允许 `RESURRECTED` 状态，但没有触发它的代码路径。
+
+> 原第 4、5 项（Dialectical Fold 未接线；DebateCapsule 与 DissentCertificate 未产出）已解决：`run_joint_modeling` 和 `run_final_rejudgment`（`packages/council/rounds/registry.py`）现在分别产出 `DebateCapsule` 和 `DissentCertificate` 事件，前端「少数意见与异议」面板不再恒为空。同时修复了一个此前未记录的 bug：`apps/api/routers/workspace.py` 与 `packages/reports/service.py` 的 `dissents` 字段此前都错误地查询 `DebateCapsule` 节点类型，现已改为查询 `DissentCertificate`。
 
 **尚未开始：**
 
-8. **ForesightBlindspot 评测基准。** 语料与验收矩阵的骨架在 `packages/evaluation/`，五个对照组和消融实验都还没跑。
-9. **Evolution View 与 Blindspot Radar。** 工作台快照里 `evolution` 和 `seats` 恒为空数组。
-10. **快照 / 暂停 / 恢复的端到端路径。** `CouncilMemory.snapshot/restore` 与 `restore_task_state` 都有实现和测试，但没有暴露成 API 或 CLI 操作。
+9. **ForesightBlindspot 评测基准。** 语料与验收矩阵的骨架在 `packages/evaluation/`，五个对照组和消融实验都还没跑。
+10. **Evolution View 与 Blindspot Radar。** 工作台快照里 `evolution` 和 `seats` 恒为空数组。
+11. **快照 / 暂停 / 恢复的端到端路径。** `CouncilMemory.snapshot/restore` 与 `restore_task_state` 都有实现和测试，但没有暴露成 API 或 CLI 操作。
 
 ---
 
@@ -436,7 +483,7 @@ Poliscope 以 [MemoBrain](https://github.com/qhjqhj00/MemoBrain) 作为执行记
 - Evidence Lineage Graph
 - ForesightBlindspot 时间切片评测
 
-其中 Dialectical Fold、Fork/Merge/Resurrect、Dissent Certificate、Evidence Lineage Graph 与 ForesightBlindspot 目前尚未接入主流程，见[已知缺口](#已知缺口)。
+其中 Dialectical Fold 与 Dissent Certificate 已接入主流程；Fork/Merge/Resurrect、Evidence Lineage Graph 与 ForesightBlindspot 目前尚未接入，见[已知缺口](#已知缺口)。
 
 ---
 

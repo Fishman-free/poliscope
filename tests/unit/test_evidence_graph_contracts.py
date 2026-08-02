@@ -9,8 +9,8 @@ from packages.evidence.contracts import (
 )
 
 
-def test_graph_contract_has_exactly_nine_nodes() -> None:
-    assert len(EvidenceNodeType) == 9
+def test_graph_contract_has_exactly_ten_nodes() -> None:
+    assert len(EvidenceNodeType) == 10
 
 
 def test_graph_contract_has_exactly_twelve_edges() -> None:

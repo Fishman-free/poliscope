@@ -34,7 +34,7 @@ router = APIRouter()
 # to the graph and is returned inside it.
 BLINDSPOT_NODE_TYPE = "Blindspot"
 DISCRIMINATING_STUDY_NODE_TYPE = "DiscriminatingStudy"
-DEBATE_CAPSULE_NODE_TYPE = "DebateCapsule"
+DISSENT_CERTIFICATE_NODE_TYPE = "DissentCertificate"
 
 
 async def _nodes_of_type(
@@ -164,7 +164,9 @@ async def get_workspace(task_id: UUID, session: SessionDep) -> WorkspaceSnapshot
         discriminating_studies=await _nodes_of_type(
             session, task_id, DISCRIMINATING_STUDY_NODE_TYPE
         ),
-        dissents=await _nodes_of_type(session, task_id, DEBATE_CAPSULE_NODE_TYPE),
+        dissents=await _nodes_of_type(
+            session, task_id, DISSENT_CERTIFICATE_NODE_TYPE
+        ),
         evolution=(),
         paper_count=paper_count,
         independent_cluster_count=cluster_count,

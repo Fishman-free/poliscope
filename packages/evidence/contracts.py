@@ -17,6 +17,7 @@ class EvidenceNodeType(StrEnum):
     BLINDSPOT = "Blindspot"
     DEBATE_CAPSULE = "DebateCapsule"
     DISCRIMINATING_STUDY = "DiscriminatingStudy"
+    DISSENT_CERTIFICATE = "DissentCertificate"
 
 
 class EvidenceEdgeType(StrEnum):

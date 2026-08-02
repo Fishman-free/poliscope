@@ -228,7 +228,7 @@ class ReportService:
             ),
             findings=of_type(EvidenceNodeType.STUDY_FINDING),
             blindspots=of_type(EvidenceNodeType.BLINDSPOT),
-            dissents=of_type(EvidenceNodeType.DEBATE_CAPSULE),
+            dissents=of_type(EvidenceNodeType.DISSENT_CERTIFICATE),
             discriminating_studies=of_type(EvidenceNodeType.DISCRIMINATING_STUDY),
             # Retained, not removed. CLAUDE.md 5.3 forbids deleting these and the
             # brief is where the researcher actually sees that they exist.
