@@ -114,12 +114,17 @@ class ProjectionReport:
         )
 
 
-def _node_id_for(event: ScientificEventModel) -> UUID:
+def node_id_for(event: ScientificEventModel) -> UUID:
     """Choose the identity a node keeps across replays.
 
     A claim referenced by three events must be one node, not three, so the
     domain id wins when the event carries one. Falling back to the event id is
     safe because ``uq_event_idempotency`` already makes that stable per replay.
+
+    Not underscored: a quarantined event never reaches ``_upsert_node``, so
+    ``apps/worker/jobs.py``'s Resurrect wiring reuses this exact resolution
+    rule to name a quarantined node the same way it would have been named had
+    it been admitted -- see ``_quarantined_nodes`` there.
     """
     declared = event.payload.get("node_id")
     if isinstance(declared, str):
@@ -402,7 +407,7 @@ class SqlGraphProjector:
             if decision.disposition == AdmissionDisposition.ADMIT
             else NODE_PROVISIONAL
         )
-        node_id = _node_id_for(event)
+        node_id = node_id_for(event)
         specs = _edge_specs(event)
         if await self._upsert_node(
             node_id,

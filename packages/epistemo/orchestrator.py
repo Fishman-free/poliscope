@@ -45,6 +45,7 @@ from packages.epistemo.contracts import (
 )
 from packages.epistemo.state_machine import TaskStateMachine
 from packages.epistemo.stopping import StopReason, decide_stop
+from packages.evidence.lifecycle import QuarantinedNode
 from packages.memory.council_memory import CouncilMemory
 
 PHASE_FAILED = "PHASE_FAILED"
@@ -208,6 +209,7 @@ class CouncilOrchestrator:
         task_id: UUID,
         question: str,
         confirmed_claims: tuple[UUID, ...] = (),
+        quarantined: tuple[QuarantinedNode, ...] = (),
     ) -> TaskRunReport:
         machine = TaskStateMachine()
         state = _Accumulator()
@@ -229,7 +231,9 @@ class CouncilOrchestrator:
                 state.unfilled.append(f"{phase.value}:not_reached")
                 await self._append_skip(task_id, phase, stop)
                 continue
-            await self._run_phase(task_id, phase, question, confirmed_claims, state)
+            await self._run_phase(
+                task_id, phase, question, confirmed_claims, quarantined, state
+            )
             run_phases.append(phase)
 
         if state.absent:
@@ -282,6 +286,7 @@ class CouncilOrchestrator:
         phase: TaskPhase,
         question: str,
         confirmed_claims: tuple[UUID, ...],
+        quarantined: tuple[QuarantinedNode, ...],
         state: _Accumulator,
     ) -> None:
         await self._ledger.append(
@@ -303,6 +308,7 @@ class CouncilOrchestrator:
             recall=await self._recall(),
             acquirer=self._acquirer,
             finding_extractor=self._finding_extractor,
+            quarantined=quarantined,
         )
         try:
             outcome = await runner_for(phase)(context)

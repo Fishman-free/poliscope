@@ -66,9 +66,9 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 
 七人议会不是机械地跑满七轮就算完成。证据图发现缺口后会生成「盲点悬赏」，按影响、不确定性、可调查性、新颖度和成本打分排出优先级，再广播给七人认领——**是证据状态在驱动下一步调查方向，而不是主持人按预定台本依次点名发言**。这也是为什么产品里 Blindspot 是一等公民对象，而不是报告末尾的一段「局限性」文字。
 
-### 尚在设计、还没接线的部分
+### 完成度不对称的部分
 
-`Fork`（对无法调和的冲突分叉出平行研究路径）、`Merge`（为看似矛盾的两个结果找到能同时解释它们的边界变量）、`Resurrect`（新证据满足复活条件时主动唤醒被隔离的假设），以及盲证据评审、独立双抽取、来源多样性约束、对抗式检索这四种专门对抗「共享证据错误」的机制，目前都还停留在设计规格（见 [`docs/superpowers/specs/2026-07-31-poliscope-design.md`](docs/superpowers/specs/2026-07-31-poliscope-design.md) 第 5、7 节）里，尚未接入主流程——具体缺口见[已知缺口](#已知缺口)。写在这里是因为它们是「为什么这套架构长这样」叙事里绕不开的一部分，不代表它们已经能用。
+`Fork`（对无法调和的冲突分叉出平行研究路径）、`Merge`（为看似矛盾的两个结果找到能同时解释它们的边界变量）、`Resurrect`（新证据满足复活条件时主动唤醒被隔离的假设），以及盲证据评审、独立双抽取、来源多样性约束、对抗式检索这四种专门对抗「共享证据错误」的机制，均已按设计规格（见 [`docs/superpowers/specs/2026-07-31-poliscope-design.md`](docs/superpowers/specs/2026-07-31-poliscope-design.md) 第 5、7 节）接入主流程，但每一项的完成度并不相同——有的是端到端真实闭环，有的裁剪为「只记录候选、由人决定」，有的只做到意图生成而非真实检索。具体到每一项的实际状态，见[已知缺口](#已知缺口)第 5、6 项下的详细说明，不要只凭这里的名字判断某个机制「能用到什么程度」。
 
 ---
 
@@ -434,7 +434,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 4. **`packages/evidence/lifecycle.py`、`consistency.py`、`repository.py` 无生产调用者。**
 5. ~~盲证据评审、独立双抽取、来源多样性约束、对抗式检索四种防止「共享证据错误」的机制尚未实现。~~ **已解决，但四个子机制的完成度不对称，见下方说明。**
-6. **`Fork`、`Merge`、`Resurrect` 三个新增记忆操作尚未实现。** 目前无法为无法调和的冲突分叉平行研究路径，也无法在新证据出现时主动复活被隔离的假设——`Quarantine` 的状态机允许 `RESURRECTED` 状态，但没有触发它的代码路径。
+6. ~~`Fork`、`Merge`、`Resurrect` 三个新增记忆操作尚未实现。~~ **已解决，但三条路径的完成度不对称，见下方说明。**
 
 > 原第 4、5 项（Dialectical Fold 未接线；DebateCapsule 与 DissentCertificate 未产出）已解决：`run_joint_modeling` 和 `run_final_rejudgment`（`packages/council/rounds/registry.py`）现在分别产出 `DebateCapsule` 和 `DissentCertificate` 事件，前端「少数意见与异议」面板不再恒为空。同时修复了一个此前未记录的 bug：`apps/api/routers/workspace.py` 与 `packages/reports/service.py` 的 `dissents` 字段此前都错误地查询 `DebateCapsule` 节点类型，现已改为查询 `DissentCertificate`。
 >
@@ -443,6 +443,11 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 > - **盲证据评审——完整闭环。** `packages/council/deliberation.py` 构造 ACQUISITION/EVIDENCE_EXCHANGE 阶段 prompt 时结构性去掉 author/journal/citation_count 字段，是一个恒定生效的denylist守卫，不依赖某次运行是否「刚好」触发。
 > - **独立双抽取——完整闭环。** `FindingExtractor.extract(dual_extraction=True)`（`packages/papers/finding_extraction.py`）对 Level A 候选跑两次独立抽取，比较 `exact_quote`/`effect_direction`；任一不一致都记为「需人工审计」的 gap，不自动裁决哪一次对。四条路径（一致通过、引用不一致、效应方向不一致、第二次抽取本身失败）均有单测覆盖。
 > - **对抗式检索——只做到意图生成，不做到真实检索。** `packages/evidence/adversarial_retrieval.py` 为每个 confirmed claim 生成 6 类反向检索意图字符串（反驳、零结果、替代理论、测量批评、复现失败、边界反转），由 `run_acquisition` 无条件追加、归属给 `adversarial_falsifier` 席位。**但目前系统没有任何真正的全文搜索适配器**——`CandidatePool.add` 只能解析 DOI 形态的字符串，这六类查询本身是自由文本，所以在生产环境里**目前恒定无法解析到真实来源**。这不是遗漏，是设计规格 §7.9 本身声明的范围：意图生成是这版机制的全部。为了不让这个恒定的、系统级的适配器缺口每次都被误计成某个具体任务的证据缺口（那样会让 `COMPLETED_WITH_GAPS` 对所有有已确认主张的任务永久成立，这个状态就失去意义了），这些查询的解析结果**不计入** `unfilled_slots`，而是通过一条独立的 `ADVERSARIAL_RETRIEVAL_ATTEMPTED` 事件记录「尝试数/已解析数/未解析数」，保持在审计轨迹上可见——CLAUDE.md 第 7 条「承认未知」用可见性实现，而不是用缺口计数实现。真正让这一机制发挥作用，需要接入一个真正的全文检索适配器（例如 Semantic Scholar 的语义检索、Google Scholar 或类似服务），目前不在本版范围内。
+>
+> 原第 6 项（`Fork`、`Merge`、`Resurrect`）**已全部接入主流程，但完成度不对称：**
+> - **`Resurrect`——完整闭环。** `packages/evidence/lifecycle.py::check_resurrection_conditions()` 接入 `run_evidence_exchange`（`packages/council/rounds/registry.py`）：席位在证据交换阶段自报「哪个被隔离节点、什么新证据」，一旦满足该节点记录的复活条件即产出 `RESURRECTION_GRANTED` 事件——这是一次状态变更，不是新的正式图节点类型，因此只留痕在事件账本上，不写入 `graph_nodes`。畸形或指向未知节点的复活请求会被记为 `unfilled_slots`，不会静默丢弃（CLAUDE.md 第 7 条）。`tests/integration/test_resurrect_pipeline.py` 端到端验证了真实被网关隔离的 Claim（因果主张建立在横截面证据上）经由完整 `run_task` 复活的全链路。
+> - **`Fork`——图层完整闭环，但独立于 `packages/memory/branches.py::BranchService`。** `run_cross_examination` 里，一个席位自报为致命（`is_fatal: True`）且附带 `fork` 子结构的质询，会额外产出两个 `Claim` 事件：一个指向原主张的锚点（仅用于让 `CONTRADICTS` 边有落点），一个平行的新主张，用既有的 `CONTRADICTS` 边关联（不新增边类型，YAGNI）。新主张的 id 用 `uuid5` 从任务、原主张、席位、序号确定性派生，保证重放/续跑不会重复分叉。这条路径完全绕开了 `BranchService`——那是一套纯内存、无持久化路径的 `fork()`/`merge()` 记录类，目前仍然没有生产调用者，按既定原则（死代码接线而非删除）予以保留；图层的分叉是靠直接产出 `Claim`/`CONTRADICTS` 事件实现的，不经过它。
+> - **`Merge`——裁剪为「记录合并候选」，不做自动合并。** `run_joint_modeling` 产出的 `CONSENSUS_DRAFTED` 事件新增 `merge_candidates` 字段，把该轮的全部 `unresolved_conflicts` 原样列为候选；没有任何代码执行真正的合并——按 CLAUDE.md 第 8 条「研究者控制方向」，合并与否是人在前端做的判断，不是系统自动裁决。
 >
 > 原第 3 项（证据谱系边没有落库）**部分解决，不对称**：`sources` 表新增了 `authors`（JSONB）与 `dataset_id`（可空字符串）两列（迁移 `0006_source_lineage_fields`），`packages/evidence/lineage_detection.py` 新增 `detect_lineage()` 统一取代此前 `reports/service.py` 与 `workspace.py` 里重复的内联 DOI 拼接逻辑。`authors` 是**端到端真实接线**：OpenAlex/Crossref 适配器本就返回作者列表，此前只是在 `SourceAcquisition._persist()` 里被丢弃，现在会落库并驱动 `SAME_RESEARCH_TEAM` 边（只标注，不合并独立证据簇计数，见 CLAUDE.md 7.4）。`dataset_id` 是**仅完成建模、未接通真实数据**：目前没有任何适配器能从 DOI 查询解析出数据集标识符，这一列和 `SAME_DATASET` 检测逻辑只经过合成数据的单元测试验证，生产环境中每一行的 `dataset_id` 实际上恒为 `NULL`，等一个真正能提取数据集标识（例如论文 Data Availability 声明）的抽取路径接入之后才会真正发挥作用。
 
@@ -490,7 +495,7 @@ Poliscope 以 [MemoBrain](https://github.com/qhjqhj00/MemoBrain) 作为执行记
 - Evidence Lineage Graph
 - ForesightBlindspot 时间切片评测
 
-其中 Dialectical Fold 与 Dissent Certificate 已接入主流程；Fork/Merge/Resurrect、Evidence Lineage Graph 与 ForesightBlindspot 目前尚未接入，见[已知缺口](#已知缺口)。
+其中 Dialectical Fold、Dissent Certificate 与 Fork/Merge/Resurrect 已接入主流程（完成度不对称，见上文）；Evidence Lineage Graph 部分接入（`authors` 端到端真实接线，`dataset_id` 仅完成建模）；ForesightBlindspot 目前尚未接入，见[已知缺口](#已知缺口)。
 
 ---
 

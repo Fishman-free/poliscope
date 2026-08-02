@@ -105,6 +105,33 @@ async def test_missing_boundary_or_conflict_records_unfilled_slot_not_capsule(
     assert "JOINT_MODELING:no_capsule_fold" in outcome.unfilled_slots
 
 
+def _consensus_events(events: tuple[EmittedEvent, ...]) -> list[EmittedEvent]:
+    from packages.council.rounds.registry import CONSENSUS_DRAFTED
+
+    return [event for event in events if event.event_type == CONSENSUS_DRAFTED]
+
+
+async def test_consensus_annotates_unresolved_conflicts_as_merge_candidates() -> None:
+    """Merge (design spec 5, mechanism 3 of 3), cut down to record-only: every
+    unresolved conflict is surfaced as a merge candidate on the same event, with
+    no code here executing a merge -- that stays the researcher's call."""
+    claim_id = uuid4()
+    output = {
+        "strongest_opposition_refs": [str(uuid4())],
+        "falsification_conditions": ["A null effect in a preregistered RCT."],
+        "boundary_conditions": ["Western adolescent samples only."],
+        "unresolved_conflicts": ["Effect direction across sexes."],
+    }
+
+    outcome = await run_joint_modeling(_context(claim_id, output))
+
+    consensus_events = _consensus_events(outcome.events)
+    assert len(consensus_events) == 1
+    assert consensus_events[0].payload["merge_candidates"] == [
+        "Effect direction across sexes."
+    ]
+
+
 async def test_no_ready_consensus_never_attempts_a_capsule() -> None:
     """When required fields are missing, the gap is the missing field itself,
     not a capsule-fold gap -- there was never a consensus to fold."""

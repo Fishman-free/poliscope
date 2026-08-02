@@ -18,6 +18,23 @@ class QuarantinedNode:
     status: str = "quarantined"
 
 
+def check_resurrection_conditions(
+    node: QuarantinedNode, new_evidence: tuple[UUID, ...]
+) -> bool:
+    """Pure predicate: does ``new_evidence`` satisfy ``node``'s resurrection condition?
+
+    MVP rule, shared by ``LifecycleService.resurrect`` and the council's
+    ``run_evidence_exchange`` wiring: any non-empty new evidence counts as
+    satisfying the recorded ``resurrection_condition`` text. The condition
+    text itself is not machine-parsed (design spec 7: that would require a
+    claim-matching model this MVP does not have) -- it stays visible on the
+    ``QuarantinedNode`` for a human researcher to judge, per CLAUDE.md 8
+    ("researchers control direction"). A node already resurrected cannot be
+    resurrected again from this predicate's perspective.
+    """
+    return node.status == "quarantined" and bool(new_evidence)
+
+
 @dataclass
 class LifecycleService:
     _quarantined: dict[UUID, QuarantinedNode] = field(default_factory=dict)
@@ -46,7 +63,7 @@ class LifecycleService:
         node = self._quarantined.get(node_id)
         if node is None:
             raise KeyError(f"node {node_id} not quarantined")
-        if not evidence_refs:
+        if not check_resurrection_conditions(node, evidence_refs):
             raise ResurrectionConditionNotMet(
                 "resurrection requires new evidence satisfying the original condition"
             )

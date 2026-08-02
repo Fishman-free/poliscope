@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from packages.council.contracts import Seat
 from packages.council.dissent import issue_dissent
@@ -56,8 +56,9 @@ from packages.council.rounds.precommitment import (
 )
 from packages.epistemo.contracts import TaskPhase
 from packages.evidence.adversarial_retrieval import adversarial_retrieval_queries
-from packages.evidence.contracts import EvidenceNodeType
+from packages.evidence.contracts import EvidenceEdgeType, EvidenceNodeType
 from packages.evidence.dialectical_fold import DebateCapsule
+from packages.evidence.lifecycle import QuarantinedNode, check_resurrection_conditions
 from packages.evidence.source_diversity import SourceDiversityInput, check_diversity
 
 # Process event types. None of these is one of the ten formal node types, so
@@ -74,6 +75,18 @@ SOURCE_REFUSED = "SOURCE_REFUSED"
 CONSENSUS_DRAFTED = "CONSENSUS_DRAFTED"
 FINAL_JUDGMENT = "FINAL_JUDGMENT"
 ADVERSARIAL_RETRIEVAL_ATTEMPTED = "ADVERSARIAL_RETRIEVAL_ATTEMPTED"
+# A status change on an already-quarantined node, not a new formal node type --
+# design spec 7's Resurrect is "emit a status-change event", not "re-run the
+# gate and rewrite the graph node" (see packages/evidence/lifecycle.py).
+RESURRECTION_GRANTED = "RESURRECTION_GRANTED"
+
+# Deterministic derivation for a forked claim's node id. The orchestrator's
+# idempotency keys must be stable across replay, and a random uuid4() written
+# into a payload would collide with its own key on a resumed run -- so a
+# fork's new Claim node is named from what produced it (task, challenged claim,
+# seat, position) rather than randomly, mirroring packages/papers/packet.py's
+# use of uuid5 for the same reason.
+_FORK_NAMESPACE = uuid5(NAMESPACE_URL, "https://poliscope.internal/council/fork")
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +263,10 @@ class PhaseContext:
     # records an unfilled slot per newly acquired source instead of leaving a
     # Level B source with no StudyFinding attempt at all.
     finding_extractor: FindingExtractor | None = None
+    # Nodes quarantined in an earlier run of this task, loaded from the ledger
+    # by the worker (see apps/worker/jobs.py::_quarantined_nodes). Empty for a
+    # task with nothing quarantined yet -- Resurrect then has nothing to do.
+    quarantined: tuple[QuarantinedNode, ...] = ()
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase."""
@@ -617,50 +634,183 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     )
 
 
+def _resurrection_events(
+    context: PhaseContext,
+    seat: Seat,
+    output: Mapping[str, object],
+) -> tuple[tuple[EmittedEvent, ...], tuple[str, ...]]:
+    """Resurrect (design spec 5, mechanism 3 of 3): does this seat's newly
+    published evidence satisfy a quarantined node's resurrection condition?
+
+    A seat asks by naming the quarantined node id and the evidence it is
+    citing; malformed or unresolvable requests are reported, not dropped
+    silently (CLAUDE.md 7). Matching ``check_resurrection_conditions`` is the
+    same MVP predicate ``LifecycleService.resurrect`` uses -- see
+    ``packages/evidence/lifecycle.py`` for why this stays a plain non-empty
+    check rather than a claim-matching model.
+    """
+    if not context.quarantined:
+        return (), ()
+    raw = output.get("resurrection_requests")
+    if not isinstance(raw, (list, tuple)):
+        return (), ()
+    by_id = {node.node_id: node for node in context.quarantined}
+    events: list[EmittedEvent] = []
+    slots: list[str] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        raw_node_id = item.get("node_id")
+        try:
+            node_id = UUID(str(raw_node_id))
+        except (ValueError, TypeError):
+            slots.append(f"EVIDENCE_EXCHANGE:resurrection_malformed:{raw_node_id}")
+            continue
+        node = by_id.get(node_id)
+        if node is None:
+            slots.append(f"EVIDENCE_EXCHANGE:resurrection_unknown_node:{node_id}")
+            continue
+        raw_refs = item.get("evidence_refs")
+        evidence_refs = tuple(
+            UUID(str(ref))
+            for ref in (raw_refs if isinstance(raw_refs, (list, tuple)) else ())
+        )
+        if not check_resurrection_conditions(node, evidence_refs):
+            slots.append(f"EVIDENCE_EXCHANGE:resurrection_condition_not_met:{node_id}")
+            continue
+        events.append(
+            EmittedEvent(
+                event_type=RESURRECTION_GRANTED,
+                payload={
+                    "node_id": str(node_id),
+                    "seat": seat.value,
+                    "evidence_refs": [str(ref) for ref in evidence_refs],
+                    "resurrection_condition": node.resurrection_condition,
+                },
+                idempotency_key=context.key("resurrection", node_id),
+            )
+        )
+    return tuple(events), tuple(slots)
+
+
 async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
     """Publish each seat's evidence projection with private fields stripped."""
     outputs, unfilled, absent = await _collect(context)
     round_ = ExchangeRound()
     events: list[EmittedEvent] = []
+    slots: list[str] = list(unfilled)
     for seat, output in sorted(outputs.items(), key=lambda kv: kv[0].value):
         raw = output.get("evidence_items")
-        if not isinstance(raw, (list, tuple)):
-            continue
-        items = tuple(
-            EvidenceProjectionItem(
-                source_id=UUID(str(item.get("source_id"))),
-                anchor_summary=str(item.get("anchor_summary", "")),
-                level=str(item.get("level", "D")),
+        if isinstance(raw, (list, tuple)):
+            items = tuple(
+                EvidenceProjectionItem(
+                    source_id=UUID(str(item.get("source_id"))),
+                    anchor_summary=str(item.get("anchor_summary", "")),
+                    level=str(item.get("level", "D")),
+                )
+                for item in raw
+                if isinstance(item, Mapping) and item.get("source_id")
             )
-            for item in raw
-            if isinstance(item, Mapping) and item.get("source_id")
+            if items:
+                published = await round_.run(items)
+                events.append(
+                    EmittedEvent(
+                        event_type=EVIDENCE_PUBLISHED,
+                        payload={
+                            "seat": seat.value,
+                            "items": [
+                                {
+                                    "source_id": str(item.source_id),
+                                    "anchor_summary": item.anchor_summary,
+                                    "level": item.level,
+                                }
+                                for item in published.evidence_items
+                            ],
+                        },
+                        idempotency_key=context.key("published", seat.value),
+                    )
+                )
+        resurrection_events, resurrection_slots = _resurrection_events(
+            context, seat, output
         )
-        if not items:
-            continue
-        published = await round_.run(items)
-        events.append(
-            EmittedEvent(
-                event_type=EVIDENCE_PUBLISHED,
-                payload={
-                    "seat": seat.value,
-                    "items": [
-                        {
-                            "source_id": str(item.source_id),
-                            "anchor_summary": item.anchor_summary,
-                            "level": item.level,
-                        }
-                        for item in published.evidence_items
-                    ],
-                },
-                idempotency_key=context.key("published", seat.value),
-            )
-        )
+        events.extend(resurrection_events)
+        slots.extend(resurrection_slots)
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(
         events=tuple(events),
-        unfilled_slots=unfilled,
+        unfilled_slots=tuple(slots),
         absent_seats=absent,
     )
+
+
+def _fork_events(
+    context: PhaseContext,
+    seat: Seat,
+    claim_id: UUID,
+    index: int,
+    fork: Mapping[str, object],
+) -> tuple[EmittedEvent, ...]:
+    """Fork (design spec 5, mechanism 2 of 3): a challenge that cannot be
+    reconciled by ``QUALIFY`` produces a parallel ``Claim`` node instead of
+    silently overwriting or dropping the disagreement (CLAUDE.md 4's "异议不得
+    被静默删除"). No new edge type is introduced -- the existing ``CONTRADICTS``
+    edge already says exactly this (YAGNI, per the plan).
+
+    Two events, not one: ``_write_edges`` refuses an edge whose target node was
+    never admitted, and the original claim being forked from may never have
+    been projected as its own ``Claim`` node by any other round. The anchor
+    event is keyed only by ``claim_id`` so repeated forks against the same
+    claim do not try to create it twice; it is a plain upsert either way
+    (``_upsert_node`` in packages/evidence/sql_projector.py), so a duplicate
+    attempt would be harmless even without that key.
+
+    The new claim's id is derived, not random (see ``_FORK_NAMESPACE``), so a
+    resumed run reaches the same id rather than minting a second fork node for
+    the same disagreement.
+
+    CLAUDE.md 5.2 requires a ``Claim`` to carry ``claim_type`` and ``scope``.
+    This round has no database access to the original claim's real ``scope``
+    (that lives on ``atomic_claims``, reachable only from the worker/repository
+    layer) -- rather than guessing at it, the anchor's ``scope`` is left an
+    explicit empty object, honestly saying "not recorded here" instead of
+    fabricating one (CLAUDE.md 7). The fork's own scope can be self-reported by
+    the seat, same as ``statement``.
+    """
+    statement = str(fork.get("statement", ""))
+    if not statement:
+        return ()
+    new_claim_id = uuid5(
+        _FORK_NAMESPACE,
+        f"{context.task_id}␟{claim_id}␟{seat.value}␟{index}",
+    )
+    raw_scope = fork.get("scope")
+    scope = raw_scope if isinstance(raw_scope, Mapping) else {}
+    anchor = EmittedEvent(
+        event_type=EvidenceNodeType.CLAIM.value,
+        payload={"claim_type": "correlational", "scope": {}},
+        idempotency_key=context.key("claim_anchor", claim_id),
+        claim_id=claim_id,
+    )
+    forked = EmittedEvent(
+        event_type=EvidenceNodeType.CLAIM.value,
+        payload={
+            "claim_type": "correlational",
+            "scope": dict(scope),
+            "statement": statement,
+            "falsification_condition": str(
+                fork.get("falsification_condition", "")
+            ),
+            "edges": [
+                {
+                    "type": EvidenceEdgeType.CONTRADICTS.value,
+                    "target": str(claim_id),
+                }
+            ],
+        },
+        idempotency_key=context.key("fork", seat.value, index),
+        claim_id=new_claim_id,
+    )
+    return (anchor, forked)
 
 
 async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
@@ -668,6 +818,11 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
 
     CLAUDE.md 4 forbids a challenge from disappearing, so an unresolved one is
     carried forward to joint modeling rather than dropped when the round ends.
+    A fatal challenge that also names a ``fork`` (self-reported by the seat,
+    mirroring how ``is_fatal`` itself is self-reported -- this MVP has no
+    claim-statement-comparison model to compute either independently) additionally
+    forks a parallel Claim node instead of just blocking the original; see
+    ``_fork_events``.
     """
     outputs, unfilled, absent = await _collect(context)
     handler = CrossExaminationHandler()
@@ -705,6 +860,11 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                     idempotency_key=context.key("challenge", seat.value, index),
                 )
             )
+            fork = item.get("fork")
+            if entry.is_fatal and isinstance(fork, Mapping):
+                events.extend(
+                    _fork_events(context, seat, entry.claim_id, index, fork)
+                )
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(
         events=tuple(events),
@@ -833,6 +993,14 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
                     "boundary_conditions": list(result.boundary_conditions),
                     "unresolved_conflicts": list(result.unresolved_conflicts),
                     "falsification_conditions": list(result.falsification_conditions),
+                    # Merge (design spec 5, mechanism 3 of 3), cut down to
+                    # "record the candidate" rather than "execute the merge":
+                    # every unresolved conflict this round produced is, in this
+                    # MVP's coarse model, a candidate the researcher may choose
+                    # to reconcile by hand (CLAUDE.md 8, "研究者控制方向"). No
+                    # code here merges anything -- that stays a human decision
+                    # made in the frontend.
+                    "merge_candidates": list(result.unresolved_conflicts),
                 },
                 idempotency_key=context.key("consensus"),
             )

@@ -30,8 +30,15 @@ from packages.council.rounds.registry import SeatDeliberator
 from packages.epistemo.budget import BudgetTracker, ResearchBudget
 from packages.epistemo.contracts import TaskStatus
 from packages.epistemo.orchestrator import CouncilOrchestrator, TaskRunReport
+from packages.evidence.lifecycle import QuarantinedNode
+from packages.evidence.models import EventAuditModel, ScientificEventModel
 from packages.evidence.sql_ledger import SqlEventLedger
-from packages.evidence.sql_projector import ProjectionReport, SqlGraphProjector
+from packages.evidence.sql_projector import (
+    STATUS_QUARANTINED,
+    ProjectionReport,
+    SqlGraphProjector,
+    node_id_for,
+)
 from packages.kernel.database import canonical_uuid
 from packages.memory.adapter import create_memory_adapter
 from packages.memory.council_memory import CouncilMemory
@@ -109,6 +116,62 @@ async def _confirmed_claim_ids(
     return tuple(canonical_uuid(value) for value in result.scalars())
 
 
+async def _quarantined_nodes(
+    session: AsyncSession,
+    task_id: UUID,
+) -> tuple[QuarantinedNode, ...]:
+    """Load nodes an earlier run of this task quarantined, for Resurrect.
+
+    A quarantined event never reaches ``graph_nodes`` (the projector returns
+    before ``_upsert_node`` on ``AdmissionDisposition.QUARANTINE``), so the
+    ledger is the only source of truth for what is quarantined and why. This
+    read is legal under the ``poliscope_app`` identity that runs
+    ``deliberate()``: migration 0003 grants that role ``READ`` on both
+    ``scientific_events`` (already exercised by ``SqlEventLedger``) and
+    ``event_audits`` -- no new grant needed.
+
+    Real gate-driven quarantine never populates an ``attacker``/
+    ``missing_evidence``/``resurrection_condition`` -- those are
+    ``LifecycleService.quarantine()``'s own fields (unused in production, see
+    README's known-gaps note on ``packages/evidence/lifecycle.py``). Rather
+    than fabricate plausible-looking text for fields the gate never recorded,
+    the honest default is used (CLAUDE.md 7): the gate's own disposition
+    reasons become ``reason``, and the rest stay explicitly unrecorded.
+    """
+    events = await session.scalars(
+        select(ScientificEventModel).where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.status == STATUS_QUARANTINED,
+        )
+    )
+    nodes: list[QuarantinedNode] = []
+    for event in events:
+        audit = await session.scalar(
+            select(EventAuditModel)
+            .where(
+                EventAuditModel.event_id == event.id,
+                EventAuditModel.gate_stage == "ADMISSION",
+            )
+            .order_by(EventAuditModel.created_at.desc())
+        )
+        raw_reasons = audit.reasons.get("reasons") if audit is not None else None
+        reasons = (
+            tuple(str(item) for item in raw_reasons)
+            if isinstance(raw_reasons, (list, tuple))
+            else ()
+        )
+        nodes.append(
+            QuarantinedNode(
+                node_id=canonical_uuid(node_id_for(event)),
+                reason="; ".join(reasons) if reasons else "not recorded",
+                attacker="evidence_gate",
+                missing_evidence="not recorded",
+                resurrection_condition="not recorded",
+            )
+        )
+    return tuple(nodes)
+
+
 async def deliberate(
     session: AsyncSession,
     task_id: UUID,
@@ -174,6 +237,7 @@ async def deliberate(
         task_id=task_id,
         question=task.question,
         confirmed_claims=await _confirmed_claim_ids(session, task_id),
+        quarantined=await _quarantined_nodes(session, task_id),
     )
     await ResearchRepository(session).set_status(task_id, report.final_status)
     return report
