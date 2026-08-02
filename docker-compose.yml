@@ -1,0 +1,99 @@
+# Local Docker Compose stack for Poliscope.
+#
+# Redis is deliberately absent: the work queue is a `SELECT ... FOR UPDATE
+# SKIP LOCKED` query against Postgres (see apps/worker/main.py's module
+# docstring for why), and nothing in this MVP yet uses Redis for caching or
+# SSE fan-out either -- adding a service nothing depends on would violate
+# CLAUDE.md 14's YAGNI mandate. Add it back the day something actually reads
+# from it.
+#
+# Usage:
+#   cp .env.example .env    # then edit .env -- see its comments
+#   docker compose up --build
+#
+# `migrate` is a one-shot init container: it runs `alembic upgrade head`
+# (which also creates the poliscope_app / poliscope_projector database roles,
+# see migrations/versions/0001_research_and_calls.py) and exits. `api` and
+# `worker` wait for it to exit 0 before starting, via
+# `service_completed_successfully`.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POLISCOPE_DB_SUPERUSER:-poliscope_admin}
+      POSTGRES_PASSWORD: ${POLISCOPE_DB_SUPERUSER_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POLISCOPE_DB_NAME:-poliscope}
+    volumes:
+      - poliscope-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POLISCOPE_DB_HOST_PORT:-55440}:5432"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      POLISCOPE_MIGRATOR_DATABASE_URL: "postgresql+asyncpg://${POLISCOPE_DB_SUPERUSER:-poliscope_admin}:${POLISCOPE_DB_SUPERUSER_PASSWORD:?set in .env}@postgres:5432/${POLISCOPE_DB_NAME:-poliscope}"
+      POLISCOPE_APP_DATABASE_PASSWORD: ${POLISCOPE_APP_DATABASE_PASSWORD:?set in .env}
+      POLISCOPE_PROJECTOR_DATABASE_PASSWORD: ${POLISCOPE_PROJECTOR_DATABASE_PASSWORD:?set in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      POLISCOPE_APP_DATABASE_URL: "postgresql+asyncpg://poliscope_app:${POLISCOPE_APP_DATABASE_PASSWORD:?set in .env}@postgres:5432/${POLISCOPE_DB_NAME:-poliscope}"
+    ports:
+      - "${POLISCOPE_API_HOST_PORT:-8010}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      POLISCOPE_APP_DATABASE_URL: "postgresql+asyncpg://poliscope_app:${POLISCOPE_APP_DATABASE_PASSWORD:?set in .env}@postgres:5432/${POLISCOPE_DB_NAME:-poliscope}"
+      POLISCOPE_PROJECTOR_DATABASE_URL: "postgresql+asyncpg://poliscope_projector:${POLISCOPE_PROJECTOR_DATABASE_PASSWORD:?set in .env}@postgres:5432/${POLISCOPE_DB_NAME:-poliscope}"
+      # Left unset by default: gateway_from_env()/tool_gateway_from_env()
+      # degrade to an honest COMPLETED_WITH_GAPS run rather than failing (see
+      # apps/worker/main.py's WorkerContext docstring). Fill these in .env to
+      # run against a real OpenAI-Chat-Completions-compatible vendor -- never
+      # point them at this Claude Code session's own ANTHROPIC_* credentials.
+      POLISCOPE_MODEL_API_KEY: ${POLISCOPE_MODEL_API_KEY:-}
+      POLISCOPE_MODEL_BASE_URL: ${POLISCOPE_MODEL_BASE_URL:-}
+      POLISCOPE_MODEL_NAME: ${POLISCOPE_MODEL_NAME:-}
+      POLISCOPE_MODEL_NAME_STRONG_REASONING: ${POLISCOPE_MODEL_NAME_STRONG_REASONING:-}
+      POLISCOPE_MODEL_NAME_MEDIUM: ${POLISCOPE_MODEL_NAME_MEDIUM:-}
+      POLISCOPE_MODEL_NAME_LIGHTWEIGHT: ${POLISCOPE_MODEL_NAME_LIGHTWEIGHT:-}
+      POLISCOPE_TOOLS_CONTACT_EMAIL: ${POLISCOPE_TOOLS_CONTACT_EMAIL:-}
+      POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY: ${POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY:-}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "${POLISCOPE_WEB_HOST_PORT:-8081}:80"
+    depends_on:
+      - api
+
+volumes:
+  poliscope-postgres-data:

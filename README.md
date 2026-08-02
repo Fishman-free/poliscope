@@ -123,11 +123,41 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 
 ### 依赖
 
-Python 3.12、PostgreSQL 16+、Node.js 20+（仅前端需要）、Docker（仅集成测试需要）。
+Python 3.12、PostgreSQL 16+、Node.js 20+（仅前端需要）、Docker（集成测试和下面的一键部署都需要）。
 
 ```bash
 uv sync                    # 或 pip install -e ".[dev]"
 ```
+
+### 一键起全部服务（Docker Compose）
+
+不想手动起四个进程，可以直接用根目录的 `docker-compose.yml`：
+
+```bash
+cp .env.example .env        # 按注释填三个数据库密码；模型/工具网关留空也能跑
+docker compose up --build -d
+```
+
+五个服务：`postgres`（数据）、`migrate`（一次性初始化容器，跑 `alembic upgrade head` 并创建
+`poliscope_app`/`poliscope_projector` 两个角色，`api`/`worker` 会等它 exit 0 才启动）、`api`
+（默认宿主机端口 `8010`）、`worker`、`web`（nginx 静态资源 + `/api` 反向代理到 `api` 容器，默认宿主机
+端口 `8081`）。没有 Redis——工作队列是 Postgres 的 `SELECT ... FOR UPDATE SKIP LOCKED`，MVP 没有任何
+组件依赖 Redis 做缓存或广播，加一个没人用的服务违反 CLAUDE.md 第 14 条的 YAGNI 约束。
+
+```bash
+docker compose ps                              # 确认 5 个服务都在跑（migrate 会 exit 0，这是正常的）
+curl http://localhost:8010/health              # {"status":"ok","database":"ok"}
+curl http://localhost:8081/                    # nginx 提供的前端页面
+```
+
+`.env.example` 里的模型/工具网关变量留空时，Worker 会诚实降级为 `COMPLETED_WITH_GAPS`（7 个席位全部
+标注 `SEAT_UNAVAILABLE`），不会假装完整跑完——这是设计使然，不是 Bug。想接真实模型供应商，填
+`POLISCOPE_MODEL_*` 系列变量指向任意 OpenAI-Chat-Completions 兼容端点；**千万不要**填成这次 Claude
+Code 会话自己的 `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`——那是 Claude Code 连 Anthropic 用的凭证，
+不属于 Poliscope 的模型网关。
+
+想手动理解每一层在做什么，接着看下面「起数据库并建表」到「看一个跑完的任务」这几步——Docker Compose
+只是把它们打包成一条命令，底层进程和职责划分完全一样。
 
 ### 1. 起数据库并建表
 
@@ -367,14 +397,16 @@ packages/
   evaluation/  ForesightBlindspot 基准语料与验收矩阵
 
 apps/
-  api/         FastAPI：tasks / workspace / reports / stream
-  worker/      任务认领、议会执行、图投影
-  cli/         六个子命令，纯 HTTP 客户端，不直连 packages
-  web/         React + TypeScript + React Flow 三视图工作台
+  api/         FastAPI：tasks / workspace / reports / stream（含 Dockerfile）
+  worker/      任务认领、议会执行、图投影（含 Dockerfile）
+  cli/         八个子命令，纯 HTTP 客户端，不直连 packages
+  web/         React + TypeScript + React Flow 三视图工作台（含 Dockerfile、nginx.conf）
 
-poliscope/     CLI 入口点
-migrations/    Alembic：建表 + 建角色 + 授权
-scripts/       开发辅助（演示任务播种）
+poliscope/       CLI 入口点
+migrations/      Alembic：建表 + 建角色 + 授权
+scripts/         开发辅助（演示任务播种）
+docker-compose.yml  本地一键部署：postgres / migrate / api / worker / web
+.env.example        部署所需环境变量，不含真实凭证
 tests/
   unit/        无外部依赖，约 1 秒跑完
   integration/ 需要 Docker，跨真实数据库与真实角色
