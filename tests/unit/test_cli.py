@@ -132,8 +132,8 @@ def test_export_writes_requested_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    async def export(*_: object, **__: object) -> dict[str, Any]:
-        return {"content": "# Research Brief\n"}
+    async def export(*_: object, **__: object) -> str:
+        return "# Research Brief\n"
 
     monkeypatch.setattr(CLIClient, "export", export)
     destination = tmp_path / "brief.md"
@@ -142,6 +142,29 @@ def test_export_writes_requested_file(
         == exit_codes.OK
     )
     assert destination.read_text(encoding="utf-8") == "# Research Brief\n"
+
+
+async def test_export_requests_the_endpoint_that_actually_exists() -> None:
+    """The URL, not just the fact that a request was formed.
+
+    ``export`` pointed at ``/api/tasks/{id}/export``, which has never existed,
+    so every export ended in a 404 -- and the test above did not catch it
+    because it stubbed the client out entirely. This one drives the real
+    request through a transport and asserts where it went.
+    """
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text="# Research Brief\n")
+
+    transport = httpx.MockTransport(handler)
+    async with CLIClient("http://poliscope.test", transport=transport) as client:
+        body = await client.export("abc", "markdown")
+
+    assert body == "# Research Brief\n"
+    assert seen[0].url.path == "/api/reports/abc"
+    assert seen[0].url.params["format"] == "markdown"
 
 
 @pytest.mark.parametrize(

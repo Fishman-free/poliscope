@@ -233,15 +233,24 @@ Level B 不得单独支撑高置信因果结论；Level C 和 Level D 不得替�
 
 建议模块：
 
-- `packages/council`：角色规格、协议和动作 Schema；
+- `packages/kernel`：冻结契约、数据库会话、配置与权限常量；被所有模块依赖，不依赖任何业务模块；
+- `packages/council`：角色规格、协议、动作 Schema、轮次注册表与席位—网关桥；
 - `packages/epistemo`：状态机、预算、调度和停止条件；
-- `packages/memory`：MemoBrain Adapter 与 Process Graph；
+- `packages/memory`：MemoBrain Adapter、席位私有记忆与 Process Graph；
 - `packages/evidence`：Event Ledger、Evidence Gate、Graph Projector 和 Lineage；
 - `packages/papers`：发现、规范化、全文解析和 Finding 抽取；
+- `packages/research`：研究契约、主张原子化、任务仓储与应用服务；
 - `packages/models`：统一模型网关；
 - `packages/tools`：统一工具网关；
 - `packages/reports`：Research Brief 和审计报告；
 - `packages/evaluation`：基线、消融和 ForesightBlindspot。
+
+应用层：
+
+- `apps/api`：HTTP 接口，只持有应用身份；
+- `apps/worker`：任务认领与议会执行，分两个事务分别以应用身份和投影器身份运行；
+- `apps/cli`：纯 HTTP 客户端，不得 import `packages`——第二条进入研究服务的路径会绕过 Evidence Gate；
+- `apps/web`：证据工作台前端。
 
 每个模块必须能回答：
 

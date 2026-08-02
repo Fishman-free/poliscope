@@ -49,7 +49,14 @@ class CLIClient:
         base_url: str = DEFAULT_BASE_URL,
         *,
         timeout: float = DEFAULT_TIMEOUT,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        """``transport`` exists so a test can assert which URL was requested.
+
+        Stubbing the client's own methods proves only that the CLI passes
+        arguments around; it cannot catch a route that does not exist, which is
+        how ``export`` shipped pointing at a path the API never served.
+        """
         self.base_url = base_url.rstrip("/")
         # A developer machine often exports HTTP_PROXY for outbound traffic. Sending
         # loopback requests through that proxy makes a not-yet-started API look like
@@ -59,6 +66,7 @@ class CLIClient:
             base_url=self.base_url,
             timeout=timeout,
             trust_env=not _is_loopback(self.base_url),
+            transport=transport,
         )
 
     async def __aenter__(self) -> CLIClient:
@@ -113,11 +121,26 @@ class CLIClient:
     async def workspace(self, task_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/api/workspace/{task_id}")
 
-    async def export(self, task_id: str, export_format: str) -> dict[str, Any]:
-        return await self._request(
-            "GET",
-            f"/api/tasks/{task_id}/export?format={export_format}",
-        )
+    async def export(self, task_id: str, export_format: str) -> str:
+        """Fetch the research brief in the requested format.
+
+        Returns text rather than a decoded object because ``format=markdown``
+        answers with ``text/markdown``. This previously pointed at
+        ``/api/tasks/{id}/export``, an endpoint that has never existed, so every
+        export ended in a 404 -- and the CLI's own tests asserted only that the
+        client formed a request, never that the path was real.
+        """
+        try:
+            response = await self._client.get(
+                f"/api/reports/{task_id}", params={"format": export_format}
+            )
+        except httpx.RequestError as error:
+            raise APIUnreachable(
+                f"cannot reach the Poliscope API at {self.base_url}: {error}"
+            ) from error
+        if response.is_error:
+            raise APIError(response.status_code, _extract_detail(response))
+        return response.text
 
     async def watch(
         self,

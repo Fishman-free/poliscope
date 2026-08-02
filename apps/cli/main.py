@@ -222,17 +222,22 @@ async def _cmd_watch(client: CLIClient, args: argparse.Namespace) -> int:
             print(data, flush=True)
             continue
         event_id = frame.get("id", "?")
-        kind = frame.get("event", "message")
+        # The kind is in the body, not on an `event:` line. Reading it from the
+        # frame header printed "message" for everything once the server stopped
+        # typing its frames -- see apps/api/schemas.py for why it stopped.
+        try:
+            kind = str(json.loads(data)["kind"])
+        except (ValueError, KeyError, TypeError):
+            kind = "unknown"
         print(f"[{event_id}] {kind}", flush=True)
     return exit_codes.OK
 
 
 async def _cmd_export(client: CLIClient, args: argparse.Namespace) -> int:
-    payload = await client.export(args.task_id, args.export_format)
-    if args.export_format == "json":
-        rendered = json.dumps(payload, ensure_ascii=False, indent=2)
-    else:
-        rendered = str(payload.get("content", ""))
+    # The server already renders both formats, so the CLI writes what it is
+    # given rather than re-serialising it. Reformatting here would let the
+    # exported file and the API's own answer drift apart.
+    rendered = await client.export(args.task_id, args.export_format)
     if args.output is None:
         print(rendered)
         return exit_codes.OK
