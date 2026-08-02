@@ -32,6 +32,8 @@ class _Acquired:
     title: str
     evidence_level: str
     already_known: bool = False
+    authors: tuple[str, ...] = ()
+    dataset_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

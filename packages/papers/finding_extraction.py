@@ -34,7 +34,11 @@ from packages.models.contracts import (
     ModelMessage,
     ModelRequest,
 )
-from packages.papers.contracts import AvailabilityStatus, EvidenceLevel
+from packages.papers.contracts import (
+    AvailabilityStatus,
+    EvidenceLevel,
+    PaperEvidencePacket,
+)
 from packages.papers.models import (
     CitationAnchorModel,
     FindingModel,
@@ -123,6 +127,27 @@ def _render_pages(pages: list[PageText]) -> str:
     return "\n\n".join(f"[page {page.page_number}]\n{page.text}" for page in pages)
 
 
+@dataclass(frozen=True, slots=True)
+class _Attempt:
+    """One model-extraction-and-verify pass, before anything is persisted.
+
+    Kept separate from ``FindingExtractionResult`` because dual extraction
+    (CLAUDE.md 7.4, design spec 7.9, mechanism 3 of 4) needs to compare two
+    of these before either is allowed to become a persisted, ``ok=True``
+    result -- a shape ``FindingExtractionResult`` does not have, since it
+    already commits to the single-pass ``ok``/``reason`` discriminant the
+    round handler consumes.
+    """
+
+    ok: bool
+    reason: str = ""
+    packet: PaperEvidencePacket | None = None
+    exact_quote: str = ""
+    effect_direction: str = ""
+    finding_statement: str = ""
+    method_quality: dict[str, float] = field(default_factory=dict)
+
+
 class _SessionWriter(Protocol):
     """The only two AsyncSession operations this module needs.
 
@@ -157,13 +182,27 @@ class FindingExtractor:
         self._budget = budget
         self._fetcher = fulltext_fetcher or FullTextFetcher.from_env()
 
-    async def extract(self, source_id: UUID, doi: str) -> FindingExtractionResult:
+    async def extract(
+        self,
+        source_id: UUID,
+        doi: str,
+        *,
+        dual_extraction: bool = False,
+    ) -> FindingExtractionResult:
         """Try to turn ``doi``'s open-access full text into a StudyFinding.
 
         Never raises: every failure mode along the chain is returned as a
         ``FindingExtractionResult`` with ``ok=False`` and a ``reason``, for
         the caller to record as an unfilled evidence slot rather than crash
         the acquisition round it is attached to.
+
+        ``dual_extraction`` (CLAUDE.md 7.4, design spec 7.9, mechanism 3 of
+        4): when set, a Level A candidate is run through the model twice
+        against the same fetched pages and the two passes' ``exact_quote``
+        and ``effect_direction`` are compared. A disagreement is recorded as
+        a gap needing manual audit rather than silently picking one pass --
+        auto-resolving a disagreement between two of the pipeline's own
+        extractions would be exactly the confident-guess CLAUDE.md 7 forbids.
         """
 
         def _gap(reason: str) -> FindingExtractionResult:
@@ -197,70 +236,38 @@ class FindingExtractor:
         if not pages:
             return _gap("pdf produced no extractable text")
 
-        request = ModelRequest(
-            task_id=self._task_id,
-            actor="finding_extractor",
-            purpose="finding_extraction",
-            model_class=ModelClass.MEDIUM,
-            messages=(
-                ModelMessage(role="system", content=_SYSTEM_PROMPT),
-                ModelMessage(role="user", content=_render_pages(pages)),
-            ),
-            output_schema="StudyFindingExtraction",
-            evidence_refs=(source_id,),
-        )
-        try:
-            result = await self._model.invoke(request)
-        except Exception as error:
-            return _gap(f"model extraction failed: {error!r}")
+        first = await self._attempt_extraction(source_id, doi, pages)
+        if not first.ok:
+            return _gap(first.reason)
 
-        # Actual cost is only known once the call returns, unlike the fixed
-        # per-call tool budget spent up front -- so this is charged after the
-        # fact and a BudgetExhausted here still blocks the write below.
-        if not self._spend_model_cost(result.cost_usd):
-            return _gap("model cost budget exhausted")
+        if dual_extraction:
+            second = await self._attempt_extraction(source_id, doi, pages)
+            if not second.ok:
+                return _gap(
+                    "dual extraction: second pass failed "
+                    f"({second.reason}) -- needs manual audit"
+                )
+            pairs = (
+                ("exact_quote", first.exact_quote, second.exact_quote),
+                (
+                    "effect_direction",
+                    first.effect_direction,
+                    second.effect_direction,
+                ),
+            )
+            mismatched = [name for name, left, right in pairs if left != right]
+            if mismatched:
+                return _gap(
+                    "dual extraction disagreement on "
+                    f"{', '.join(mismatched)} -- needs manual audit"
+                )
 
-        payload = cast(dict[str, Any], dict(result.payload))
-        exact_quote = str(payload.get("exact_quote", ""))
-
-        packet = build_packet(
-            source_id=source_id,
-            source={"doi": doi},
-            pages=pages,
-            study_question=str(payload.get("study_question", "")),
-            population=str(payload.get("population", "")),
-            design=str(payload.get("design", "other")),
-            exposure_variable=str(payload.get("exposure_variable", "")),
-            outcome_variable=str(payload.get("outcome_variable", "")),
-            analysis_method=str(payload.get("analysis_method", "")),
-            finding_statement=str(payload.get("finding_statement", "")),
-            origin=str(payload.get("origin", "AI_DERIVED")),
-            effect_direction=str(payload.get("effect_direction", "not_reported")),
-            exact_quote=exact_quote,
-            extraction_agent="finding_extractor",
-            author_conclusions=tuple(
-                str(item) for item in (payload.get("author_conclusions") or ())
-            ),
-            author_limitations=tuple(
-                str(item) for item in (payload.get("author_limitations") or ())
-            ),
-            data_availability=_availability(payload.get("data_availability")),
-            code_availability=_availability(payload.get("code_availability")),
-            preregistration=_availability(payload.get("preregistration")),
-        )
-
-        if packet.evidence_level != EvidenceLevel.A:
-            # build_packet already ran locate_quote internally and could not
-            # find the model's claimed exact_quote verbatim in the parsed
-            # pages (packages/papers/packet.py). CLAUDE.md 7.3: an
-            # unlocatable quote must not become a formal result -- this is a
-            # gap, not a Level B downgrade.
-            return _gap("extracted quote not found in source text")
-
+        packet = first.packet
+        assert packet is not None  # first.ok guarantees this
         study = packet.studies[0]
         finding = study.findings[0]
         anchor = finding.anchors[0]
-        method_quality = _method_quality(payload.get("method_quality"))
+        method_quality = first.method_quality
 
         # None of these five models declare an ORM relationship() to one
         # another (packages/papers/models.py has plain Column-level
@@ -324,10 +331,89 @@ class FindingExtractor:
             ok=True,
             finding_id=finding.id,
             study_id=study.id,
-            exact_quote=exact_quote,
+            exact_quote=first.exact_quote,
             evidence_level=packet.evidence_level.value,
             finding_statement=finding.statement,
             method_quality=method_quality,
+        )
+
+    async def _attempt_extraction(
+        self, source_id: UUID, doi: str, pages: list[PageText]
+    ) -> _Attempt:
+        """One model call, one packet build, one Level A check -- no persistence.
+
+        Split out of ``extract`` so dual extraction can run this twice against
+        the same fetched pages and compare the two results before either is
+        allowed to reach the database.
+        """
+        request = ModelRequest(
+            task_id=self._task_id,
+            actor="finding_extractor",
+            purpose="finding_extraction",
+            model_class=ModelClass.MEDIUM,
+            messages=(
+                ModelMessage(role="system", content=_SYSTEM_PROMPT),
+                ModelMessage(role="user", content=_render_pages(pages)),
+            ),
+            output_schema="StudyFindingExtraction",
+            evidence_refs=(source_id,),
+        )
+        try:
+            result = await self._model.invoke(request)
+        except Exception as error:
+            return _Attempt(ok=False, reason=f"model extraction failed: {error!r}")
+
+        # Actual cost is only known once the call returns, unlike the fixed
+        # per-call tool budget spent up front -- so this is charged after the
+        # fact and a BudgetExhausted here still blocks the write below.
+        if not self._spend_model_cost(result.cost_usd):
+            return _Attempt(ok=False, reason="model cost budget exhausted")
+
+        payload = cast(dict[str, Any], dict(result.payload))
+        exact_quote = str(payload.get("exact_quote", ""))
+        effect_direction = str(payload.get("effect_direction", "not_reported"))
+
+        packet = build_packet(
+            source_id=source_id,
+            source={"doi": doi},
+            pages=pages,
+            study_question=str(payload.get("study_question", "")),
+            population=str(payload.get("population", "")),
+            design=str(payload.get("design", "other")),
+            exposure_variable=str(payload.get("exposure_variable", "")),
+            outcome_variable=str(payload.get("outcome_variable", "")),
+            analysis_method=str(payload.get("analysis_method", "")),
+            finding_statement=str(payload.get("finding_statement", "")),
+            origin=str(payload.get("origin", "AI_DERIVED")),
+            effect_direction=effect_direction,
+            exact_quote=exact_quote,
+            extraction_agent="finding_extractor",
+            author_conclusions=tuple(
+                str(item) for item in (payload.get("author_conclusions") or ())
+            ),
+            author_limitations=tuple(
+                str(item) for item in (payload.get("author_limitations") or ())
+            ),
+            data_availability=_availability(payload.get("data_availability")),
+            code_availability=_availability(payload.get("code_availability")),
+            preregistration=_availability(payload.get("preregistration")),
+        )
+
+        if packet.evidence_level != EvidenceLevel.A:
+            # build_packet already ran locate_quote internally and could not
+            # find the model's claimed exact_quote verbatim in the parsed
+            # pages (packages/papers/packet.py). CLAUDE.md 7.3: an
+            # unlocatable quote must not become a formal result -- this is a
+            # gap, not a Level B downgrade.
+            return _Attempt(ok=False, reason="extracted quote not found in source text")
+
+        return _Attempt(
+            ok=True,
+            packet=packet,
+            exact_quote=exact_quote,
+            effect_direction=effect_direction,
+            finding_statement=packet.studies[0].findings[0].statement,
+            method_quality=_method_quality(payload.get("method_quality")),
         )
 
     def _spend_tool_call(self) -> bool:

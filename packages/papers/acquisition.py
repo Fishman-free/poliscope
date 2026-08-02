@@ -53,6 +53,11 @@ class AcquiredSource:
     evidence_level: str
     requesting_seats: frozenset[Seat]
     already_known: bool = False
+    # Feeds packages.evidence.source_diversity.check_diversity in the
+    # acquisition round. Populated from the persisted row either way, so a
+    # cache hit and a fresh fetch report the same fields.
+    authors: tuple[str, ...] = ()
+    dataset_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +161,8 @@ class SourceAcquisition:
                         evidence_level=METADATA_EVIDENCE_LEVEL,
                         requesting_seats=seats,
                         already_known=True,
+                        authors=tuple(existing.authors),
+                        dataset_id=existing.dataset_id,
                     )
                 )
                 continue
@@ -181,6 +188,11 @@ class SourceAcquisition:
                     title=normalized.title,
                     evidence_level=METADATA_EVIDENCE_LEVEL,
                     requesting_seats=seats,
+                    authors=tuple(normalized.authors),
+                    # No current adapter resolves a dataset identifier from a
+                    # DOI lookup (README known gaps, item 3): always None here
+                    # until a real extraction path exists.
+                    dataset_id=row.dataset_id,
                 )
             )
 

@@ -55,8 +55,10 @@ from packages.council.rounds.precommitment import (
     PrecommitmentOutput,
 )
 from packages.epistemo.contracts import TaskPhase
+from packages.evidence.adversarial_retrieval import adversarial_retrieval_queries
 from packages.evidence.contracts import EvidenceNodeType
 from packages.evidence.dialectical_fold import DebateCapsule
+from packages.evidence.source_diversity import SourceDiversityInput, check_diversity
 
 # Process event types. None of these is one of the ten formal node types, so
 # the projector records them and refuses to turn them into evidence.
@@ -71,6 +73,7 @@ BOUNTY_ASSIGNED = "BOUNTY_ASSIGNED"
 SOURCE_REFUSED = "SOURCE_REFUSED"
 CONSENSUS_DRAFTED = "CONSENSUS_DRAFTED"
 FINAL_JUDGMENT = "FINAL_JUDGMENT"
+ADVERSARIAL_RETRIEVAL_ATTEMPTED = "ADVERSARIAL_RETRIEVAL_ATTEMPTED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +175,15 @@ class AcquiredLike(Protocol):
 
     @property
     def already_known(self) -> bool: ...
+
+    # Feed packages.evidence.source_diversity.check_diversity. Defaulted to
+    # empty/None on the dataclass implementation, so existing fixtures that
+    # predate this field keep working once given matching defaults.
+    @property
+    def authors(self) -> tuple[str, ...]: ...
+
+    @property
+    def dataset_id(self) -> str | None: ...
 
 
 class RefusedLike(Protocol):
@@ -384,6 +396,14 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     extractor could not turn into a finding -- no open access copy, an
     unparsable PDF, or an unlocatable quote -- is recorded as an unfilled slot
     instead.
+
+    Adversarial retrieval (design spec 7.9, mechanism 4 of 4): alongside
+    whatever the seats actually asked for, this round also appends six
+    reverse-search-intent queries per confirmed claim, attributed to the
+    adversarial falsifier seat, so acquisition itself is not structurally
+    biased toward finding only what already supports the judgment on the
+    table. See ``packages.evidence.adversarial_retrieval`` for the honest
+    scope note on what these queries can and cannot do today.
     """
     outputs, unfilled, absent = await _collect(context)
     round_ = AcquisitionRound()
@@ -410,6 +430,33 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
                 idempotency_key=context.key("request", seat.value),
             )
         )
+
+    # Adversarial retrieval (design spec 7.9, README known gaps item 5):
+    # generated from confirmed claims alone, so it runs whether or not any
+    # seat asked for anything this round -- the whole point is that
+    # acquisition is not solely steered by what the seats already believe is
+    # worth looking for.
+    adversarial_queries: list[str] = []
+    for claim_id in context.confirmed_claims:
+        adversarial_queries.extend(adversarial_retrieval_queries(claim_id))
+    if adversarial_queries:
+        all_requests.extend(
+            (Seat.ADVERSARY_FALSIFIER, query) for query in adversarial_queries
+        )
+        events.append(
+            EmittedEvent(
+                event_type=EVIDENCE_REQUESTED,
+                payload={
+                    "seat": Seat.ADVERSARY_FALSIFIER.value,
+                    "requests": adversarial_queries,
+                    "request_count": len(adversarial_queries),
+                    "kind": "adversarial_retrieval",
+                },
+                idempotency_key=context.key("adversarial_request"),
+            )
+        )
+
+    adversarial_query_set = frozenset(adversarial_queries)
 
     slots = list(unfilled)
     if context.acquirer is None:
@@ -483,13 +530,84 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
             for item in acquisition.refused
         )
         # A request nobody could resolve is a hole in the evidence, and
-        # CLAUDE.md 10 wants it counted rather than forgotten.
+        # CLAUDE.md 10 wants it counted rather than forgotten -- except for
+        # the adversarial-retrieval queries generated above. Those are
+        # inherently free-text (no DOI substring for CandidatePool.add to
+        # resolve), so they land in ``unresolvable`` every single time, on
+        # every task with confirmed claims -- a constant, system-wide
+        # adapter-capability gap (the honest scope note in
+        # packages.evidence.adversarial_retrieval), not a task-specific
+        # evidentiary hole. Counting them here would make
+        # TaskStatus.COMPLETED_WITH_GAPS permanent for any task that reaches
+        # this round, defeating the point of that status. They stay visible
+        # instead through the dedicated event below.
         slots.extend(
-            f"ACQUISITION:unresolved:{query}" for query in acquisition.unresolvable
+            f"ACQUISITION:unresolved:{query}"
+            for query in acquisition.unresolvable
+            if query not in adversarial_query_set
         )
         slots.extend(
-            f"ACQUISITION:refused:{item.query}" for item in acquisition.refused
+            f"ACQUISITION:refused:{item.query}"
+            for item in acquisition.refused
+            if item.query not in adversarial_query_set
         )
+
+        if adversarial_query_set:
+            unresolved_adversarial = sum(
+                1
+                for query in acquisition.unresolvable
+                if query in adversarial_query_set
+            )
+            refused_adversarial = sum(
+                1
+                for item in acquisition.refused
+                if item.query in adversarial_query_set
+            )
+            attempted = len(adversarial_query_set)
+            events.append(
+                EmittedEvent(
+                    event_type=ADVERSARIAL_RETRIEVAL_ATTEMPTED,
+                    payload={
+                        "attempted": attempted,
+                        "unresolved_count": unresolved_adversarial,
+                        "refused_count": refused_adversarial,
+                        "resolved_count": (
+                            attempted
+                            - unresolved_adversarial
+                            - refused_adversarial
+                        ),
+                    },
+                    idempotency_key=context.key("adversarial_outcome"),
+                )
+            )
+        # Source diversity constraint (design spec 7.9, README known gaps
+        # item 5): task-scoped, not per-claim -- see
+        # packages/evidence/source_diversity.py for why. Runs over every
+        # source acquired for this task so far, cache hits included, so a
+        # source fetched in an earlier run still counts against a later one.
+        diversity = check_diversity(
+            [
+                SourceDiversityInput(
+                    source_id=item.source_id,
+                    dataset_id=item.dataset_id,
+                    authors=item.authors,
+                )
+                for item in acquisition.acquired
+            ]
+        )
+        if diversity is not None:
+            events.append(
+                EmittedEvent(
+                    event_type=EvidenceNodeType.BLINDSPOT.value,
+                    payload={
+                        "statement": diversity.reason,
+                        "source_refs": [str(sid) for sid in diversity.source_ids],
+                        "kind": "source_diversity",
+                    },
+                    idempotency_key=context.key("diversity_blindspot"),
+                    evidence_level="A",
+                )
+            )
 
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(

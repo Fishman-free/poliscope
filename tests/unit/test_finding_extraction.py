@@ -134,6 +134,31 @@ class _FakeModelGateway:
         )
 
 
+class _SequencedModelGateway:
+    """Returns each payload in ``payloads`` in turn, one per ``invoke`` call."""
+
+    def __init__(
+        self, payloads: list[dict[str, object]], cost_usd: Decimal = Decimal("0")
+    ) -> None:
+        self._payloads = list(payloads)
+        self._cost = cost_usd
+        self.calls: list[ModelRequest] = []
+
+    async def invoke(self, request: ModelRequest) -> ModelResult:
+        self.calls.append(request)
+        payload = self._payloads[len(self.calls) - 1]
+        return ModelResult(
+            call_id=uuid4(),
+            payload=FrozenDict(payload),
+            input_tokens=10,
+            output_tokens=10,
+            cost_usd=self._cost,
+            latency_ms=5,
+            retries=0,
+            schema_status=SchemaStatus.OK,
+        )
+
+
 def _budget(
     tool_call_limit: int = 10, model_cost_usd: Decimal = Decimal("10")
 ) -> BudgetTracker:
@@ -266,4 +291,86 @@ async def test_model_cost_budget_exhausted_blocks_persistence() -> None:
 
     assert result.ok is False
     assert "model cost budget exhausted" in result.reason
+
+
+async def test_dual_extraction_agreement_persists_like_single_pass() -> None:
+    """CLAUDE.md 7.4, mechanism 3 of 4: two agreeing passes are as good as one."""
+    quote = "We found a significant association between screen time and anxiety."
+    session = _FakeSession()
+    tools = _FakeToolGateway(url="https://example.test/paper.pdf")
+    model = _SequencedModelGateway([_valid_payload(quote), _valid_payload(quote)])
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), fulltext_fetcher=_fetcher(_pdf_bytes(quote))
+    )
+
+    result = await extractor.extract(uuid4(), "10.1234/example", dual_extraction=True)
+
+    assert result.ok is True
+    assert result.evidence_level == "A"
+    assert len(model.calls) == 2
+    assert len(session.added) == 4
+    assert session.flushed == 4
+
+
+async def test_dual_extraction_exact_quote_mismatch_records_gap() -> None:
+    quote = "We found a significant association between screen time and anxiety."
+    other_quote = "Screen time was linked to worse outcomes in this sample."
+    pdf_bytes = _pdf_bytes(f"{quote}\n{other_quote}")
+    session = _FakeSession()
+    tools = _FakeToolGateway(url="https://example.test/paper.pdf")
+    model = _SequencedModelGateway(
+        [_valid_payload(quote), _valid_payload(other_quote)]
+    )
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), fulltext_fetcher=_fetcher(pdf_bytes)
+    )
+
+    result = await extractor.extract(uuid4(), "10.1234/example", dual_extraction=True)
+
+    assert result.ok is False
+    assert "exact_quote" in result.reason
+    assert "needs manual audit" in result.reason
+    assert session.added == []
+
+
+async def test_dual_extraction_effect_direction_mismatch_records_gap() -> None:
+    quote = "We found a significant association between screen time and anxiety."
+    first_payload = _valid_payload(quote)
+    second_payload = dict(_valid_payload(quote))
+    second_payload["effect_direction"] = "negative"
+    session = _FakeSession()
+    tools = _FakeToolGateway(url="https://example.test/paper.pdf")
+    model = _SequencedModelGateway([first_payload, second_payload])
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), fulltext_fetcher=_fetcher(_pdf_bytes(quote))
+    )
+
+    result = await extractor.extract(uuid4(), "10.1234/example", dual_extraction=True)
+
+    assert result.ok is False
+    assert "effect_direction" in result.reason
+    assert "needs manual audit" in result.reason
+    assert session.added == []
+
+
+async def test_dual_extraction_second_pass_failure_records_gap() -> None:
+    """The second pass's quote is not in the source text -- a Level A failure,
+    not a disagreement -- so this hits the second.ok is False branch, not the
+    comparison branch."""
+    quote = "We found a significant association between screen time and anxiety."
+    session = _FakeSession()
+    tools = _FakeToolGateway(url="https://example.test/paper.pdf")
+    model = _SequencedModelGateway(
+        [_valid_payload(quote), _valid_payload("this quote never appears anywhere")]
+    )
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), fulltext_fetcher=_fetcher(_pdf_bytes(quote))
+    )
+
+    result = await extractor.extract(uuid4(), "10.1234/example", dual_extraction=True)
+
+    assert result.ok is False
+    assert "second pass failed" in result.reason
+    assert "needs manual audit" in result.reason
+    assert session.added == []
     assert session.added == []

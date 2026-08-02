@@ -65,6 +65,27 @@ SEAT_INSTRUCTIONS: dict[Seat, str] = {
     ),
 }
 
+# Blind evidence review (CLAUDE.md 7.4, design spec 7.9, mechanism 2 of 4):
+# a seat judging evidence quality must not see the author's identity, the
+# venue, or its citation count -- any of those can substitute a reputation
+# halo for the method-quality judgment CLAUDE.md 3 assigns each seat. Nothing
+# in the registry's ``carry={...}`` sites currently writes one of these keys
+# (grep confirms it: only ``initial_judgments``, ``blocked_claim_ids``, and
+# ``consensus_ready`` exist today), so this is a structural guard against a
+# future round handler doing so by accident, not a fix for a live leak.
+_BIBLIOGRAPHIC_IDENTITY_KEYS = frozenset(
+    {
+        "author",
+        "authors",
+        "journal",
+        "venue",
+        "publisher",
+        "citation_count",
+        "impact_factor",
+        "h_index",
+    }
+)
+
 # The structured output each round expects. The names match the keys the
 # registry's runners read, so a schema change is visible in one place.
 PHASE_OUTPUT_SCHEMAS: dict[TaskPhase, str] = {
@@ -114,6 +135,9 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     if private:
         lines.append(f"Your private recall: {private}")
     for key in sorted(context.carried):
+        if key.lower() in _BIBLIOGRAPHIC_IDENTITY_KEYS:
+            # Blind evidence review: never render this, whatever produced it.
+            continue
         lines.append(f"{key}: {context.carried[key]!r}")
     return "\n".join(lines)
 
