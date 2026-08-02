@@ -926,6 +926,17 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
                     "statement": scored.item.statement,
                     "score": str(scored.score),
                     "node_id": str(scored.item.id),
+                    "kind": "bounty",
+                    # Carried alongside the collapsed score so the Blindspot
+                    # Radar (design spec 8.5: impact x investigability,
+                    # uncertainty as point size) can plot the real
+                    # dimensions the seats nominated instead of re-deriving
+                    # them from one scalar it cannot invert.
+                    "impact": str(scored.item.impact),
+                    "uncertainty": str(scored.item.uncertainty),
+                    "investigability": str(scored.item.investigability),
+                    "novelty": str(scored.item.novelty),
+                    "normalized_cost": str(scored.item.normalized_cost),
                 },
                 idempotency_key=context.key("blindspot", scored.item.id),
                 evidence_level="A",

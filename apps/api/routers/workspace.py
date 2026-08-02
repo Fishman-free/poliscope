@@ -9,6 +9,7 @@ an arriving SSE event is already reflected in what it is showing.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any
 from uuid import UUID
 
@@ -18,9 +19,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.dependencies import SessionDep
 from apps.api.schemas import SafetyNotice, WorkspaceSnapshot
+from packages.council.rounds.registry import (
+    CHALLENGE_RAISED,
+    FINAL_JUDGMENT,
+    PRECOMMITMENT_SEALED,
+    SEAT_UNAVAILABLE,
+)
+from packages.epistemo.orchestrator import ORDERED_SEATS
+from packages.evidence.contracts import EvidenceNodeType
 from packages.evidence.independence import cluster_evidence
 from packages.evidence.lineage_detection import LineageSourceRow, detect_lineage
-from packages.evidence.models import GraphEdgeModel, GraphNodeModel
+from packages.evidence.models import (
+    GraphEdgeModel,
+    GraphNodeModel,
+    ScientificEventModel,
+)
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
 from packages.kernel.database import canonical_uuid
@@ -36,6 +49,18 @@ router = APIRouter()
 BLINDSPOT_NODE_TYPE = "Blindspot"
 DISCRIMINATING_STUDY_NODE_TYPE = "DiscriminatingStudy"
 DISSENT_CERTIFICATE_NODE_TYPE = "DissentCertificate"
+
+# Events the Evolution View draws from: only ones that name a claim, either
+# through the ledger's own ``claim_id`` column (today only ``_fork_events``
+# sets it) or a claim reference inside their payload (a challenge's
+# ``claim_id``, a dissent certificate's ``target_id``). Deliberately narrower
+# than the Audit Trail, which is design spec 8's own separate panel and covers
+# every process event, not just claim-referencing ones.
+_EVOLUTION_EVENT_TYPES = (
+    EvidenceNodeType.CLAIM.value,
+    CHALLENGE_RAISED,
+    EvidenceNodeType.DISSENT_CERTIFICATE.value,
+)
 
 
 async def _nodes_of_type(
@@ -145,6 +170,116 @@ async def _evidence_counts(
     return clusters.paper_count, clusters.independent_cluster_count
 
 
+async def _seats(
+    session: AsyncSession,
+    task_id: UUID,
+) -> tuple[FrozenDict[str, object], ...]:
+    """Per-seat structured summary: precommitment, challenges, final judgment.
+
+    Built only from process events that already carry a ``"seat"`` payload
+    key -- ``PRECOMMITMENT_SEALED``, ``CHALLENGE_RAISED``, ``FINAL_JUDGMENT``,
+    ``SEAT_UNAVAILABLE`` (all defined in
+    ``packages.council.rounds.registry``). CLAUDE.md 11 requires the council
+    panel to show only structured actions, evidence used, challenges and
+    responses, and confidence changes -- never a seat's private chain of
+    thought, which is why nothing here reads a model's raw response text
+    beyond the same self-reported strings the round itself already emitted.
+    """
+    events = await SqlEventLedger(session).list_since(task_id)
+    precommitments: dict[str, dict[str, object]] = {}
+    challenges: dict[str, list[dict[str, object]]] = defaultdict(list)
+    final_judgments: dict[str, dict[str, object]] = {}
+    unavailable_phases: dict[str, list[str]] = defaultdict(list)
+    for entry in events:
+        seat_value = entry.payload.get("seat")
+        if not isinstance(seat_value, str):
+            continue
+        if entry.event_type == PRECOMMITMENT_SEALED:
+            precommitments[seat_value] = {
+                "confidence": entry.payload.get("confidence"),
+                "update_condition": entry.payload.get("update_condition"),
+            }
+        elif entry.event_type == CHALLENGE_RAISED:
+            challenges[seat_value].append(
+                {
+                    "claim_id": entry.payload.get("claim_id"),
+                    "statement": entry.payload.get("statement"),
+                    "is_fatal": entry.payload.get("is_fatal"),
+                }
+            )
+        elif entry.event_type == FINAL_JUDGMENT:
+            final_judgments[seat_value] = {
+                "final_judgment": entry.payload.get("final_judgment"),
+                "confidence": entry.payload.get("confidence"),
+                "has_dissent": entry.payload.get("has_dissent"),
+            }
+        elif entry.event_type == SEAT_UNAVAILABLE:
+            phase = entry.payload.get("phase")
+            if isinstance(phase, str):
+                unavailable_phases[seat_value].append(phase)
+
+    return tuple(
+        FrozenDict(
+            {
+                "seat": seat.value,
+                "precommitment": precommitments.get(seat.value),
+                "challenges_raised": tuple(challenges.get(seat.value, ())),
+                "final_judgment": final_judgments.get(seat.value),
+                "unavailable_phases": tuple(unavailable_phases.get(seat.value, ())),
+            }
+        )
+        for seat in ORDERED_SEATS
+    )
+
+
+async def _evolution(
+    session: AsyncSession,
+    task_id: UUID,
+) -> tuple[FrozenDict[str, object], ...]:
+    """Chronological feed of Claim-referencing events: forks, challenges, dissents.
+
+    A task with no fork, challenge, or dissent against a claim produces an
+    empty feed -- the honest result of what the council actually recorded,
+    not a bug. No round in ``packages/council/rounds/registry.py`` currently
+    emits a dedicated "confidence changed" event for a Claim, so this cannot
+    show a continuous confidence curve, only the discrete events that do
+    exist; see README's known-gaps entry for the same limitation.
+    """
+    result = await session.execute(
+        select(ScientificEventModel)
+        .where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.event_type.in_(_EVOLUTION_EVENT_TYPES),
+        )
+        .order_by(ScientificEventModel.sequence)
+    )
+    entries: list[FrozenDict[str, object]] = []
+    for row in result.scalars():
+        payload = dict(row.payload)
+        if row.claim_id is not None:
+            claim_id: str | None = str(row.claim_id)
+        elif row.event_type == CHALLENGE_RAISED:
+            raw_claim_id = payload.get("claim_id")
+            claim_id = str(raw_claim_id) if raw_claim_id else None
+        elif row.event_type == EvidenceNodeType.DISSENT_CERTIFICATE.value:
+            raw_target_id = payload.get("target_id")
+            claim_id = str(raw_target_id) if raw_target_id else None
+        else:
+            claim_id = None
+        entries.append(
+            FrozenDict(
+                {
+                    "sequence": row.sequence,
+                    "event_type": row.event_type,
+                    "status": row.status,
+                    "claim_id": claim_id,
+                    "payload": payload,
+                }
+            )
+        )
+    return tuple(entries)
+
+
 @router.get("/{task_id}", response_model=WorkspaceSnapshot)
 async def get_workspace(task_id: UUID, session: SessionDep) -> WorkspaceSnapshot:
     try:
@@ -170,7 +305,7 @@ async def get_workspace(task_id: UUID, session: SessionDep) -> WorkspaceSnapshot
     return WorkspaceSnapshot(
         task=FrozenDict(task_payload),
         brief=FrozenDict(brief),
-        seats=(),
+        seats=await _seats(session, task_id),
         graph=await _graph(session, task_id),
         blindspots=await _nodes_of_type(session, task_id, BLINDSPOT_NODE_TYPE),
         discriminating_studies=await _nodes_of_type(
@@ -179,7 +314,7 @@ async def get_workspace(task_id: UUID, session: SessionDep) -> WorkspaceSnapshot
         dissents=await _nodes_of_type(
             session, task_id, DISSENT_CERTIFICATE_NODE_TYPE
         ),
-        evolution=(),
+        evolution=await _evolution(session, task_id),
         paper_count=paper_count,
         independent_cluster_count=cluster_count,
         workspace_version=version,
