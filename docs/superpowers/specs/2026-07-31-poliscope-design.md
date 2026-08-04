@@ -188,6 +188,33 @@ MemoBrain 的 `ReasoningGraph`、`Flush`、`Fold`、`Recall` 是为**一个** Ag
 
 最终输出同时包含多数判断、少数异议、真正分歧和解决分歧所需证据。
 
+### 4.5 JOINT_MODELING 前的人类方向性引导检查点
+
+盲点悬赏（第 5 轮）结束、联合建模（第 6 轮）开始之前，存在一个**唯一、固定**的可选检查点，供研究者提供方向性引导。这不是通用的"议会任意时点快照/暂停/恢复"（那需要重构 `CouncilOrchestrator` 的阶段循环与事务边界，超出本版范围，见第 15 章与 README「已知缺口」），而是复用 Research Contract 确认流程已验证过的"状态置为等待态 → 人类调用 HTTP 接口 → 置回 `QUEUED` → Worker 重新认领"模式。
+
+**状态机：**
+
+```text
+... → BLINDSPOT_BOUNTY 完成
+    → AWAITING_COUNCIL_INPUT（新增任务状态；等待人类响应，无超时自动前进）
+    → 人类提交（或明确留空）引导意见
+    → QUEUED（Worker 重新认领）
+    → JOINT_MODELING → FINAL_REJUDGMENT → REPORTING
+```
+
+`AWAITING_COUNCIL_INPUT` 期间，编排器已跑过的阶段产物（各阶段的 `carry` 累积状态）会被序列化保存，供续跑时重建联合建模所需的上下文，不需要从头重跑前 5 轮。
+
+**API 契约：**
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/tasks/{id}/council-preview` | 只读，复用工作台的按席位聚合逻辑，展示 7 名科学家在盲点悬赏结束时的立场（预承诺、置信度、已提出质询），不新建节点类型 |
+| `POST` | `/api/tasks/{id}/council-guidance` | 接受人类的方向性文字意见（可为空字符串，代表"不干预，直接继续"），记一条 Process Graph 事件（不是正式 Evidence Graph 节点），随后把任务状态从 `AWAITING_COUNCIL_INPUT` 置回 `QUEUED` |
+
+**不裁决真理的具体落实：** 联合建模构造 prompt 时，若存在人类引导意见，将其作为一段独立、明确标注来源的文本注入（例如"[研究者方向性备注，非科学判断]: {guidance_text}"）。它只允许改变"接下来重点讨论哪些悬而未决的冲突/边界条件"这类调度性内容，不允许影响 Evidence Gate 六阶段审核的任何判定逻辑，不作为任何 `Claim` 的 `source_refs`，不进入 `DebateCapsule`/`DissentCertificate` 的构造字段。同一份证据输入，带引导与不带引导两次运行必须产出完全一致的 `Claim` 采纳状态、`DissentCertificate` 与 Evidence Gate 判定，仅讨论顺序/prompt 上下文可以不同——这一性质由测试直接断言。
+
+CLI 与 Web 均提供该检查点的对应入口（`poliscope council-preview`/`council-guidance` 子命令；Web 端一个展示席位立场卡片 + 引导意见输入框 + 继续按钮的检查点视图），两者共享同一 API 契约。
+
 ## 5. EpistemoBrain 与执行记忆
 
 ### 5.1 三层记忆

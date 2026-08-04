@@ -77,10 +77,12 @@
 │  ├─ reports/                            # Brief 与审计报告的只读生成器
 │  └─ evaluation/                         # 封闭语料、变体、标注、指标和统计
 ├─ migrations/versions/                   # 仅 Alembic 管理的 Schema 与权限迁移
-├─ skills/poliscope/
-│  ├─ SKILL.md                             # 共享能力、触发条件与安全边界
-│  ├─ claude-code/                         # Claude Code 清单/安装说明
-│  └─ codex/                               # Codex 清单/安装说明
+├─ .claude/skills/poliscope/               # Claude Code 实际发现路径（原计划的裸 skills/ 目录
+│  ├─ SKILL.md                             # 不会被 Claude Code 自动发现，已按官方约定改为此路径）
+│  └─ scripts/new_contract.py
+├─ .codex/skills/poliscope/                # Codex 对应发现路径，内容与上面保持一致，避免逻辑分叉
+│  ├─ SKILL.md
+│  └─ scripts/new_contract.py
 ├─ tests/
 │  ├─ fixtures/recordings/                # 模型/工具录制响应
 │  ├─ unit/                               # 纯规则与 Contract
@@ -2581,9 +2583,10 @@ git commit -m "feat(eval): run complete baselines ablations and metrics"
 - 创建：`apps/cli/__init__.py`
 - 创建：`apps/cli/client.py`
 - 创建：`apps/cli/main.py`
-- 创建：`skills/poliscope/SKILL.md`
-- 创建：`skills/poliscope/claude-code/README.md`
-- 创建：`skills/poliscope/codex/README.md`
+- 创建：`.claude/skills/poliscope/SKILL.md`、`.claude/skills/poliscope/scripts/new_contract.py`
+- 创建：`.codex/skills/poliscope/SKILL.md`、`.codex/skills/poliscope/scripts/new_contract.py`
+  （改用 Claude Code / Codex 各自的官方发现路径，取代最初计划的裸 `skills/poliscope/`——后者
+  不会被任何一个工具自动发现，见实施时确认的官方约定）
 - 创建：`tests/unit/test_cli_contract.py`
 - 创建：`tests/integration/test_cli_api_parity.py`
 - 创建：`tests/e2e/test_agent_skills.py`
