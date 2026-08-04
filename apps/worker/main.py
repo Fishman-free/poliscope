@@ -28,6 +28,7 @@ from packages.kernel.config import DatabaseConfig
 from packages.kernel.database import create_database_engine, create_session_factory
 from packages.models.contracts import ModelGateway
 from packages.models.openai_compatible import gateway_from_env
+from packages.papers.object_store import PrivateObjectStore
 from packages.research.models import ResearchTaskModel
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher, fulltext_fetcher_from_env
@@ -57,6 +58,12 @@ class WorkerContext:
     downloading an already-resolved open-access URL needs no vendor
     credential of its own, so :func:`fulltext_fetcher_from_env` always
     returns a working fetcher.
+
+    ``object_store`` is likewise always present -- it is a local-file-backed
+    stand-in with no vendor credential to be missing (see
+    ``packages.papers.object_store``) -- and is created once per process
+    rather than once per task so every uploaded-PDF extraction in this worker
+    reads from the same root path.
     """
 
     app_engine: AsyncEngine
@@ -66,6 +73,7 @@ class WorkerContext:
     gateway: ModelGateway | None = None
     tools: ToolGateway | None = None
     fulltext_fetcher: FullTextFetcher | None = None
+    object_store: PrivateObjectStore | None = None
 
     @classmethod
     def from_urls(
@@ -75,6 +83,7 @@ class WorkerContext:
         gateway: ModelGateway | None = None,
         tools: ToolGateway | None = None,
         fulltext_fetcher: FullTextFetcher | None = None,
+        object_store: PrivateObjectStore | None = None,
     ) -> WorkerContext:
         app_engine = create_database_engine(app_url)
         projector_engine = create_database_engine(projector_url)
@@ -86,6 +95,7 @@ class WorkerContext:
             gateway=gateway,
             tools=tools,
             fulltext_fetcher=fulltext_fetcher,
+            object_store=object_store,
         )
 
     @classmethod
@@ -96,6 +106,7 @@ class WorkerContext:
             gateway_from_env(),
             tool_gateway_from_env(),
             fulltext_fetcher_from_env(),
+            PrivateObjectStore.from_env(),
         )
 
     async def dispose(self) -> None:
@@ -148,6 +159,7 @@ async def run_one(context: WorkerContext, task_id: UUID) -> JobResult | None:
             gateway=context.gateway,
             tools=context.tools,
             fulltext_fetcher=context.fulltext_fetcher,
+            object_store=context.object_store,
         )
     except TaskNotRunnable:
         # Another worker finished it between the claim and the run.

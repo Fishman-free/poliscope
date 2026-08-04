@@ -139,6 +139,14 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
             # Blind evidence review: never render this, whatever produced it.
             continue
         lines.append(f"{key}: {context.carried[key]!r}")
+    # Plan phase 8.3: the human's advisory steer from the BLINDSPOT_BOUNTY ->
+    # JOINT_MODELING checkpoint, rendered only in this one phase and clearly
+    # labelled as non-scientific. CLAUDE.md 4/8 forbid a human vote from
+    # deciding scientific truth, so this line must never be mistaken for an
+    # eighth seat's judgment, and it is never written into `carried`/
+    # `outcome.carry`, so it cannot leak into any later phase's prompt either.
+    if context.phase is TaskPhase.JOINT_MODELING and context.guidance:
+        lines.append(f"[研究者方向性备注，非科学判断]: {context.guidance}")
     return "\n".join(lines)
 
 

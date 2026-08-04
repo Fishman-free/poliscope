@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from packages.council.deliberation import GatewayDeliberator
 from packages.council.rounds.registry import SeatDeliberator
 from packages.epistemo.budget import BudgetTracker, ResearchBudget
-from packages.epistemo.contracts import TaskStatus
+from packages.epistemo.contracts import CouncilCheckpoint, TaskPhase, TaskStatus
 from packages.epistemo.orchestrator import CouncilOrchestrator, TaskRunReport
 from packages.evidence.lifecycle import QuarantinedNode
 from packages.evidence.models import EventAuditModel, ScientificEventModel
@@ -46,6 +46,7 @@ from packages.models.contracts import ModelGateway
 from packages.models.gateway import AuditedModelGateway
 from packages.papers.acquisition import SourceAcquisition
 from packages.papers.finding_extraction import FindingExtractor
+from packages.papers.object_store import PrivateObjectStore
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
 from packages.tools.contracts import ToolGateway
@@ -172,6 +173,19 @@ async def _quarantined_nodes(
     return tuple(nodes)
 
 
+def _pdf_object_ids(task: ResearchTaskModel) -> tuple[UUID, ...]:
+    """Read back the object ids ``apps/api/routers/papers.py`` recorded.
+
+    ``user_evidence`` is untyped JSONB (see ``ResearchTaskModel.user_evidence``),
+    so what comes back is plain strings, not ``UUID`` objects -- converted here
+    rather than trusting the stored shape, since a hand-edited row or a future
+    schema change should fail loudly at this boundary, not deep inside the
+    acquisition round.
+    """
+    raw = task.user_evidence.get("pdf_object_ids", ())
+    return tuple(UUID(str(value)) for value in raw)
+
+
 async def deliberate(
     session: AsyncSession,
     task_id: UUID,
@@ -179,6 +193,7 @@ async def deliberate(
     gateway: ModelGateway | None = None,
     tools: ToolGateway | None = None,
     fulltext_fetcher: FullTextFetcher | None = None,
+    object_store: PrivateObjectStore | None = None,
 ) -> TaskRunReport:
     """Run the seven rounds and persist the resulting events and status.
 
@@ -190,6 +205,31 @@ async def deliberate(
     ``deliberator`` overrides ``gateway``; passing neither runs the protocol with
     every seat reported unavailable, which is what a deployment with no model
     provider should honestly produce.
+
+    Plan phase 8.2: a task's ``council_checkpoint`` column tells this function
+    which of two runs it is doing. Both start from QUEUED, so ``_claim`` needs no
+    change either way -- ``submit_council_guidance``
+    (packages/research/service.py) already moves the task back to QUEUED before
+    the worker ever sees it again.
+
+    - No stored checkpoint: this is the first pass. The orchestrator halts
+      before JOINT_MODELING and returns ``AWAITING_COUNCIL_INPUT`` rather than
+      running the full eight phases, so the human gets a chance to steer before
+      the council commits to a joint model.
+    - A stored checkpoint: this is the resume pass, after
+      ``council-guidance`` recorded the human's (possibly empty) advisory text.
+      The checkpoint is handed back to the orchestrator verbatim via
+      ``resume_from`` so already-run phases are not repeated, and its
+      ``guidance`` field is passed separately so it reaches JOINT_MODELING's
+      prompt only (CLAUDE.md 4/8 -- see ``CouncilOrchestrator.run``'s
+      docstring).
+
+    Either way, the checkpoint column is rewritten to match what the
+    orchestrator reports this pass: set when it halts again (which the fixed
+    single-checkpoint design here never actually produces after a resume, but
+    is handled the same way regardless), cleared once the run reaches a
+    terminal status, so a finished task never carries stale checkpoint JSON
+    that a later reader could mistake for still-pending input.
     """
     task = await _claim(session, task_id)
     budget = _budget_for(task)
@@ -230,16 +270,44 @@ async def deliberate(
                 task_id,
                 budget,
                 fulltext_fetcher=fulltext_fetcher,
+                object_store=object_store,
             )
         ),
     )
-    report = await orchestrator.run(
-        task_id=task_id,
-        question=task.question,
-        confirmed_claims=await _confirmed_claim_ids(session, task_id),
-        quarantined=await _quarantined_nodes(session, task_id),
+    checkpoint = (
+        None
+        if task.council_checkpoint is None
+        else CouncilCheckpoint.model_validate(task.council_checkpoint)
     )
-    await ResearchRepository(session).set_status(task_id, report.final_status)
+    if checkpoint is None:
+        report = await orchestrator.run(
+            task_id=task_id,
+            question=task.question,
+            confirmed_claims=await _confirmed_claim_ids(session, task_id),
+            quarantined=await _quarantined_nodes(session, task_id),
+            pdf_object_ids=_pdf_object_ids(task),
+            stop_before=TaskPhase.JOINT_MODELING,
+        )
+    else:
+        report = await orchestrator.run(
+            task_id=task_id,
+            question=task.question,
+            confirmed_claims=await _confirmed_claim_ids(session, task_id),
+            quarantined=await _quarantined_nodes(session, task_id),
+            pdf_object_ids=_pdf_object_ids(task),
+            resume_from=checkpoint,
+            council_guidance=checkpoint.guidance,
+        )
+
+    repository = ResearchRepository(session)
+    if report.final_status == TaskStatus.AWAITING_COUNCIL_INPUT:
+        assert report.checkpoint is not None
+        await repository.set_checkpoint(
+            task_id, report.checkpoint.model_dump(mode="json")
+        )
+    else:
+        await repository.set_checkpoint(task_id, None)
+    await repository.set_status(task_id, report.final_status)
     return report
 
 
@@ -256,6 +324,7 @@ async def run_task(
     gateway: ModelGateway | None = None,
     tools: ToolGateway | None = None,
     fulltext_fetcher: FullTextFetcher | None = None,
+    object_store: PrivateObjectStore | None = None,
 ) -> JobResult:
     """Deliberate, commit, then project.
 
@@ -267,7 +336,13 @@ async def run_task(
     async with app_sessions() as session:
         try:
             report = await deliberate(
-                session, task_id, deliberator, gateway, tools, fulltext_fetcher
+                session,
+                task_id,
+                deliberator,
+                gateway,
+                tools,
+                fulltext_fetcher,
+                object_store,
             )
             await session.commit()
         except BaseException:

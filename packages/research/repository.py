@@ -50,6 +50,12 @@ class StoredTask:
     question: str
     status: str
     created_by: str
+    # Plan phase 8.2: the serialized CouncilCheckpoint (packages/epistemo/
+    # contracts.py), non-None only while status is AWAITING_COUNCIL_INPUT.
+    # Exposed here rather than via a separate read method because every
+    # caller that needs the checkpoint already calls get_task() first to
+    # check status -- a second round trip would just re-fetch the same row.
+    council_checkpoint: dict[str, Any] | None = None
 
 
 class TaskNotFound(Exception):
@@ -140,6 +146,7 @@ class ResearchRepository:
             question=row.question,
             status=row.status,
             created_by=row.created_by,
+            council_checkpoint=row.council_checkpoint,
         )
 
     async def list_claims(self, task_id: UUID) -> tuple[StoredClaim, ...]:
@@ -208,4 +215,54 @@ class ResearchRepository:
         ))
         if result.rowcount == 0:
             raise TaskNotFound(str(task_id))
+        await self._session.flush()
+
+    async def set_checkpoint(
+        self,
+        task_id: UUID,
+        checkpoint: dict[str, Any] | None,
+    ) -> None:
+        """Persist (or clear) the serialized CouncilCheckpoint column.
+
+        Plan phase 8.2: the worker writes a checkpoint when a run halts at
+        AWAITING_COUNCIL_INPUT, and clears it (passes None) once the task
+        resumes past JOINT_MODELING -- a completed task has nothing left to
+        resume from, and leaving stale JSON behind would let a future reader
+        mistake it for a still-pending checkpoint.
+        """
+        result = cast(CursorResult[Any], await self._session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(council_checkpoint=checkpoint)
+        ))
+        if result.rowcount == 0:
+            raise TaskNotFound(str(task_id))
+        await self._session.flush()
+
+    async def add_pdf_object_id(self, task_id: UUID, object_id: UUID) -> None:
+        """Append an uploaded PDF's object id to the task's stored evidence.
+
+        A task must exist before an object can reference it (``objects.task_id``
+        is a NOT NULL foreign key), so an uploaded PDF cannot ride in on
+        ``ResearchContract.user_evidence`` at creation time the way a DOI or
+        BibTeX entry does. This patches the already-created task's
+        ``user_evidence`` JSONB after the fact, before ``confirm_claims``/
+        ``queue`` moves it out of AWAITING_CLAIM_CONFIRMATION.
+
+        Reassigning ``row.user_evidence`` to a new dict (rather than mutating
+        the existing one in place) is what makes SQLAlchemy notice the change
+        on a plain JSONB column with no change-tracking wrapper.
+        """
+        row = await self._session.scalar(
+            select(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
+        )
+        if row is None:
+            raise TaskNotFound(str(task_id))
+        current = dict(row.user_evidence)
+        existing_ids = list(current.get("pdf_object_ids", ()))
+        object_id_str = str(object_id)
+        if object_id_str not in existing_ids:
+            existing_ids.append(object_id_str)
+        current["pdf_object_ids"] = existing_ids
+        row.user_evidence = current
         await self._session.flush()

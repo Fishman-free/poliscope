@@ -40,6 +40,7 @@ from packages.council.rounds.registry import (
 from packages.epistemo.budget import BudgetTracker
 from packages.epistemo.contracts import (
     PHASE_SEQUENCE,
+    CouncilCheckpoint,
     TaskPhase,
     TaskStatus,
 )
@@ -159,6 +160,10 @@ class TaskRunReport:
     absent_seats: frozenset[Seat] = frozenset()
     failures: tuple[str, ...] = ()
     stop_reason: StopReason = StopReason.CONTINUE
+    # Populated only when final_status is AWAITING_COUNCIL_INPUT -- the caller
+    # (apps/worker/jobs.py) persists this to the checkpoint column so a later
+    # call can pass it back in as run()'s resume_from argument.
+    checkpoint: CouncilCheckpoint | None = None
 
     @property
     def has_gaps(self) -> bool:
@@ -210,18 +215,93 @@ class CouncilOrchestrator:
         question: str,
         confirmed_claims: tuple[UUID, ...] = (),
         quarantined: tuple[QuarantinedNode, ...] = (),
+        pdf_object_ids: tuple[UUID, ...] = (),
+        stop_before: TaskPhase | None = None,
+        resume_from: CouncilCheckpoint | None = None,
+        council_guidance: str | None = None,
     ) -> TaskRunReport:
+        """Run the protocol, optionally halting at (or resuming from) a checkpoint.
+
+        ``stop_before`` and ``resume_from`` both default to ``None``, so every
+        existing caller that does not pass them gets exactly the prior
+        behaviour: all eight phases run in one pass. Plan phase 8's fixed
+        BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint is the only user of
+        either argument today -- the worker calls ``run(stop_before=
+        TaskPhase.JOINT_MODELING)`` first, persists the returned
+        ``report.checkpoint``, and later calls ``run(resume_from=<that
+        checkpoint>)`` to finish the remaining phases without re-running the
+        ones already on the ledger.
+
+        ``council_guidance`` is the human's advisory text collected at that
+        checkpoint (plan phase 8.3). It only ever reaches
+        :class:`~packages.council.rounds.registry.PhaseContext` -- passed
+        through unconditionally for every phase, but rendered into a prompt
+        only when that phase is JOINT_MODELING (see
+        ``packages/council/deliberation.py::_user_prompt``). It is never
+        written into ``state.carried``, so it cannot leak into any other
+        phase's prompt and cannot affect Evidence Gate, Claim adoption, or
+        DissentCertificate/DebateCapsule construction.
+        """
         machine = TaskStateMachine()
         state = _Accumulator()
         report = TaskRunReport(task_id=task_id)
-        run_phases: list[TaskPhase] = []
+        run_phases: list[TaskPhase] = (
+            list(resume_from.run_phases) if resume_from else []
+        )
+        already_run = frozenset(run_phases)
         skipped: list[TaskPhase] = []
         stop = StopReason.CONTINUE
+
+        if resume_from is not None:
+            state.carried.update(dict(resume_from.carried))
+            state.unfilled.extend(resume_from.unfilled)
+            state.absent.update(resume_from.absent_seats)
+            state.failures.extend(resume_from.failures)
+            state.events = resume_from.events_appended
+            # Fast-forward the state machine through the already-completed
+            # phases, in order, without re-emitting anything -- this is what
+            # satisfies _transition_to_phase's strict "current + 1" rule once
+            # the loop below reaches the first phase after the checkpoint.
+            for phase in resume_from.run_phases:
+                machine.transition_to(phase)
 
         if self._memory is not None:
             await self._memory.open(self._seats, question)
 
         for phase in PHASE_SEQUENCE:
+            if phase in already_run:
+                continue
+            if (
+                stop_before is not None
+                and phase == stop_before
+                and stop is StopReason.CONTINUE
+            ):
+                # Halt here rather than run the phase. Budget exhaustion (the
+                # `stop is not CONTINUE` case) takes priority and falls
+                # through to the ordinary skip path below instead -- a run
+                # that already died of budget exhaustion has nothing left for
+                # a human to steer, and should finish as COMPLETED_WITH_GAPS
+                # rather than hang waiting for input that cannot help it.
+                report.phases_run = tuple(run_phases)
+                report.phases_skipped = tuple(skipped)
+                report.events_appended = state.events
+                report.unfilled_slots = tuple(state.unfilled)
+                report.absent_seats = frozenset(state.absent)
+                report.failures = tuple(state.failures)
+                report.stop_reason = stop
+                report.final_status = TaskStatus.AWAITING_COUNCIL_INPUT
+                report.checkpoint = CouncilCheckpoint(
+                    run_phases=tuple(run_phases),
+                    carried=state.carried,
+                    unfilled=tuple(state.unfilled),
+                    absent_seats=tuple(
+                        sorted(state.absent, key=lambda seat: seat.value)
+                    ),
+                    failures=tuple(state.failures),
+                    events_appended=state.events,
+                )
+                machine.transition_to(TaskStatus.AWAITING_COUNCIL_INPUT)
+                return report
             machine.transition_to(phase)
             if stop is StopReason.CONTINUE:
                 stop = self._check_budget()
@@ -232,7 +312,14 @@ class CouncilOrchestrator:
                 await self._append_skip(task_id, phase, stop)
                 continue
             await self._run_phase(
-                task_id, phase, question, confirmed_claims, quarantined, state
+                task_id,
+                phase,
+                question,
+                confirmed_claims,
+                quarantined,
+                pdf_object_ids,
+                state,
+                council_guidance,
             )
             run_phases.append(phase)
 
@@ -287,7 +374,9 @@ class CouncilOrchestrator:
         question: str,
         confirmed_claims: tuple[UUID, ...],
         quarantined: tuple[QuarantinedNode, ...],
+        pdf_object_ids: tuple[UUID, ...],
         state: _Accumulator,
+        council_guidance: str | None = None,
     ) -> None:
         await self._ledger.append(
             task_id=task_id,
@@ -309,6 +398,8 @@ class CouncilOrchestrator:
             acquirer=self._acquirer,
             finding_extractor=self._finding_extractor,
             quarantined=quarantined,
+            pdf_object_ids=pdf_object_ids,
+            guidance=council_guidance,
         )
         try:
             outcome = await runner_for(phase)(context)

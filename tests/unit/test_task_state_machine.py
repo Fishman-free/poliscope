@@ -17,6 +17,13 @@ def test_degraded_running_is_not_terminal() -> None:
     assert sm.is_terminal(TaskStatus.FAILED) is True
 
 
+def test_awaiting_council_input_is_not_terminal() -> None:
+    sm = TaskStateMachine()
+    sm.transition_to(TaskStatus.AWAITING_COUNCIL_INPUT)
+    assert sm.status == TaskStatus.AWAITING_COUNCIL_INPUT
+    assert sm.is_terminal(TaskStatus.AWAITING_COUNCIL_INPUT) is False
+
+
 def test_initial_status_is_draft() -> None:
     sm = TaskStateMachine()
     assert sm.status == TaskStatus.DRAFT

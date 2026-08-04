@@ -18,6 +18,7 @@ import { Badge, Spinner, type Tone } from "./components/primitives";
 import { AuditView } from "./views/AuditView";
 import { BlindspotRadarView } from "./views/BlindspotRadarView";
 import { BriefView } from "./views/BriefView";
+import { CheckpointGate } from "./views/CheckpointGate";
 import { CouncilView } from "./views/CouncilView";
 import { EvolutionView } from "./views/EvolutionView";
 import { MapView } from "./views/MapView";
@@ -42,10 +43,19 @@ const STATUS_TONE: Record<string, Tone> = {
   DEGRADED_RUNNING: "provisional",
   QUEUED: "unknown",
   AWAITING_CLAIM_CONFIRMATION: "unknown",
+  AWAITING_COUNCIL_INPUT: "unknown",
   DRAFT: "unknown",
   PAUSED: "unknown",
   REPORTING: "unknown",
 };
+
+/** While the task sits at this checkpoint, poll for the status change that
+ * follows a guidance submission. The SSE stream already covers everything
+ * once the worker resumes and starts emitting new phase events again, but the
+ * status flip itself (AWAITING_COUNCIL_INPUT -> QUEUED) is a plain column
+ * update, not a ledger event -- nothing would otherwise tell this tab to stop
+ * showing the gate the instant the researcher's own submission succeeds. */
+const CHECKPOINT_POLL_MS = 3000;
 
 /** Read the task id from ?task=, so a researcher can share a link to exactly
  * the workspace they are looking at. */
@@ -57,13 +67,19 @@ export function App() {
   const [taskId, setTaskId] = useState<string | null>(taskIdFromLocation);
   const [tab, setTab] = useState<Tab>("brief");
   const [draft, setDraft] = useState(taskId ?? "");
-  const { snapshot, load, stream, error, events } = useWorkspace(taskId);
+  const { snapshot, load, stream, error, events, refresh } = useWorkspace(taskId);
 
   useEffect(() => {
     const onPop = () => setTaskId(taskIdFromLocation());
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  useEffect(() => {
+    if (snapshot?.task.status !== "AWAITING_COUNCIL_INPUT") return;
+    const id = window.setInterval(refresh, CHECKPOINT_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [snapshot?.task.status, refresh]);
 
   function open(next: string) {
     const trimmed = next.trim();
@@ -195,6 +211,13 @@ export function App() {
 
             {snapshot && brief ? (
               <>
+                {taskId && snapshot.task.status === "AWAITING_COUNCIL_INPUT" ? (
+                  <CheckpointGate
+                    taskId={taskId}
+                    seats={snapshot.seats}
+                    onSubmitted={refresh}
+                  />
+                ) : null}
                 {tab === "brief" ? (
                   <BriefView
                     brief={brief}

@@ -39,6 +39,14 @@ class ResearchTaskModel(Base):
     user_evidence: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, default=dict
     )
+    # Plan phase 8: CouncilCheckpoint.model_dump(mode="json"), set only while
+    # status is AWAITING_COUNCIL_INPUT. Nullable because every task before and
+    # after that one checkpoint has nothing to store here -- this is not a
+    # general-purpose snapshot column (see CLAUDE.md 17 scope note in the
+    # plan), only the one fixed BLINDSPOT_BOUNTY -> JOINT_MODELING gate.
+    council_checkpoint: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
 
 
 class ResearchScopeModel(Base):

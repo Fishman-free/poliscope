@@ -18,13 +18,14 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import TaskNotRunnable, run_task
+from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
 from apps.worker.main import WorkerContext, drain
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
     PHASE_STARTED,
     SEAT_UNAVAILABLE,
     PhaseContext,
+    SeatDeliberator,
 )
 from packages.epistemo.contracts import PHASE_SEQUENCE, TaskPhase, TaskStatus
 from packages.evidence.contracts import EvidenceNodeType
@@ -33,7 +34,8 @@ from packages.evidence.models import (
     ScientificEventModel,
 )
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
-from packages.research.repository import CLAIM_CONFIRMED
+from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
+from packages.research.service import ResearchService
 
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
 
@@ -115,6 +117,38 @@ async def _status(
         return str(value)
 
 
+async def _run_to_completion(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+    *,
+    deliberator: SeatDeliberator | None = None,
+) -> JobResult:
+    """Run a task past the JOINT_MODELING checkpoint to a terminal status.
+
+    Plan phase 8.2 made the BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint
+    unconditional: every task's first ``run_task`` call now halts at
+    ``AWAITING_COUNCIL_INPUT`` rather than running all eight phases. These
+    tests predate that checkpoint and want the full-protocol outcome, so an
+    empty guidance submission stands in for the deliberate "no intervention"
+    CLAUDE.md 4/8 requires -- the second ``run_task`` call resumes from
+    JOINT_MODELING and its report aggregates both passes (see
+    ``CouncilOrchestrator.run``'s ``resume_from`` handling).
+    """
+    first = await run_task(
+        app_sessions, projector_sessions, task_id, deliberator=deliberator
+    )
+    if first.run.final_status != TaskStatus.AWAITING_COUNCIL_INPUT:
+        return first
+    async with app_sessions() as session:
+        service = ResearchService(ResearchRepository(session))
+        await service.submit_council_guidance(task_id, "")
+        await session.commit()
+    return await run_task(
+        app_sessions, projector_sessions, task_id, deliberator=deliberator
+    )
+
+
 class _ScriptedDeliberator:
     """Stands in for the model layer with fixed, replay-stable outputs.
 
@@ -164,7 +198,7 @@ async def test_a_queued_task_runs_every_phase_of_the_protocol(
     """CLAUDE.md 4 fixes seven rounds plus reporting. None may be skipped."""
     task_id, _ = await _seed_queued_task(app_sessions)
 
-    result = await run_task(app_sessions, projector_sessions, task_id)
+    result = await _run_to_completion(app_sessions, projector_sessions, task_id)
 
     assert result.run.phases_run == PHASE_SEQUENCE
     assert result.run.phases_skipped == ()
@@ -188,7 +222,7 @@ async def test_an_unavailable_seat_is_reported_not_invented(
     """
     task_id, _ = await _seed_queued_task(app_sessions)
 
-    result = await run_task(app_sessions, projector_sessions, task_id)
+    result = await _run_to_completion(app_sessions, projector_sessions, task_id)
 
     assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
     assert result.run.absent_seats == frozenset(Seat)
@@ -287,7 +321,9 @@ async def test_replaying_a_requeued_task_duplicates_nothing(
     task_id, _ = await _seed_queued_task(app_sessions)
     blindspot_id = uuid4()
     deliberator = _ScriptedDeliberator(blindspot_id)
-    await run_task(app_sessions, projector_sessions, task_id, deliberator)
+    await _run_to_completion(
+        app_sessions, projector_sessions, task_id, deliberator=deliberator
+    )
     first = [event.id for event in await _events(app_sessions, task_id)]
     nodes_before = len(await _nodes(app_sessions, task_id))
 
@@ -299,7 +335,13 @@ async def test_replaying_a_requeued_task_duplicates_nothing(
         )
         await session.commit()
 
-    await run_task(app_sessions, projector_sessions, task_id, deliberator)
+    # The completed run's checkpoint column was cleared (jobs.py::deliberate),
+    # so this requeue is indistinguishable from a brand-new first pass -- it
+    # halts at AWAITING_COUNCIL_INPUT again before every idempotency key can
+    # be re-checked against the ledger, hence the same two-pass helper here.
+    await _run_to_completion(
+        app_sessions, projector_sessions, task_id, deliberator=deliberator
+    )
 
     assert [event.id for event in await _events(app_sessions, task_id)] == first
     assert len(await _nodes(app_sessions, task_id)) == nodes_before
@@ -339,11 +381,27 @@ async def test_the_worker_picks_up_a_queued_task_on_its_own(
         _role_url(migrated_db, PROJECTOR_ROLE, PROJECTOR_PASSWORD),
     )
     try:
-        results = await drain(context, limit=10)
+        # drain() claims and runs a task exactly once (see apps/worker/main.py),
+        # so the first pass only ever reaches the BLINDSPOT_BOUNTY checkpoint --
+        # reaching a terminal status needs the same submit-guidance-then-drain
+        # cycle _run_to_completion uses, just through the worker's own queue
+        # claim instead of a direct run_task call.
+        first_pass = await drain(context, limit=10)
+        assert task_id in {result.task_id for result in first_pass}
+        assert (
+            await _status(app_sessions, task_id) == TaskStatus.AWAITING_COUNCIL_INPUT
+        )
+
+        async with app_sessions() as session:
+            service = ResearchService(ResearchRepository(session))
+            await service.submit_council_guidance(task_id, "")
+            await session.commit()
+
+        second_pass = await drain(context, limit=10)
     finally:
         await context.dispose()
 
-    assert task_id in {result.task_id for result in results}
+    assert task_id in {result.task_id for result in second_pass}
     assert await _status(app_sessions, task_id) == TaskStatus.COMPLETED_WITH_GAPS
 
 
@@ -393,9 +451,12 @@ async def test_a_paused_task_is_never_claimed_until_resumed(
 
         second_pass = await drain(context, limit=10)
         assert {result.task_id for result in second_pass} == {paused_task}
-        assert await _status(app_sessions, paused_task) in (
-            TaskStatus.COMPLETED,
-            TaskStatus.COMPLETED_WITH_GAPS,
+        # drain() is single-pass (apps/worker/main.py), so the resumed task
+        # only reaches the BLINDSPOT_BOUNTY checkpoint here -- the point of
+        # this test is pause/claim exclusivity, not full-protocol completion.
+        assert (
+            await _status(app_sessions, paused_task)
+            == TaskStatus.AWAITING_COUNCIL_INPUT
         )
     finally:
         await context.dispose()

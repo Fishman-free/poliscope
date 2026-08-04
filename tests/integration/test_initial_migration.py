@@ -29,6 +29,9 @@ EXPECTED_COLUMNS = {
         "tool_call_limit",
         "source_limit",
         "user_evidence",
+        # Plan phase 8.1: serialized CouncilCheckpoint, set only while the
+        # task sits in AWAITING_COUNCIL_INPUT (migration 0008).
+        "council_checkpoint",
     },
     "research_scopes": {
         "id",
@@ -98,7 +101,7 @@ EXPECTED_COLUMNS = {
     },
 }
 NULLABLE_COLUMNS = {
-    "research_tasks": set(),
+    "research_tasks": {"council_checkpoint"},
     "research_scopes": {"date_from"},
     "atomic_claims": set(),
     "model_calls": {"output_hash", "error_code"},

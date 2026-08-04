@@ -17,23 +17,30 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import run_task
+from apps.worker.jobs import JobResult, run_task
 from packages.council.contracts import Seat
 from packages.council.deliberation import (
     PHASE_OUTPUT_SCHEMAS,
     GatewayDeliberator,
     deliberator_for,
 )
-from packages.council.rounds.registry import SEAT_UNAVAILABLE
+from packages.council.rounds.registry import SEAT_UNAVAILABLE, SeatDeliberator
 from packages.epistemo.contracts import TaskPhase, TaskStatus
 from packages.evidence.contracts import EvidenceNodeType
 from packages.evidence.models import GraphNodeModel, ScientificEventModel
 from packages.kernel.contracts import FrozenDict
-from packages.models.contracts import ModelRequest, ModelResult, SchemaStatus
+from packages.models.contracts import (
+    ModelGateway,
+    ModelRequest,
+    ModelResult,
+    SchemaStatus,
+)
 from packages.models.models import ModelCallModel
+from packages.papers.object_store import PrivateObjectStore
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
-from packages.research.repository import CLAIM_CONFIRMED
-from packages.tools.contracts import ToolRequest, ToolResult
+from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
+from packages.research.service import ResearchService
+from packages.tools.contracts import ToolGateway, ToolRequest, ToolResult
 from packages.tools.fulltext_fetcher import FullTextFetcher
 
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
@@ -279,6 +286,58 @@ async def _event_types(
         return list(result.scalars())
 
 
+async def _run_to_completion(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+    *,
+    deliberator: SeatDeliberator | None = None,
+    gateway: ModelGateway | None = None,
+    tools: ToolGateway | None = None,
+    fulltext_fetcher: FullTextFetcher | None = None,
+    object_store: PrivateObjectStore | None = None,
+) -> JobResult:
+    """Run a task past the JOINT_MODELING checkpoint to a terminal status.
+
+    Plan phase 8.2 made the BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint
+    unconditional: every task's first ``run_task`` call now halts at
+    ``AWAITING_COUNCIL_INPUT`` rather than running all eight phases. These
+    tests predate that checkpoint and want the full-protocol outcome, so an
+    empty guidance submission stands in for the deliberate "no intervention"
+    CLAUDE.md 4/8 requires, exactly as ``test_council_checkpoint_flow.py``
+    exercises it -- the second ``run_task`` call resumes from JOINT_MODELING
+    and its report aggregates both passes (see
+    ``CouncilOrchestrator.run``'s ``resume_from`` handling), so callers can
+    keep asserting against the whole run.
+    """
+    first = await run_task(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        deliberator=deliberator,
+        gateway=gateway,
+        tools=tools,
+        fulltext_fetcher=fulltext_fetcher,
+        object_store=object_store,
+    )
+    if first.run.final_status != TaskStatus.AWAITING_COUNCIL_INPUT:
+        return first
+    async with app_sessions() as session:
+        service = ResearchService(ResearchRepository(session))
+        await service.submit_council_guidance(task_id, "")
+        await session.commit()
+    return await run_task(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        deliberator=deliberator,
+        gateway=gateway,
+        tools=tools,
+        fulltext_fetcher=fulltext_fetcher,
+        object_store=object_store,
+    )
+
+
 def test_no_gateway_means_no_deliberator() -> None:
     """A deployment with no provider must not silently get a fake one."""
     assert deliberator_for(None) is None
@@ -303,7 +362,7 @@ async def test_a_full_council_run_reports_no_gaps(
     task_id, claim_id = await _seed_queued_task(app_sessions)
     gateway = _ScriptedGateway(claim_id, uuid4())
 
-    result = await run_task(
+    result = await _run_to_completion(
         app_sessions,
         projector_sessions,
         task_id,
@@ -361,7 +420,7 @@ async def test_every_model_call_is_audited(
     task_id, claim_id = await _seed_queued_task(app_sessions)
     gateway = _ScriptedGateway(claim_id, uuid4())
 
-    await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
+    await _run_to_completion(app_sessions, projector_sessions, task_id, gateway=gateway)
 
     async with app_sessions() as session:
         audited = await session.scalar(
@@ -403,7 +462,7 @@ async def test_quarantined_output_never_becomes_a_seat_judgment(
         claim_id, uuid4(), schema_status=SchemaStatus.QUARANTINED
     )
 
-    result = await run_task(
+    result = await _run_to_completion(
         app_sessions, projector_sessions, task_id, gateway=gateway
     )
 
@@ -420,7 +479,7 @@ async def test_a_provider_outage_degrades_the_run_instead_of_failing_it(
     """CLAUDE.md 10: one seat's failure must not abort the whole task."""
     task_id, _ = await _seed_queued_task(app_sessions)
 
-    result = await run_task(
+    result = await _run_to_completion(
         app_sessions, projector_sessions, task_id, gateway=_BrokenGateway()
     )
 
@@ -458,7 +517,7 @@ async def test_a_seat_is_given_its_own_recall_and_no_one_elses(
     task_id, claim_id = await _seed_queued_task(app_sessions)
     gateway = _ScriptedGateway(claim_id, uuid4())
 
-    await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
+    await _run_to_completion(app_sessions, projector_sessions, task_id, gateway=gateway)
 
     later = [
         request

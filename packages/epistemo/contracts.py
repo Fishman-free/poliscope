@@ -2,12 +2,21 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from packages.council.contracts import Seat
+from packages.kernel.contracts import ContractModel, FrozenDict
+
 
 class TaskStatus(StrEnum):
     DRAFT = "DRAFT"
     AWAITING_CLAIM_CONFIRMATION = "AWAITING_CLAIM_CONFIRMATION"
     QUEUED = "QUEUED"
     DEGRADED_RUNNING = "DEGRADED_RUNNING"
+    # Plan phase 8: the one fixed checkpoint between BLINDSPOT_BOUNTY and
+    # JOINT_MODELING. Not a general pause (CLAUDE.md 17 deviation, recorded in
+    # the plan) -- the council halts here so a human can give a directional
+    # steer (CLAUDE.md 4/8: advisory only, never a vote that decides scientific
+    # truth) before joint modeling starts.
+    AWAITING_COUNCIL_INPUT = "AWAITING_COUNCIL_INPUT"
     REPORTING = "REPORTING"
     COMPLETED = "COMPLETED"
     COMPLETED_WITH_GAPS = "COMPLETED_WITH_GAPS"
@@ -55,3 +64,36 @@ PHASE_TO_STATUS: dict[TaskPhase, TaskStatus] = {
     TaskPhase.FINAL_REJUDGMENT: TaskStatus.QUEUED,
     TaskPhase.REPORTING: TaskStatus.REPORTING,
 }
+
+
+class CouncilCheckpoint(ContractModel):
+    """Serializable resume state for the BLINDSPOT_BOUNTY -> JOINT_MODELING gate.
+
+    ``CouncilOrchestrator.run()`` holds no state between calls (see its
+    docstring) -- resume today works only because every ledger append is
+    idempotent, so a full replay just no-ops the phases already written. That
+    is too wasteful to use for a routine, expected-every-time human checkpoint:
+    it would re-run seat deliberation and re-spend budget bookkeeping for five
+    already-completed phases on every single task. This contract is what lets
+    a second ``run()`` call skip straight to JOINT_MODELING instead, carrying
+    forward exactly the fields ``_Accumulator`` tracks -- nothing more, since
+    CLAUDE.md 10 requires this state to be exactly what was really produced,
+    not a guess at what resuming should look like.
+    """
+
+    run_phases: tuple[TaskPhase, ...] = ()
+    carried: FrozenDict[str, object] = FrozenDict()
+    unfilled: tuple[str, ...] = ()
+    absent_seats: tuple[Seat, ...] = ()
+    failures: tuple[str, ...] = ()
+    events_appended: int = 0
+    # Plan phase 8.3: the human's advisory directional steer, set by
+    # POST /api/tasks/{id}/council-guidance while status is
+    # AWAITING_COUNCIL_INPUT. None before the human has responded; "" is a
+    # deliberate, explicit "no intervention, just continue" (CLAUDE.md 4/8 --
+    # this is never a vote, so an empty string is a valid, honest answer, not
+    # a missing one). Rendered into the JOINT_MODELING prompt only -- see
+    # packages/council/deliberation.py::_user_prompt -- and never read by any
+    # Evidence Gate stage, Claim adoption path, or DissentCertificate/
+    # DebateCapsule construction.
+    guidance: str | None = None

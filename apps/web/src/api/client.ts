@@ -52,6 +52,35 @@ export async function fetchReportMarkdown(taskId: string): Promise<string> {
   return response.text();
 }
 
+/** Submit (or decline) the researcher's advisory steer at the
+ * AWAITING_COUNCIL_INPUT checkpoint.
+ *
+ * ``guidanceText: ""`` is a first-class, deliberate "no intervention" answer,
+ * not a missing one -- CLAUDE.md 4/8 requires that declining to steer read as
+ * an honest choice, never a defaulted-away field. See
+ * ``CouncilGuidanceRequest`` in apps/api/schemas.py and the CLI's identically
+ * shaped ``council_guidance`` in apps/cli/client.py. */
+export async function submitCouncilGuidance(
+  taskId: string,
+  guidanceText: string,
+): Promise<{ task_id: string; status: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/api/tasks/${taskId}/council-guidance`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ guidance_text: guidanceText }),
+    });
+  } catch (cause) {
+    throw new ApiError(0, `无法连接 API：${String(cause)}`);
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+  return (await response.json()) as { task_id: string; status: string };
+}
+
 /** Subscribe to the task's event stream.
  *
  * The browser's EventSource resends `Last-Event-ID` on reconnect by itself, and

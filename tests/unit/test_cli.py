@@ -31,6 +31,15 @@ SUBCOMMANDS: tuple[tuple[list[str], dict[str, object]], ...] = (
     (["resume", "--task-id", "t"], {"task_id": "t"}),
     (["watch", "--task-id", "t"], {"task_id": "t"}),
     (["export", "--task-id", "t"], {"task_id": "t", "export_format": "markdown"}),
+    (["council-preview", "--task-id", "t"], {"task_id": "t"}),
+    (
+        ["council-guidance", "--task-id", "t", "--text", "narrow the scope"],
+        {"task_id": "t", "guidance_text": "narrow the scope"},
+    ),
+    (
+        ["council-guidance", "--task-id", "t", "--text", ""],
+        {"task_id": "t", "guidance_text": ""},
+    ),
 )
 
 
@@ -199,6 +208,98 @@ async def test_export_requests_the_endpoint_that_actually_exists() -> None:
     assert body == "# Research Brief\n"
     assert seen[0].url.path == "/api/reports/abc"
     assert seen[0].url.params["format"] == "markdown"
+
+
+async def test_council_preview_requests_the_endpoint_that_actually_exists() -> None:
+    """Same failure mode as export/pause: a stubbed client can't catch a dead route."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={"task_id": "abc", "status": "AWAITING_COUNCIL_INPUT", "seats": []},
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with CLIClient("http://poliscope.test", transport=transport) as client:
+        await client.council_preview("abc")
+
+    assert seen[0].method == "GET"
+    assert seen[0].url.path == "/api/tasks/abc/council-preview"
+
+
+async def test_council_guidance_requests_the_real_endpoint_and_body() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"task_id": "abc", "status": "QUEUED"})
+
+    transport = httpx.MockTransport(handler)
+    async with CLIClient("http://poliscope.test", transport=transport) as client:
+        await client.council_guidance("abc", "narrow the scope")
+
+    assert seen[0].method == "POST"
+    assert seen[0].url.path == "/api/tasks/abc/council-guidance"
+    assert json.loads(seen[0].content)["guidance_text"] == "narrow the scope"
+
+
+def test_council_preview_renders_seat_positions(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def preview(*_: object, **__: object) -> dict[str, Any]:
+        return {
+            "task_id": "t",
+            "status": "AWAITING_COUNCIL_INPUT",
+            "seats": [
+                {
+                    "seat": "theory_builder",
+                    "precommitment": {
+                        "confidence": 0.4,
+                        "update_condition": "a preregistered cohort study",
+                    },
+                    "challenges_raised": [{"is_fatal": False}],
+                    "final_judgment": None,
+                    "unavailable_phases": [],
+                },
+            ],
+        }
+
+    monkeypatch.setattr(CLIClient, "council_preview", preview)
+    assert main(["council-preview", "--task-id", "t"]) == exit_codes.OK
+    out = capsys.readouterr().out
+    assert "AWAITING_COUNCIL_INPUT" in out
+    assert "theory_builder" in out
+    assert "0.4" in out
+    assert "a preregistered cohort study" in out
+
+
+@pytest.mark.parametrize(
+    ("guidance_text", "expected_phrase"),
+    (
+        ("narrow the scope", "submitted"),
+        ("", "none (continuing without intervention)"),
+    ),
+)
+def test_council_guidance_command_reports_whether_it_steered(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    guidance_text: str,
+    expected_phrase: str,
+) -> None:
+    """CLAUDE.md 4/8: declining to steer must read as a deliberate choice."""
+
+    async def guidance(*_: object, **__: object) -> dict[str, Any]:
+        return {"task_id": "t", "status": "QUEUED"}
+
+    monkeypatch.setattr(CLIClient, "council_guidance", guidance)
+    assert (
+        main(["council-guidance", "--task-id", "t", "--text", guidance_text])
+        == exit_codes.OK
+    )
+    assert expected_phrase in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

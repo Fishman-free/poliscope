@@ -69,7 +69,12 @@ class TaskStateMachine:
             self._status = target
             self._history.append((self._status, self._phase))
             return
-        if target == TaskStatus.DEGRADED_RUNNING:
+        if target in (TaskStatus.DEGRADED_RUNNING, TaskStatus.AWAITING_COUNCIL_INPUT):
+            # AWAITING_COUNCIL_INPUT mirrors DEGRADED_RUNNING here: both are
+            # direct, non-terminal targets reachable mid-run rather than only
+            # via the phase sequence. Plan phase 8's fixed BLINDSPOT_BOUNTY ->
+            # JOINT_MODELING checkpoint halts here, not at a new TaskPhase --
+            # the phase itself does not advance until a human responds.
             self._status = target
             self._history.append((self._status, self._phase))
             return

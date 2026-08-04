@@ -90,6 +90,17 @@ class ConfirmClaimsRequest(ContractModel):
     claim_ids: tuple[UUID, ...]
 
 
+class CouncilGuidanceRequest(ContractModel):
+    """Plan phase 8.2: the human's advisory steer at the JOINT_MODELING gate.
+
+    Deliberately allows the empty string as a first-class value -- CLAUDE.md
+    4/8 make this an advisory-only steer, never a vote, so "no intervention,
+    just continue" is a complete, honest answer rather than a missing field.
+    """
+
+    guidance_text: str = ""
+
+
 class TaskResponse(ContractModel):
     id: UUID
     question: str

@@ -127,6 +127,32 @@ class CLIClient:
     async def resume(self, task_id: str) -> dict[str, Any]:
         return await self._request("POST", f"/api/tasks/{task_id}/resume")
 
+    async def council_preview(self, task_id: str) -> dict[str, Any]:
+        """Read the 7 seats' BLINDSPOT_BOUNTY-end positions while halted.
+
+        Plan phase 8.4. Maps onto ``GET /api/tasks/{id}/council-preview``,
+        which itself is a read-only reuse of the workspace panel's own
+        per-seat aggregation -- see apps/api/routers/tasks.py.
+        """
+        return await self._request("GET", f"/api/tasks/{task_id}/council-preview")
+
+    async def council_guidance(
+        self,
+        task_id: str,
+        guidance_text: str,
+    ) -> dict[str, Any]:
+        """Submit the human's advisory steer (or ``""`` for no intervention).
+
+        Plan phase 8.4. CLAUDE.md 4/8 forbid this from ever deciding
+        scientific truth, so an empty string is as valid an answer as a real
+        steer -- see ``CouncilGuidanceRequest`` in apps/api/schemas.py.
+        """
+        return await self._request(
+            "POST",
+            f"/api/tasks/{task_id}/council-guidance",
+            json={"guidance_text": guidance_text},
+        )
+
     async def export(self, task_id: str, export_format: str) -> str:
         """Fetch the research brief in the requested format.
 

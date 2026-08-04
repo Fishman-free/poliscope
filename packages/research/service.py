@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from packages.epistemo.contracts import TaskStatus
+from packages.epistemo.contracts import CouncilCheckpoint, TaskStatus
 from packages.research.atomization import suggest_atomic_claims
 from packages.research.contracts import ResearchContract
 from packages.research.repository import (
@@ -30,6 +30,10 @@ class UnconfirmedClaims(Exception):
 
 class InvalidPauseState(Exception):
     """Raised when pause/resume is attempted from a status that forbids it."""
+
+
+class InvalidCouncilGuidanceState(Exception):
+    """Raised when guidance is submitted outside AWAITING_COUNCIL_INPUT."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +111,11 @@ class ResearchService:
         await self._repository.set_status(task_id, TaskStatus.PAUSED)
         return TaskStatus.PAUSED
 
+    async def add_pdf_object_id(self, task_id: UUID, object_id: UUID) -> None:
+        """Record an uploaded PDF's object id against an already-created task."""
+        await self._repository.get_task(task_id)
+        await self._repository.add_pdf_object_id(task_id, object_id)
+
     async def resume(self, task_id: UUID) -> str:
         """Move a PAUSED task back to QUEUED so the worker can claim it again.
 
@@ -124,9 +133,46 @@ class ResearchService:
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
 
+    async def submit_council_guidance(self, task_id: UUID, guidance_text: str) -> str:
+        """Attach the human's advisory steer to the halted checkpoint and resume.
+
+        Plan phase 8.2/8.3. ``guidance_text`` may be empty -- CLAUDE.md 4/8
+        make this an advisory-only steer, never a vote, so "I choose not to
+        intervene" is a complete, valid answer rather than a missing one. The
+        checkpoint's other fields (the phases already run, carried state,
+        absent seats, failures) are read back unchanged; only ``guidance`` is
+        set, and the task is handed back to the worker as QUEUED so it can
+        resume from JOINT_MODELING with this checkpoint.
+        """
+        task = await self._repository.get_task(task_id)
+        if task.status != TaskStatus.AWAITING_COUNCIL_INPUT:
+            raise InvalidCouncilGuidanceState(
+                f"task {task_id} is {task.status}, not "
+                f"{TaskStatus.AWAITING_COUNCIL_INPUT}; guidance can only be "
+                "submitted while the council is halted at the checkpoint"
+            )
+        if task.council_checkpoint is None:
+            # The status/checkpoint pair is set together by the worker
+            # (apps/worker/jobs.py); seeing one without the other means the
+            # invariant that guards this endpoint has already broken upstream,
+            # not something a retry here can fix.
+            raise InvalidCouncilGuidanceState(
+                f"task {task_id} is {TaskStatus.AWAITING_COUNCIL_INPUT} but has "
+                "no stored checkpoint to attach guidance to"
+            )
+        checkpoint_data = dict(task.council_checkpoint)
+        checkpoint_data["guidance"] = guidance_text
+        checkpoint = CouncilCheckpoint.model_validate(checkpoint_data)
+        await self._repository.set_checkpoint(
+            task_id, checkpoint.model_dump(mode="json")
+        )
+        await self._repository.set_status(task_id, TaskStatus.QUEUED)
+        return TaskStatus.QUEUED
+
 
 __all__ = [
     "CreatedTask",
+    "InvalidCouncilGuidanceState",
     "InvalidPauseState",
     "ResearchService",
     "TaskNotFound",

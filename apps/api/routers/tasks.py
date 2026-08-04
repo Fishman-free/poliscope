@@ -13,10 +13,16 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 
 from apps.api.dependencies import SessionDep
-from apps.api.schemas import ConfirmClaimsRequest, CreateTaskRequest
+from apps.api.routers.workspace import _seats
+from apps.api.schemas import (
+    ConfirmClaimsRequest,
+    CouncilGuidanceRequest,
+    CreateTaskRequest,
+)
 from packages.research.contracts import ResearchContract
 from packages.research.repository import ResearchRepository, TaskNotFound
 from packages.research.service import (
+    InvalidCouncilGuidanceState,
     InvalidPauseState,
     ResearchService,
     UnconfirmedClaims,
@@ -138,6 +144,53 @@ async def resume_task(task_id: UUID, session: SessionDep) -> dict[str, Any]:
     except TaskNotFound as error:
         raise _not_found(task_id, error) from error
     except InvalidPauseState as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    return {"task_id": str(task_id), "status": new_status}
+
+
+@router.get("/{task_id}/council-preview")
+async def council_preview(task_id: UUID, session: SessionDep) -> dict[str, Any]:
+    """Show the 7 seats' BLINDSPOT_BOUNTY-end positions while a task is halted.
+
+    Plan phase 8.2. Read-only, and built from ``_seats()`` -- the exact
+    per-seat aggregation the workspace panel already uses -- rather than a
+    second implementation, so this view can never drift from what the
+    council workspace shows for the same events.
+    """
+    try:
+        task = await ResearchRepository(session).get_task(task_id)
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
+    return {
+        "task_id": str(task_id),
+        "status": task.status,
+        "seats": [dict(seat) for seat in await _seats(session, task_id)],
+    }
+
+
+@router.post("/{task_id}/council-guidance")
+async def council_guidance(
+    task_id: UUID,
+    request: CouncilGuidanceRequest,
+    session: SessionDep,
+) -> dict[str, Any]:
+    """Attach the human's advisory steer and let the worker resume the council.
+
+    Plan phase 8.2/8.3. Only valid while the task is AWAITING_COUNCIL_INPUT;
+    an empty ``guidance_text`` is a deliberate, honest "no intervention" --
+    CLAUDE.md 4/8 forbid this from ever being a vote that decides scientific
+    truth, so declining to steer is as valid an answer as steering.
+    """
+    try:
+        new_status = await _service(session).submit_council_guidance(
+            task_id, request.guidance_text
+        )
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
+    except InvalidCouncilGuidanceState as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),

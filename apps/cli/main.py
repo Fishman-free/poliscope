@@ -31,6 +31,9 @@ examples:
   poliscope resume --task-id 7f3a...
   poliscope watch --task-id 7f3a... --last-event-id 41
   poliscope export --task-id 7f3a... --format markdown --output brief.md
+  poliscope council-preview --task-id 7f3a...
+  poliscope council-guidance --task-id 7f3a... --text "focus on cross-cultural scope"
+  poliscope council-guidance --task-id 7f3a... --text ""
 
 Every command needs a running API. Start one with:
   uvicorn apps.api.main:app --reload
@@ -165,6 +168,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.set_defaults(handler=_cmd_export)
 
+    council_preview = subparsers.add_parser(
+        "council-preview",
+        help="show the 7 seats' positions while a task awaits guidance",
+        description=(
+            "Read-only view of where the 7 scientists stood at the end of "
+            "BLINDSPOT_BOUNTY, while the task is halted at "
+            "AWAITING_COUNCIL_INPUT. This is advisory context for the "
+            "researcher, not a vote -- CLAUDE.md 4/8."
+        ),
+    )
+    council_preview.add_argument("--task-id", required=True, metavar="UUID")
+    council_preview.set_defaults(handler=_cmd_council_preview)
+
+    council_guidance = subparsers.add_parser(
+        "council-guidance",
+        help="submit (or decline) directional guidance before JOINT_MODELING",
+        description=(
+            "Submits the researcher's advisory steer and lets the worker "
+            "resume the council. Pass --text \"\" to decline -- declining is "
+            "a deliberate, honest answer, not a missing one, and it never "
+            "changes evidence adjudication (CLAUDE.md 4/8)."
+        ),
+    )
+    council_guidance.add_argument("--task-id", required=True, metavar="UUID")
+    council_guidance.add_argument(
+        "--text",
+        dest="guidance_text",
+        required=True,
+        metavar="TEXT",
+        help='directional note, or "" to continue without intervention',
+    )
+    council_guidance.set_defaults(handler=_cmd_council_guidance)
+
     return parser
 
 
@@ -269,6 +305,44 @@ async def _cmd_watch(client: CLIClient, args: argparse.Namespace) -> int:
         except (ValueError, KeyError, TypeError):
             kind = "unknown"
         print(f"[{event_id}] {kind}", flush=True)
+    return exit_codes.OK
+
+
+async def _cmd_council_preview(client: CLIClient, args: argparse.Namespace) -> int:
+    payload = await client.council_preview(args.task_id)
+    if args.as_json:
+        _print_json(payload)
+        return exit_codes.OK
+    print(f"task       {payload.get('task_id', args.task_id)}")
+    print(f"status     {payload.get('status', '?')}")
+    seats = payload.get("seats") or ()
+    for seat in seats:
+        precommitment = seat.get("precommitment") or {}
+        challenges = seat.get("challenges_raised") or ()
+        print(f"\n{seat.get('seat', '?')}")
+        if precommitment:
+            print(
+                f"  confidence        {precommitment.get('confidence', '?')}"
+            )
+            print(
+                f"  update_condition  {precommitment.get('update_condition', '?')}"
+            )
+        print(f"  challenges_raised {len(challenges)}")
+        if seat.get("unavailable_phases"):
+            print(f"  unavailable       {list(seat['unavailable_phases'])}")
+    return exit_codes.OK
+
+
+async def _cmd_council_guidance(client: CLIClient, args: argparse.Namespace) -> int:
+    payload = await client.council_guidance(args.task_id, args.guidance_text)
+    if args.as_json:
+        _print_json(payload)
+    else:
+        print(f"status     {payload.get('status', '?')}")
+        if args.guidance_text:
+            print("guidance   submitted")
+        else:
+            print("guidance   none (continuing without intervention)")
     return exit_codes.OK
 
 
