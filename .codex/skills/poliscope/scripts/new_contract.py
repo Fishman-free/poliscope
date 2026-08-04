@@ -107,10 +107,14 @@ def main(argv: list[str] | None = None) -> int:
             "tool_call_limit": args.tool_call_limit,
             "source_limit": args.source_limit,
         },
-        # pdf_object_ids is deliberately left empty: there is no upload
-        # endpoint wired up yet (a real, documented gap -- see README's
-        # "已知缺口"), and this skill never uploads files on its own
-        # initiative regardless (design spec 8.7).
+        # pdf_object_ids is deliberately left empty here, not because upload
+        # is unwired -- POST /api/tasks/{task_id}/papers/upload exists -- but
+        # because that endpoint needs an existing task id to attach an object
+        # to (apps/api/routers/papers.py's module docstring explains why: a
+        # PDF has no DOI to ride in on at creation time). Upload therefore
+        # always happens as a second step against the task this script just
+        # created, and this skill never uploads files on its own initiative
+        # regardless (design spec 8.7).
         "user_evidence": {
             "dois": args.dois,
             "bibtex_entries": args.bibtex_entries,

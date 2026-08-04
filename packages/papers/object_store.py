@@ -1,19 +1,36 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import UUID
+
+
+class ObjectNotFound(Exception):
+    """Raised by retrieve() for an object_key this store never wrote.
+
+    Distinct from a bare FileNotFoundError so callers do not need to know this
+    store happens to be file-backed today.
+    """
 
 
 class PrivateObjectStore:
     """Local-file-backed stand-in for an S3-compatible private bucket.
 
     Object keys are namespaced by task and content hash; metadata never
-    carries a signed URL or the raw PDF bytes.
+    carries a signed URL or the raw PDF bytes (CLAUDE.md 16: uploaded material
+    must not leak through logs or exports).
     """
 
     def __init__(self, root: str = "/tmp/poliscope-objects") -> None:
-        self._root = root
+        self._root = Path(root)
+
+    @classmethod
+    def from_env(cls) -> PrivateObjectStore:
+        return cls(
+            os.environ.get("POLISCOPE_OBJECT_STORE_ROOT", "/tmp/poliscope-objects")
+        )
 
     def build_key(self, task_id: UUID, content: bytes) -> str:
         digest = hashlib.sha256(content).hexdigest()
@@ -21,6 +38,9 @@ class PrivateObjectStore:
 
     def store(self, task_id: UUID, content: bytes) -> StoredObject:
         key = self.build_key(task_id, content)
+        path = self._root / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
         return StoredObject(
             object_key=key,
             content_hash=hashlib.sha256(content).hexdigest(),
@@ -28,6 +48,12 @@ class PrivateObjectStore:
             content_type="application/pdf",
             size_bytes=len(content),
         )
+
+    def retrieve(self, object_key: str) -> bytes:
+        try:
+            return (self._root / object_key).read_bytes()
+        except FileNotFoundError as exc:
+            raise ObjectNotFound(object_key) from exc
 
     def public_dto(self, stored: StoredObject) -> dict[str, object]:
         return {

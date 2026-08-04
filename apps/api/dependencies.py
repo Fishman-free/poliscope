@@ -21,15 +21,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from packages.kernel.config import DatabaseConfig
 from packages.kernel.database import create_database_engine, create_session_factory
+from packages.papers.object_store import PrivateObjectStore
 
 
 class AppState:
     """Process wide resources created at startup and disposed at shutdown."""
 
-    def __init__(self, app_url: str) -> None:
+    def __init__(
+        self, app_url: str, object_store: PrivateObjectStore | None = None
+    ) -> None:
         self.engine: AsyncEngine = create_database_engine(app_url)
         self.session_factory: async_sessionmaker[AsyncSession] = (
             create_session_factory(self.engine)
+        )
+        self.object_store: PrivateObjectStore = (
+            object_store or PrivateObjectStore.from_env()
         )
 
     @classmethod
@@ -62,5 +68,12 @@ async def get_session(
             raise
 
 
+def get_object_store(
+    state: Annotated[AppState, Depends(get_state)],
+) -> PrivateObjectStore:
+    return state.object_store
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 StateDep = Annotated[AppState, Depends(get_state)]
+ObjectStoreDep = Annotated[PrivateObjectStore, Depends(get_object_store)]

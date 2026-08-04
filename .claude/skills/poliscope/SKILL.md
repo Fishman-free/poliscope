@@ -55,10 +55,16 @@ platform.
    modest 60-minute / 50-tool-call / 20-source run; raise them only if the
    user asks for a deeper pass.
 
-   **Known, honest gap:** there is currently no upload endpoint that turns a
-   local PDF into the `pdf_object_ids` a contract accepts, so this script
-   always leaves that field empty. If a user wants to attach a PDF, tell them
-   this is not supported yet rather than pretending to handle it.
+   **Known, honest gap:** `POST /api/tasks/{task_id}/papers/upload` exists and
+   really parses the PDF into a `StudyFinding`, but it needs a task id to
+   attach the object to, so it can only be called *after* this script creates
+   the task -- this script itself always leaves `pdf_object_ids` empty in the
+   initial contract. There is also no `apps/cli` command for the upload step
+   yet (only the raw HTTP endpoint). If a user wants to attach a PDF, tell
+   them the task must exist first and the file has to be uploaded via that
+   endpoint directly (e.g. `curl -F file=@paper.pdf ...`) rather than through
+   this skill, which does not upload files on its own initiative (design spec
+   8.7).
 
 3. **Show the drafted contract to the user and get explicit confirmation**
    before creating the task. This is not optional -- a Research Contract that
