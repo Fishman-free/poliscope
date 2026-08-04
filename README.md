@@ -10,8 +10,50 @@ Poliscope 组织 7 名具有互补认识能力的 AI 科学家，全程参与问
 
 ---
 
+## 为什么会有 Poliscope
+
+这三个场景,做计算社会科学研究的人大概都遇到过:
+
+- 你让一个通用 Agent 帮你梳理「远程办公是否降低团队创新产出」,它十分钟内给出一段读起来很顺的结论——但你没法知道这个结论建立在几篇独立观察之上,也不知道那几篇论文是不是同一批团队用同一份调查数据反复发表的「一份证据的六个马甲」。
+- 一篇论文说「社交媒体使用时长与青少年抑郁显著相关」,经过几轮转述之后变成了「社交媒体导致抑郁」——横截面数据从来支撑不了这个因果表述,但从摘要到新闻标题,没有一个环节做减法,只有环节在加码。
+- 一个多智能体辩论系统让几个角色吵了一轮,主持人模型最后说「综合来看,大家基本认同……」——那个不同意的角色具体在反对什么、还差什么证据才会改变立场,随着这句总结一起消失了。
+
+Poliscope 把这三件事当成要用架构解决的问题,而不是补一行免责声明就算交代过去:
+
+- **七个角色不是用来把答案讲得更全,是用来从七个方向主动攻击同一个结论。** 因果推断专家的工作就是找混杂变量和反向因果,测量专家专门挑构念操作化的裂缝,对抗性证伪者的唯一职责是攻击这个结论看起来最强的版本——不是「一个模型戴七顶帽子」,是七套独立角色规格、独立私有记忆、独立证据排序权重,详见[核心能力一览](#核心能力一览)。
+- **论文篇数从不被当成证据强度的替身。** 六篇论文如果共享同一个数据集,系统只算一份独立证据,界面同时展示论文篇数与独立证据簇数量——这两个数字第一次被分开摆出来,你才看得出一个「共识」到底是七次独立观察,还是一次观察被转述了七遍。
+- **相关性想升级成因果性,必须先过一道拦截。** `CausalUpgradePolicy` 在证据门第六阶段专门拦「横截面设计 + 因果主张」这个组合,拦下来的事件会被隔离并留痕,不会悄悄溜进最终结论——见[证据治理](#证据治理)。
+- **分歧留在案发现场,不会被一句「大家基本同意」抹掉。** 被反驳、被隔离的观点永远可以点回原文,持异议的科学家会拿到一份具名的 `DissentCertificate`,不会有主持人模型替全体代签一份共识。
+- **系统会主动承认「我不知道」,而不是安静地把空白填成看起来完整的样子。** 缺席的席位、没跑完的轮次、被拒绝的来源全部是账本里的一等事件,并出现在报告的局限一节里——见[先读这一节:当前真实状态](#先读这一节当前真实状态)。
+
+如果你要的是一段马上能用、读起来通顺的摘要,Poliscope 不是最快的选择——七人议会加六阶段证据审核,天然比单智能体摘要慢,这是刻意的取舍,不是还没优化的性能。但如果你要的是「这个结论到底建立在多强的证据上、我还应该怀疑什么」,这正是 Poliscope 唯一在做的事。**它卖的不是答案,是一份你可以拿着去反驳自己结论的审计记录。**
+
+---
+
+## 核心能力一览
+
+- **7 名常驻科学家，而非 1 个模型戴 7 顶帽子。** 理论建构、因果推断、测量与构念、统计复现、边界与情境、对抗性证伪、证据与溯源审计——七个独立角色规格、独立私有记忆、独立证据投影权重，每个任务全程参与，不做「动态选组省成本」（取舍过程见[设计思路](#设计思路从-memobrain-到-epistemobrain)）。
+- **双图治理：过程记忆与正式证据物理分离。** 科学家的推理步骤走 Process Graph；只有通过[六阶段证据门](#证据治理)审核的内容才能被 Graph Projector 写入 Evidence Graph——这一隔离由数据库权限强制，不是代码自律。
+- **证据分层 A–D，绝不用摘要撑因果结论。** 只有全文与精确原文可得才算 Level A；仅有摘要、二手描述或网页线索的证据会被诚实标注为「仅元数据」「仅讨论」「仅线索」，不会被包装成同等强度的支持证据。
+- **论文数量 ≠ 独立证据数量。** 证据谱系自动识别共享数据集与重叠作者，界面同时显示论文篇数与独立证据簇数——六篇论文如果共享一个数据集，只算一份证据。
+- **异议永久保留，不靠多数票压下去。** 联合建模禁止用投票裁决科研真理；被反驳、隔离或折叠的观点仍可追溯，持异议的科学家会拿到一份具名的 `DissentCertificate`。
+- **盲点驱动下一步调查，不是主持人按台本点名。** 证据图发现的缺口会生成「盲点悬赏」，按影响、不确定性、可调查性打分排出优先级，再由七人认领——Blindspot 是产品里的一等公民对象，不是报告末尾一段「局限性」文字。
+- **每个关键判断都能点回原文。** Source → Study → Section → 原文定位 → 抽取 Agent → 核验状态，六阶段证据门逐条审核来源真实性、引用蕴含与方法质量。
+- **四个入口，一套后端契约。** CLI、HTTP API、Web 证据工作台（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View）与 Claude Code / Codex Agent Skill，全部走同一条 CLI/API 契约，没有第二条能绕过证据门的路径。
+
+## 适合谁 · 不适合做什么
+
+**适合：** 需要审查一个存在争议的计算社会科学实证问题（首版聚焦数字行为、社交媒体与心理健康），并且在意「结论建立在多强的证据上、哪些地方还有真正的分歧」，而不只是想要一段读起来通顺的文献综述。
+
+**请不要用于：** 临床诊断或医疗建议（见[安全与伦理](#安全与伦理)）；需要通用全学科覆盖、自动实验设备或自动元分析的场景（首版范围边界见 `CLAUDE.md` 第 14 条）；期待「秒出结论」的场景——七人议会加六阶段证据审核本身就比单智能体摘要慢，这是刻意的权衡，不是尚未优化的性能问题。
+
+---
+
 ## 目录
 
+- [为什么会有 Poliscope](#为什么会有-poliscope)
+- [核心能力一览](#核心能力一览)
+- [适合谁 · 不适合做什么](#适合谁-不适合做什么)
 - [设计思路：从 MemoBrain 到 EpistemoBrain](#设计思路从-memobrain-到-epistemobrain)
 - [先读这一节：当前真实状态](#先读这一节当前真实状态)
 - [设计上的五个硬约束](#设计上的五个硬约束)
@@ -68,7 +110,7 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 
 ### 完成度不对称的部分
 
-`Fork`（对无法调和的冲突分叉出平行研究路径）、`Merge`（为看似矛盾的两个结果找到能同时解释它们的边界变量）、`Resurrect`（新证据满足复活条件时主动唤醒被隔离的假设），以及盲证据评审、独立双抽取、来源多样性约束、对抗式检索这四种专门对抗「共享证据错误」的机制，均已按设计规格（见 [`docs/superpowers/specs/2026-07-31-poliscope-design.md`](docs/superpowers/specs/2026-07-31-poliscope-design.md) 第 5、7 节）接入主流程，但每一项的完成度并不相同——有的是端到端真实闭环，有的裁剪为「只记录候选、由人决定」，有的只做到意图生成而非真实检索。具体到每一项的实际状态，见[已知缺口](#已知缺口)第 5、6 项下的详细说明，不要只凭这里的名字判断某个机制「能用到什么程度」。
+`Fork`（对无法调和的冲突分叉出平行研究路径）、`Merge`（为看似矛盾的两个结果找到能同时解释它们的边界变量）、`Resurrect`（新证据满足复活条件时主动唤醒被隔离的假设），以及盲证据评审、独立双抽取、来源多样性约束、对抗式检索这四种专门对抗「共享证据错误」的机制，均已按设计规格（见 [`docs/superpowers/specs/2026-07-31-poliscope-design.md`](docs/superpowers/specs/2026-07-31-poliscope-design.md) 第 5、7 节）接入主流程，但每一项的完成度并不相同——有的是端到端真实闭环，有的裁剪为「只记录候选、由人决定」，对抗式检索目前只对免密钥数据源真正执行检索、付费数据源仍待真实凭证。具体到每一项的实际状态，见[已知缺口](#已知缺口)第 4、5 项下的详细说明，不要只凭这里的名字判断某个机制「能用到什么程度」。
 
 ---
 
@@ -84,10 +126,12 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 | 三个数据库身份的权限隔离（迁移者 / 应用 / 投影器） | 集成测试断言应用身份写图会被数据库拒绝 |
 | 事件账本幂等与断线续传（SSE 按 `Last-Event-ID` 续传） | 集成测试 + 浏览器实测 53/53 事件 |
 | 证据门六阶段审核、A–D 分级、因果越级隔离 | 集成测试，关键项经变异测试自证 |
-| 六个 CLI 子命令 | 逐条对真实 API 手工验证 |
-| 三个前端视图（Research Brief / Controversy Map / Audit Trail） | 真实数据 + 浏览器截图核对，无控制台错误 |
+| 十个 CLI 子命令（含 `pause`/`resume`/`health`/`council-preview`/`council-guidance`） | 逐条对真实 API 手工验证 |
+| 六个前端视图（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View）+ 议会检查点模态框 | 真实数据 + 浏览器截图核对，无控制台错误 |
 | 全文获取 → 解析 → StudyFinding 抽取 → 引用锚点核验 | 单元测试（程序化生成 PDF fixture，无需网络）+ 集成测试断言 `DERIVED_FROM` 边真正出现在证据图上 |
 | 联合建模 → Dialectical Fold → `DebateCapsule`；最终复判 → 异议 → `DissentCertificate` | 单元测试覆盖两条产出路径与「无边界/无冲突则不折叠」「无异议目标则记未填槽位」两条弃权路径；集成测试断言完整任务运行后证据图上真的出现对应节点 |
+| Docker Compose 一键部署（postgres / migrate / api / worker / web） | `docker compose up --build` 后真实提交一个任务，走完整 CLI → API → Worker → 图投影路径，再经 web 容器 nginx 反代验证 |
+| Claude Code / Codex Skill（薄封装：生成待确认 Contract → 调用 CLI） | 手工跑通一次 `start`/`confirm-claims`/`watch`/`export` 全链路，见下方「Agent Skill」小节 |
 
 **尚未接入真实厂商凭证的：**
 
@@ -231,8 +275,15 @@ poliscope watch --task-id <id>
 #    [2] ResearchQuestion
 #    [3] SEAT_UNAVAILABLE
 #    ...
+#    跑到盲点悬赏结束时会停在 AWAITING_COUNCIL_INPUT——见下面「议会检查点」，
+#    这不是任务失败，是唯一一个刻意设计的暂停点。
 
-# 4. 看结果
+# 4. （可选）查看七人立场，提交或跳过方向性引导
+poliscope council-preview --task-id <id>
+poliscope council-guidance --task-id <id> --text "优先讨论跨文化适用边界"
+#    → status: QUEUED，worker 重新认领并从联合建模续跑
+
+# 5. 看结果
 poliscope status --task-id <id>
 poliscope export --task-id <id> --format markdown --output brief.md
 ```
@@ -240,6 +291,67 @@ poliscope export --task-id <id> --format markdown --output brief.md
 **为什么第 1 步不直接开始研究？** CLAUDE.md 第 2 条要求研究者控制方向。如果建任务即开跑，议会就自己挑了研究问题。
 
 注意 `--json` 是全局选项，要放在子命令**前面**。
+
+### 议会检查点：盲点悬赏结束后，研究者可以插一句话，但不能投票
+
+八个阶段跑到 `BLINDSPOT_BOUNTY` 结束、`JOINT_MODELING` 开始之前，任务会停在
+`AWAITING_COUNCIL_INPUT`——这是唯一、固定的一个检查点，不是「议会随时可以被打断」的通用能力（后者
+仍不在本版范围，见[已知缺口](#已知缺口)第 7 项）。停在这里时：
+
+```bash
+poliscope council-preview --task-id <id>
+# task       <id>
+# status     AWAITING_COUNCIL_INPUT
+#
+# causal_scientist
+#   confidence        0.42
+#   update_condition  纵向数据出现且效应量不变
+#   challenges_raised 2
+#
+# measurement_scientist
+#   ...
+```
+
+看完七人在盲点悬赏结束时的预承诺置信度、更新条件和已提出的质询之后，研究者可以提交一段方向性备注，
+也可以什么都不填直接继续——两者是**同样有效**的动作：
+
+```bash
+poliscope council-guidance --task-id <id> --text "优先讨论跨文化适用边界"
+poliscope council-guidance --task-id <id> --text ""      # 不干预，直接继续
+```
+
+这段文字只会作为 `"[研究者方向性备注，非科学判断]: ..."` 独立注入联合建模阶段的 prompt，供模型参考
+接下来重点讨论哪些悬而未决的冲突——它不进入任何 `Claim` 的证据来源，不改变 Evidence Gate 的判定逻辑，
+不构成对 CLAUDE.md 第 4/8 条「禁止多数投票裁决科研真理」的违反（完整说明见 CLAUDE.md 第 4.1 节、设计
+规格第 4.5 节）。Web 工作台会自动检测到这个状态并弹出对应的检查点面板，无需手动刷新。
+
+### 暂停与恢复：挡认领，不打断在跑的议会
+
+```bash
+poliscope pause --task-id <id>     # 只对还在 QUEUED 里排队的任务生效
+poliscope resume --task-id <id>
+```
+
+`pause` 把一个还没被 worker 认领的任务从 `QUEUED` 挪到 `PAUSED`，恢复之前它永远不会被认领。它**不能**
+打断一个已经在跑的议会——`deliberate()` 把一个任务的八阶段全部跑在一次未提交事务里，跑到一半没有可
+供快照的持久状态。这与上面的议会检查点是两件事：检查点是内容层面「唯一固定的暂停点」，`pause`/`resume`
+是队列层面「还没轮到你就不会被抢」，完整边界说明见[已知缺口](#已知缺口)第 7 项。
+
+### 上传 PDF：没有 DOI 的来源怎么进证据管线
+
+`user_evidence.pdf_object_ids` 不能在建任务时就带文件——`ObjectModel.task_id` 是非空外键，对象必须
+挂在一个已存在的任务上，所以流程是「先建任务 → 再上传 → 上传结果回填任务」，而不是一步到位：
+
+```bash
+poliscope start --contract research.json --json    # 先拿到 task_id，pdf_object_ids 留空
+curl -F "file=@paper.pdf" http://localhost:8000/api/tasks/<task_id>/papers/upload
+#    → {"object_id": "...", ...}，服务端已自动把它写回该任务的 user_evidence
+poliscope confirm-claims --task-id <task_id> --claim-ids <a> <b>
+```
+
+**当前只有原始 HTTP 接口，`apps/cli` 和 Web 工作台都还没有对应的上传入口**——这是一个已记录的、诚实
+的窄范围（CLAUDE.md 第 17 条），不是假装支持。上传的字节只写入私有对象存储，从不出现在日志或导出里
+（CLAUDE.md 第 16 条）。
 
 `research.json` 的 schema：
 
@@ -275,6 +387,11 @@ poliscope export --task-id <id> --format markdown --output brief.md
 | `POST` | `/api/tasks` | 建任务，返回建议的原子主张 |
 | `GET` | `/api/tasks/{id}` | 任务状态 |
 | `POST` | `/api/tasks/{id}/confirm-claims` | 确认主张并入队 |
+| `POST` | `/api/tasks/{id}/pause` | 挡认领（仅对仍在 `QUEUED` 的任务有效） |
+| `POST` | `/api/tasks/{id}/resume` | 从 `PAUSED` 放回 `QUEUED` |
+| `GET` | `/api/tasks/{id}/council-preview` | 只读查看盲点悬赏结束时 7 席位的立场 |
+| `POST` | `/api/tasks/{id}/council-guidance` | 提交（或留空放弃）方向性备注，续跑联合建模 |
+| `POST` | `/api/tasks/{id}/papers/upload` | 上传 PDF 并回填该任务的 `user_evidence` |
 | `GET` | `/api/workspace/{id}` | 整个工作台快照（含 brief、图、计数、版本号） |
 | `GET` | `/api/reports/{id}?format=json\|markdown` | Research Brief |
 | `GET` | `/api/stream/{id}` | SSE 事件流，支持 `Last-Event-ID` 续传 |
@@ -282,6 +399,20 @@ poliscope export --task-id <id> --format markdown --output brief.md
 工作台是**一个**端点而不是每个面板一个，这样 Research Brief、Controversy Map 和议会状态不可能显示三个不同时刻的状态。`workspace_version` 是快照对应的账本序号。
 
 SSE 帧只有 `id:` 和 `data:`，没有 `event:` 行。原因是 SSE 的类型化帧只会送达注册了同名类型的监听器，于是任何客户端都必须穷举后端的事件词汇表，并**静默丢弃**没见过的类型——审计轨迹一度因此只显示 53 个事件中的 37 个，而且什么都没提示。事件类型放在 body 的 `kind` 字段里，客户端不可能收不到。
+
+### Agent Skill（Claude Code / Codex）
+
+第四个入口：`.claude/skills/poliscope/`（Claude Code 项目级 Skill，随仓库自动发现）、
+`.codex/skills/poliscope/`（Codex 对应副本）与 `.agents/skills/poliscope/`（通用
+`AGENTS.md` 约定读取的第三份副本）——三份内容保持一致，避免多个入口的科研逻辑分叉——设计规格
+§8.7 的硬约束。三者本质上都只是薄封装：解析用户意图 → 用
+`scripts/new_contract.py` 生成待确认的 Research Contract → 展示给用户确认 → 依次调用
+`poliscope start` / `confirm-claims` / `watch` / `status` / `export`，不直接 import
+`packages`，不直接调模型或论文数据源，不绕过原子主张确认和证据门。
+
+**已知缺口：** `POST /api/tasks/{id}/papers/upload` 这个 HTTP 接口本身已经真实可用（见上表），但
+`apps/cli` 和 Skill 侧都还没有对应的封装命令——Skill 只能诚实地告诉用户"任务必须先建好，PDF 要绕开
+本 Skill 直接调那个接口"，而不是假装自己能一步完成上传，见上文[上传 PDF](#上传-pdf没有-doi-的来源怎么进证据管线)。
 
 ---
 
@@ -357,7 +488,7 @@ PRECOMMITMENT → ACQUISITION → EVIDENCE_EXCHANGE → CROSS_EXAMINATION
 - **Process Graph**：科学家的任务、工具调用、失败路线、质询、决策。由 MemoBrain 管理，允许 Fold 与 Recall。**过程节点不会自动成为正式证据。**
 - **Evidence Graph**：10 种节点、12 种边。只有 Graph Projector 能写。
 
-节点：`ResearchQuestion`、`Claim`、`Source`、`StudyFinding`、`Construct`、`Context`、`Blindspot`、`DebateCapsule`、`DiscriminatingStudy`、`DissentCertificate`。DissentCertificate 由本阶段（阶段 2）新增接线，见下文[已知缺口](#已知缺口)第 5 项的更新说明。
+节点：`ResearchQuestion`、`Claim`、`Source`、`StudyFinding`、`Construct`、`Context`、`Blindspot`、`DebateCapsule`、`DiscriminatingStudy`、`DissentCertificate`。`DebateCapsule` 由联合建模阶段的 Dialectical Fold 产出，`DissentCertificate` 由最终复判阶段为持异议的席位产出——两者都是 CLAUDE.md 第 4 条「异议不得被静默删除」的直接实现。
 
 边：`SUPPORTS`、`REFUTES`、`QUALIFIES`、`CONTRADICTS`、`CONFOUNDS`、`MEDIATES`、`MODERATES`、`OPERATIONALIZES`、`DERIVED_FROM`、`APPLIES_IN`、`EXPOSES`、`TESTS`。
 
@@ -407,6 +538,9 @@ migrations/      Alembic：建表 + 建角色 + 授权
 scripts/         开发辅助（演示任务播种）
 docker-compose.yml  本地一键部署：postgres / migrate / api / worker / web
 .env.example        部署所需环境变量，不含真实凭证
+
+.claude/skills/poliscope/   Claude Code 的 Agent Skill（项目级，随仓库自动发现）
+.codex/skills/poliscope/    同一 Skill 的 Codex 副本，内容与上面保持一致
 tests/
   unit/        无外部依赖，约 1 秒跑完
   integration/ 需要 Docker，跨真实数据库与真实角色
@@ -455,7 +589,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 ## 已知缺口
 
-按「离核心闭环的距离」排序。
+我们把这份清单当成一个功能：一个愿意说清楚自己边界的科研工具，比一个假装什么都做完的工具更值得信任（CLAUDE.md 第 7 条）。按「离核心闭环的距离」排序，这里只列**当前仍然真实存在**的缺口——已经解决的部分不再作为「曾经的缺口」占篇幅，其修复过程见 `git log`。
 
 **阻塞真实使用：**
 
@@ -464,49 +598,15 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 **影响证据质量：**
 
-4. **`packages/evidence/lifecycle.py`、`consistency.py`、`repository.py` 无生产调用者。**
-5. ~~盲证据评审、独立双抽取、来源多样性约束、对抗式检索四种防止「共享证据错误」的机制尚未实现。~~ **已解决，但四个子机制的完成度不对称，见下方说明。**
-6. ~~`Fork`、`Merge`、`Resurrect` 三个新增记忆操作尚未实现。~~ **已解决，但三条路径的完成度不对称，见下方说明。**
+3. **`packages/evidence/repository.py::GraphRepository` 仍无生产调用者，但 `GRAPH_CONSISTENCY` 门禁本身已经真实生效。** 六阶段证据门的 `GRAPH_CONSISTENCY` 阶段现在真正调用 `consistency.py::check_graph_consistency()`（`gate.py:378-395`），判定所需的两个布尔值来自 `SqlGraphConsistencyQuery`（在 `sql_projector.py:245-247` 挂接）对数据库会话的真实查询——既有矛盾节点类型、既有重复分叉谱系都会被真正检出，不再是恒真的空检查。但 `repository.py::GraphRepository`——一个纯内存图存储类——仍然没有任何生产调用者：生产路径绕开了它，直接走 SQL 会话查询。按既定原则（死代码接线而非删除）予以保留，尚待接入或视为可清理的重复实现。
+4. **四种防「共享证据错误」机制完成度不对称（设计规格 §7.9）。** 来源多样性约束（`packages/evidence/source_diversity.py`）、盲证据评审（`packages/council/deliberation.py` 构造 prompt 时结构性去掉 author/journal/citation_count）、独立双抽取（`FindingExtractor.extract(dual_extraction=True)` 比较两次抽取的 `exact_quote`/`effect_direction`）三项仍是**完整闭环**，均有端到端验证。对抗式检索（`packages/evidence/adversarial_retrieval.py`）**现在会真正执行检索**：为每个 confirmed claim 生成的 6 类反向检索意图字符串，会经 `packages/tools` 网关对免密钥数据源（OpenAlex、Semantic Scholar 等）发起真实查询，命中结果回填 `CandidatePool`；查不到的（免密钥数据源覆盖有限，或确实没有反例）诚实记录在 `ADVERSARIAL_RETRIEVAL_ATTEMPTED` 事件的未解析计数里，不伪造命中，保持在审计轨迹上可见。付费数据源仍受限于[第 1、2 项](#已知缺口)尚缺真实凭证。
+5. **`Fork`、`Merge`、`Resurrect` 完成度不对称。** `Resurrect`（`packages/evidence/lifecycle.py::check_resurrection_conditions()`，接入 `run_evidence_exchange`）与 `Fork`（`run_cross_examination` 里致命质询产出平行 `Claim` + `CONTRADICTS` 边）均为**完整闭环**，各有集成测试端到端验证。`Merge` **裁剪为「记录合并候选」，不做自动合并**：`run_joint_modeling` 产出的事件把未解决冲突列为 `merge_candidates`，是否合并留给研究者在前端判断（CLAUDE.md 第 8 条）。`packages/memory/branches.py::BranchService`——一套与账本式 Fork/`merge_candidates` 机制不兼容、且 `merge()` 本身有静默丢弃多余 `branch_ids` 之 Bug 的纯内存记录类——已删除（连同其死测试 `tests/unit/test_branch_operations.py`），不再作为「保留但未接线」的死代码占位。
 
-> 原第 4、5 项（Dialectical Fold 未接线；DebateCapsule 与 DissentCertificate 未产出）已解决：`run_joint_modeling` 和 `run_final_rejudgment`（`packages/council/rounds/registry.py`）现在分别产出 `DebateCapsule` 和 `DissentCertificate` 事件，前端「少数意见与异议」面板不再恒为空。同时修复了一个此前未记录的 bug：`apps/api/routers/workspace.py` 与 `packages/reports/service.py` 的 `dissents` 字段此前都错误地查询 `DebateCapsule` 节点类型，现已改为查询 `DissentCertificate`。
->
-> 原第 5 项（四种防「共享证据错误」机制）**已全部接入主流程，但完成度不对称，按设计规格 §7.9 分别说明：**
-> - **来源多样性约束——完整闭环。** `packages/evidence/source_diversity.py` 检查每个 Claim 的全部支持证据是否共享同一 `dataset_id`/`authors`，触发时自动产出一条 `evidence_level="A"` 的 `Blindspot` 事件（标注「来源单一」），挂在议会轮次末尾，端到端验证过。
-> - **盲证据评审——完整闭环。** `packages/council/deliberation.py` 构造 ACQUISITION/EVIDENCE_EXCHANGE 阶段 prompt 时结构性去掉 author/journal/citation_count 字段，是一个恒定生效的denylist守卫，不依赖某次运行是否「刚好」触发。
-> - **独立双抽取——完整闭环。** `FindingExtractor.extract(dual_extraction=True)`（`packages/papers/finding_extraction.py`）对 Level A 候选跑两次独立抽取，比较 `exact_quote`/`effect_direction`；任一不一致都记为「需人工审计」的 gap，不自动裁决哪一次对。四条路径（一致通过、引用不一致、效应方向不一致、第二次抽取本身失败）均有单测覆盖。
-> - **对抗式检索——只做到意图生成，不做到真实检索。** `packages/evidence/adversarial_retrieval.py` 为每个 confirmed claim 生成 6 类反向检索意图字符串（反驳、零结果、替代理论、测量批评、复现失败、边界反转），由 `run_acquisition` 无条件追加、归属给 `adversarial_falsifier` 席位。**但目前系统没有任何真正的全文搜索适配器**——`CandidatePool.add` 只能解析 DOI 形态的字符串，这六类查询本身是自由文本，所以在生产环境里**目前恒定无法解析到真实来源**。这不是遗漏，是设计规格 §7.9 本身声明的范围：意图生成是这版机制的全部。为了不让这个恒定的、系统级的适配器缺口每次都被误计成某个具体任务的证据缺口（那样会让 `COMPLETED_WITH_GAPS` 对所有有已确认主张的任务永久成立，这个状态就失去意义了），这些查询的解析结果**不计入** `unfilled_slots`，而是通过一条独立的 `ADVERSARIAL_RETRIEVAL_ATTEMPTED` 事件记录「尝试数/已解析数/未解析数」，保持在审计轨迹上可见——CLAUDE.md 第 7 条「承认未知」用可见性实现，而不是用缺口计数实现。真正让这一机制发挥作用，需要接入一个真正的全文检索适配器（例如 Semantic Scholar 的语义检索、Google Scholar 或类似服务），目前不在本版范围内。
->
-> 原第 6 项（`Fork`、`Merge`、`Resurrect`）**已全部接入主流程，但完成度不对称：**
-> - **`Resurrect`——完整闭环。** `packages/evidence/lifecycle.py::check_resurrection_conditions()` 接入 `run_evidence_exchange`（`packages/council/rounds/registry.py`）：席位在证据交换阶段自报「哪个被隔离节点、什么新证据」，一旦满足该节点记录的复活条件即产出 `RESURRECTION_GRANTED` 事件——这是一次状态变更，不是新的正式图节点类型，因此只留痕在事件账本上，不写入 `graph_nodes`。畸形或指向未知节点的复活请求会被记为 `unfilled_slots`，不会静默丢弃（CLAUDE.md 第 7 条）。`tests/integration/test_resurrect_pipeline.py` 端到端验证了真实被网关隔离的 Claim（因果主张建立在横截面证据上）经由完整 `run_task` 复活的全链路。
-> - **`Fork`——图层完整闭环，但独立于 `packages/memory/branches.py::BranchService`。** `run_cross_examination` 里，一个席位自报为致命（`is_fatal: True`）且附带 `fork` 子结构的质询，会额外产出两个 `Claim` 事件：一个指向原主张的锚点（仅用于让 `CONTRADICTS` 边有落点），一个平行的新主张，用既有的 `CONTRADICTS` 边关联（不新增边类型，YAGNI）。新主张的 id 用 `uuid5` 从任务、原主张、席位、序号确定性派生，保证重放/续跑不会重复分叉。这条路径完全绕开了 `BranchService`——那是一套纯内存、无持久化路径的 `fork()`/`merge()` 记录类，目前仍然没有生产调用者，按既定原则（死代码接线而非删除）予以保留；图层的分叉是靠直接产出 `Claim`/`CONTRADICTS` 事件实现的，不经过它。
-> - **`Merge`——裁剪为「记录合并候选」，不做自动合并。** `run_joint_modeling` 产出的 `CONSENSUS_DRAFTED` 事件新增 `merge_candidates` 字段，把该轮的全部 `unresolved_conflicts` 原样列为候选；没有任何代码执行真正的合并——按 CLAUDE.md 第 8 条「研究者控制方向」，合并与否是人在前端做的判断，不是系统自动裁决。
->
-> 原第 3 项（证据谱系边没有落库）**部分解决，不对称**：`sources` 表新增了 `authors`（JSONB）与 `dataset_id`（可空字符串）两列（迁移 `0006_source_lineage_fields`），`packages/evidence/lineage_detection.py` 新增 `detect_lineage()` 统一取代此前 `reports/service.py` 与 `workspace.py` 里重复的内联 DOI 拼接逻辑。`authors` 是**端到端真实接线**：OpenAlex/Crossref 适配器本就返回作者列表，此前只是在 `SourceAcquisition._persist()` 里被丢弃，现在会落库并驱动 `SAME_RESEARCH_TEAM` 边（只标注，不合并独立证据簇计数，见 CLAUDE.md 7.4）。`dataset_id` 是**仅完成建模、未接通真实数据**：目前没有任何适配器能从 DOI 查询解析出数据集标识符，这一列和 `SAME_DATASET` 检测逻辑只经过合成数据的单元测试验证，生产环境中每一行的 `dataset_id` 实际上恒为 `NULL`，等一个真正能提取数据集标识（例如论文 Data Availability 声明）的抽取路径接入之后才会真正发挥作用。
+**尚未开始 / 明确超出本版范围：**
 
-**尚未开始：**
-
-9. ~~ForesightBlindspot 评测基准。语料与验收矩阵的骨架在 `packages/evaluation/`，五个对照组和消融实验都还没跑。~~ **已解决，但完成度不对称，见下方说明。**
-10. ~~Evolution View 与 Blindspot Radar。工作台快照里 `evolution` 和 `seats` 恒为空数组。~~ **已解决，见下方说明。**
-11. ~~快照 / 暂停 / 恢复的端到端路径。`CouncilMemory.snapshot/restore` 与 `restore_task_state` 都有实现和测试，但没有暴露成 API 或 CLI 操作。~~ **已解决，但范围收窄，见下方说明。**
-
-> 原第 9 项（ForesightBlindspot 评测基准）**已接入，但完成度不对称：**
-> - **五个对照组——完整闭环。** `packages/evaluation/harness.py::run_baseline()` 支持全部 `BaselineVariant`（Single-Agent Deep Research、Fixed Multi-Agent Debate、Council + Linear Context、Council + MemoBrain 无 Evidence Engine、完整 Poliscope），每一级只比上一级多打开一个能力（席位数、prompt 专业化、`SharedLinearMemoryAdapter` 强制共享记忆、`FullEvidenceGate` 有无），且用无数据库依赖的 `EvalLedger` 跑通，`tests/unit/test_evaluation_harness.py` 逐条断言了这些差异确实存在，而不只是「跑起来了」。
-> - **打分函数——完整闭环，代码可计算部分。** `packages/evaluation/scoring.py` 提供 `score_blindspots`（Recall/Precision）、`score_citation_entailment`、`score_evidence_independence`、`score_dissent_preservation`、`cost_per_valid_blindspot`，全部复用生产环境本身的判定规则（`verify_citation_entailment`、`detect_lineage`/`cluster_evidence`、`CausalUpgradePolicy`），不重新发明一套平行标准。
-> - **`score_causal_overclaim`——在当前生产接线下恒为 `None`，这是一个真实存在、尚待解决的缺口，不是评测框架本身的缺陷。** 追踪到根源：全仓库唯一产出 `Claim` 事件的路径是 `packages/council/rounds/registry.py::_fork_events`（Fork 机制），它硬编码 `claim_type="correlational"`，从未设置 `study_design` 字段——也就是说没有任何一条生产路径会产出因果类型的 `Claim` 事件，无论跑哪个基线。`tests/unit/test_evaluation_demo_case.py` 的端到端演示案例对此显式断言 `score_causal_overclaim(...) is None` 并注释了原因，而不是绕开真实编排去手造一个生产环境不可能产出的因果 Claim 事件来让分数看起来能用。修复需要给 Fork 之外再补一条能识别并标记因果主张 `study_design` 的路径，目前不在本版范围内。
-> - **人工标注 Kappa/Alpha——只搭了统计骨架，没有标注数据。** `packages/evaluation/agreement.py` 里 `cohen_kappa`/`krippendorff_alpha_nominal` 两个统计函数本身完整、已用合成数据单测验证；但 `load_human_annotations()` 按 CLAUDE.md 第 7 条故意抛出 `HumanAnnotationsNotCollected`，因为目前没有任何标注 UI、招募或培训流程——这是独立于本模块的产品工作，不是一个缺失的公式。
-> - **端到端演示案例——1 个，覆盖完整 Poliscope 基线。** `tests/unit/test_evaluation_demo_case.py` 用脚本化的 `ModelGateway`/`SourceAcquirer`/`FindingExtractor`（复用 `scripts/seed_demo_task.py` 与既有单测已验证过的三方 fake 模式）跑通一次完整的 8 阶段议会，验证 Blindspot Recall/Precision、Citation Entailment、Evidence Independence、Dissent Preservation 四项打分都能从一次真实（脚本化）议会运行中算出非平凡的值，而不是只喂给打分函数手造的 `LedgerEntry`。
-> - **尚未做到的部分：** 真实厂商模型网关 + 真实论文语料的时间切片评测语料尚未策划（受限于[第 1、2 项](#已知缺口)本身尚缺真实凭证）；五个基线之间的正式对比报告/消融实验表尚未作为一次真实实验跑出来记录——框架支持（`BaselineVariant` 枚举本身就是消融维度），但目前只有单测层面验证了「每一级确实不同」，没有产出一份实际的对照数字。
->
-> 原第 11 项（快照 / 暂停 / 恢复）**已解决，但范围比标题字面意思窄——是「暂停认领」，不是「打断在跑的议会」：**
-> - **暂停即阻止认领——完整闭环。** `deliberate()`（`apps/worker/jobs.py`）把一个任务的完整 8 阶段议会跑在一次未提交事务里，中途没有任何既有的中断机制（只有 `_check_budget()` 处理预算耗尽），而 `CouncilMemory`（`packages/memory/council_memory.py`）每次 `deliberate()` 调用都通过 `create_memory_adapter()` 现造一个全新的 `InMemoryMemoryAdapter()`，没有任何跨调用持久化的状态可供跑到一半时快照。所以能诚实交付的最小可行范围是队列层面：`apps/worker/main.py::claim_queued_tasks()` 本就严格只选 `WHERE status == TaskStatus.QUEUED`，`ResearchService.pause()`/`resume()`（`packages/research/service.py`）把任务在 `QUEUED`⇄`PAUSED` 之间搬动，新增的 `POST /api/tasks/{id}/pause`、`POST /api/tasks/{id}/resume` 端点和对应的 `poliscope pause`/`poliscope resume` CLI 子命令都只做这一件事——一个被暂停的任务在被恢复之前，永远不会被任何 worker 认领，且这个保证不需要改动 orchestrator 或 worker 认领逻辑一行代码。`tests/integration/test_worker_pipeline.py::test_a_paused_task_is_never_claimed_until_resumed` 用真实数据库和真实 worker 认领路径端到端验证：暂停的任务在 `drain()` 里被跳过，恢复后才在下一次 `drain()` 里被认领并跑完。
-> - **真正的「跑到一半打断再续跑」——不在本版范围内，是一个真实存在、尚待解决的缺口。** 这需要往 `CouncilOrchestrator` 的阶段循环里注入暂停检查回调、把「一次议会一次提交」的事务语义拆开、并真正接一个持久化的快照列——这是编排器层面的改动，不是 API/CLI 薄封装能做到的，按 CLAUDE.md 第 17 条不拿「更容易实现」当理由静默降级，这里显式记录为尚未做到，而不是把「暂停认领」包装成看起来更大的「暂停执行」。
->
-> 原第 10 项（Evolution View 与 Blindspot Radar）**已解决，前后端都接线：**
-> - **后端——完整闭环。** `apps/api/routers/workspace.py::_seats()` 从事件账本按席位聚合 `PRECOMMITMENT_SEALED`/`CHALLENGE_RAISED`/`FINAL_JUDGMENT`/`SEAT_UNAVAILABLE` 四类过程事件，恒定按 `ORDERED_SEATS` 列出全部七个席位，缺席的席位显示为空字段而不是从列表消失。`_evolution()` 取 `Claim`（含 Fork 产出的锚点与新主张）、`CHALLENGE_RAISED`、`DissentCertificate` 三类会指名某个主张的事件，按账本序号（而不是到达顺序）排成时间线。`run_blindspot_bounty` 的 `Blindspot` 事件载荷同时携带 `impact`/`uncertainty`/`investigability`/`novelty`/`normalized_cost` 五个原始维度，不再只有一个合成分数。`tests/integration/test_workspace_seats_evolution.py` 用一次脚本化议会（含一次致命分叉、一次非致命质询、一次异议）端到端验证两个面板都是真实数据，不是占位符。
-> - **前端——三个新视图，而不是计划最初写的两个。** `apps/web` 新增 Council（`views/CouncilView.tsx`，按席位展示预承诺 / 提出的质询 / 最终复判 / 缺席轮次）、Blindspot Radar（`views/BlindspotRadarView.tsx`，影响 x 可调查性散点图、点大小表不确定性）、Evolution View（`views/EvolutionView.tsx`，主张分叉/质询/异议时间线）。多加 Council 视图是因为 CLAUDE.md 第 11 条本就把「7 人议会状态」列为独立必需面板，而后端 `_seats()` 已经不再恒为空——不把它接到界面上，就是把这次刚刚修掉的「后端有数据、前端从不展示」的缺口原样复制到 seats 字段上。
-> - **Blindspot Radar 手写 SVG，不引入新依赖。** `apps/web/package.json` 里除 `@xyflow/react`（React Flow）外没有任何图表库；一张只有三个编码维度（影响、可调查性、不确定性）的散点图不构成引入 recharts/visx/d3 的理由（KISS/YAGNI）。
-> - **未评分盲点不画在原点。** 来源多样性检查产出的 `Blindspot`（`kind: "source_diversity"`）没有 `impact`/`uncertainty`/`investigability` 任何一项，`BlindspotRadarView` 把这类盲点单独列在图表旁的「未评分盲点」区块，而不是把缺失字段当成 0 画在坐标原点——CLAUDE.md 第 7 条要求区分「未测量」与「测量出的零值」。
-> - **无法做到的部分：** 没有轮次会为某个 `Claim` 发出连续的「置信度变化」事件，所以 Evolution View 只能展示分叉 / 质询 / 异议这几个离散事件，画不出连续曲线；这是生产编排本身的缺口，不是前端渲染的裁剪。
+6. **ForesightBlindspot 评测完成度不对称。** 五个对照组（`packages/evaluation/harness.py::run_baseline()`）与打分函数（`packages/evaluation/scoring.py`）是**完整闭环**，`tests/unit/test_evaluation_demo_case.py` 用一次脚本化的完整议会验证 Blindspot Recall/Precision、Citation Entailment、Evidence Independence、Dissent Preservation 四项打分都能算出非平凡的值。`score_causal_overclaim` **不再恒为 `None`，但只是自报告，没有独立核验**：Fork 产出 Claim 时的 `claim_type` 现在由 `_self_reported_claim_type()`（`registry.py:1010-1024`）判定，可以产出 `ClaimType.CAUSAL`，让打分函数算出真实值；但这仍然只是自我报告，没有独立分类器核验一个 Fork 是否真的携带因果设计元数据——这是一个已披露的偏离（原因记在 `registry.py:950-966`），不能宣称「因果过度推断检测已彻底解决」。人工标注 Kappa/Alpha（`packages/evaluation/agreement.py`）**只搭了统计骨架，没有标注数据**——`load_human_annotations()` 按 CLAUDE.md 第 7 条故意抛出 `HumanAnnotationsNotCollected`，标注 UI、招募与培训流程是独立于本模块的产品工作，需要真人标注员，不是代码问题。真实厂商模型 + 真实论文语料的时间切片评测语料尚未采集（受限于[第 1、2 项](#已知缺口)本身尚缺真实凭证），五个基线之间的正式对照实验也尚未作为一次真实实验跑出数字。
+7. **快照 / 暂停 / 恢复的范围比字面意思窄——是「暂停认领」，不是「打断在跑的议会」。** `deliberate()`（`apps/worker/jobs.py`）把一个任务的完整 8 阶段议会跑在一次未提交事务里，`CouncilMemory` 每次调用都现造一个全新的 `InMemoryMemoryAdapter()`，没有任何跨调用持久化状态可供跑到一半时快照。能诚实交付的是队列层面：`poliscope pause`/`resume` 和对应的 `POST /api/tasks/{id}/pause`/`resume` 端点把任务在 `QUEUED`⇄`PAUSED` 间搬动——一个被暂停的任务在恢复之前永远不会被 worker 认领（`test_a_paused_task_is_never_claimed_until_resumed` 端到端验证），但**不能**打断一个已经在跑的议会。这与本版新增的 JOINT_MODELING 前人类引导检查点（`AWAITING_COUNCIL_INPUT`，见 CLAUDE.md 第 4.1 节、设计规格第 4.5 节）是两回事——那是一个**唯一、固定**的暂停点，只出现在 BLINDSPOT_BOUNTY 与 JOINT_MODELING 之间；真正的「议会任意时点打断再续跑」需要重构 `CouncilOrchestrator` 的阶段循环与事务边界、并接一个持久化的快照列，是编排器层面的改动，仍不在本版范围内。
+8. **Evolution View 只有定性的连续阶段轨迹，没有数值化的置信度曲线。** 关键阶段边界（证据交换、交叉质询、联合建模、最终复判结束时）现在都会为受影响的 `Claim` 追加一条 `CONFIDENCE_UPDATED` 过程事件（`_confidence_marker()`，`registry.py:345-376`），`_evolution()`（`workspace.py:238-291`）读取后能画出跨越全部四个阶段的连续轨迹点——这不再是生产编排本身的空白。但每条事件只携带一段文字说明（`confidence_delta_note`），从不产出精确数值置信度：这是刻意设计，不是尚未实现——CLAUDE.md 第 16 条禁止用模型置信度替代统计不确定性，因此这里做的是定性变化轨迹，不是可绘制数值曲线的量化分数。
 
 ---
 
@@ -521,6 +621,8 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 ---
 
 ## 许可证与归属
+
+Poliscope 自身代码以 [MIT 许可证](LICENSE) 开源；MemoBrain 作为外部方法基座保留其自身许可证，两者不混用（见下文）。
 
 ### 方法基座
 
@@ -546,7 +648,7 @@ Poliscope 以 [MemoBrain](https://github.com/qhjqhj00/MemoBrain) 作为执行记
 - Evidence Lineage Graph
 - ForesightBlindspot 时间切片评测
 
-其中 Dialectical Fold、Dissent Certificate 与 Fork/Merge/Resurrect 已接入主流程（完成度不对称，见上文）；Evidence Lineage Graph 部分接入（`authors` 端到端真实接线，`dataset_id` 仅完成建模）；ForesightBlindspot 五个基线与打分函数已接入并有端到端演示案例验证，但因果过度推断打分恒为 `None`、真实语料评测与消融实验尚未跑（完成度不对称，见上文）。
+其中 Dialectical Fold 与 Dissent Certificate 已完整接入主流程（`DebateCapsule`、`DissentCertificate` 均端到端产出并写入证据图）；Fork/Merge/Resurrect、Evidence Lineage Graph、ForesightBlindspot 三项完成度不对称，具体到每一项的实际状态见[已知缺口](#已知缺口)。
 
 ---
 
