@@ -1,16 +1,22 @@
 /** Evolution View: a claim-referencing timeline.
  *
- * Only three event types ever name a claim in the current ledger -- a Claim
- * itself (which covers a fork's anchor and its narrower offspring), a
- * challenge, and a dissent certificate -- so that is what this feed shows,
- * ordered by the ledger's own sequence rather than arrival time, matching
- * the Audit Trail's convention for the same reason: a reconnect must not
- * reorder history.
+ * Four event types ever name a claim in the current ledger -- a Claim itself
+ * (which covers a fork's anchor and its narrower offspring), a challenge, a
+ * dissent certificate, and (since plan phase 5) a qualitative
+ * `CONFIDENCE_UPDATED` marker -- so that is what this feed shows, ordered by
+ * the ledger's own sequence rather than arrival time, matching the Audit
+ * Trail's convention for the same reason: a reconnect must not reorder
+ * history.
  *
- * No round currently emits a dedicated "confidence changed" event for a
- * Claim, so this cannot draw a continuous confidence curve -- only the
- * discrete events that actually exist. Documented in the README's known-gaps
- * section rather than papered over with an invented interpolation.
+ * `CONFIDENCE_UPDATED` gives every confirmed claim a point at each of
+ * EVIDENCE_EXCHANGE, CROSS_EXAMINATION, JOINT_MODELING, and FINAL_REJUDGMENT
+ * (`packages.council.rounds.registry._confidence_marker`), so a claim with
+ * enough of those markers now reads as a continuous trajectory across
+ * phases here. Its `confidence_delta_note` is deliberately a plain-language
+ * sentence, never a number -- CLAUDE.md 16 forbids treating a model's
+ * confidence as a substitute for real statistical uncertainty, and no model
+ * in this MVP computes an actual confidence delta for a claim. So this stays
+ * a list of qualitative trajectory points, not a plotted quantitative curve.
  */
 
 import { useMemo } from "react";
@@ -25,6 +31,7 @@ const EVENT_LABELS: Record<string, string> = {
   Claim: "主张（含分叉）",
   CHALLENGE_RAISED: "提出质询",
   DissentCertificate: "异议证书",
+  CONFIDENCE_UPDATED: "置信度轨迹点",
 };
 
 function labelEvent(eventType: string): string {
@@ -33,10 +40,15 @@ function labelEvent(eventType: string): string {
 
 /** Best-effort one-line text out of whatever this event type actually
  * carries -- mirrors AuditView's `summarise`, narrowed to the fields the
- * three event types here are known to set. */
+ * four event types here are known to set. */
 function summarise(entry: EvolutionEntry): string {
   const { payload } = entry;
-  for (const key of ["statement", "final_judgment", "reason"]) {
+  for (const key of [
+    "confidence_delta_note",
+    "statement",
+    "final_judgment",
+    "reason",
+  ]) {
     const value = payload[key];
     if (typeof value === "string" && value) return value;
   }
@@ -52,7 +64,7 @@ export function EvolutionView({ entries }: { entries: EvolutionEntry[] }) {
   return (
     <Panel
       title="演化视图"
-      subtitle="按账本序号排列的主张分叉、质询与异议时间线。当前没有轮次会为主张发出连续的置信度变化事件，因此这里只展示离散事件，无法绘出连续曲线。"
+      subtitle="按账本序号排列的主张分叉、质询、异议与置信度轨迹点时间线。CONFIDENCE_UPDATED 在证据交换、交叉质询、联合建模与最终复判四个阶段边界为每个确认主张给出定性变化说明，而非可绘制的数值曲线。"
     >
       {ordered.length === 0 ? (
         <Empty>

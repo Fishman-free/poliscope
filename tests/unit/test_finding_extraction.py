@@ -12,6 +12,8 @@ plumbing -- is what is under test here.
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import fitz  # type: ignore[import-untyped]
@@ -26,6 +28,7 @@ from packages.models.contracts import (
     SchemaStatus,
 )
 from packages.papers.finding_extraction import FindingExtractor
+from packages.papers.object_store import PrivateObjectStore
 from packages.tools.contracts import ToolRequest, ToolResult
 from packages.tools.fulltext_fetcher import FullTextFetcher
 
@@ -85,12 +88,47 @@ class _FakeSession:
     def __init__(self) -> None:
         self.added: list[object] = []
         self.flushed = 0
+        self.executed: list[Any] = []
 
     def add(self, instance: object) -> None:
         self.added.append(instance)
 
     async def flush(self) -> None:
         self.flushed += 1
+
+    async def execute(self, statement: Any) -> Any:
+        self.executed.append(statement)
+
+
+class _ScalarResult:
+    """Minimal stand-in for the SQLAlchemy ``Result`` object ``extract_uploaded``
+    reads via ``.scalar_one_or_none()`` -- the two ``select()`` lookups it
+    issues (``SourceModel.object_id``, then ``ObjectModel.object_key``) are
+    the only callers that ever read the return value of ``execute()``."""
+
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> object:
+        return self._value
+
+
+class _FakeUploadSession(_FakeSession):
+    """Scripts ``scalar_one_or_none()`` results per ``execute()`` call, in
+    call order, for ``extract_uploaded``'s two lookups (object_id, then
+    object_key). Any later ``execute()`` call (the dataset_id UPDATE) never
+    has its result read, so an empty queue after both scalars are consumed
+    is harmless."""
+
+    def __init__(self, scalars: list[object]) -> None:
+        super().__init__()
+        self._scalars = list(scalars)
+
+    async def execute(self, statement: Any) -> _ScalarResult:
+        self.executed.append(statement)
+        if self._scalars:
+            return _ScalarResult(self._scalars.pop(0))
+        return _ScalarResult(None)
 
 
 class _FakeToolGateway:
@@ -198,6 +236,58 @@ async def test_extract_success_persists_three_rows_and_returns_finding() -> None
     # the order itself; see the comment in finding_extraction.py).
     assert len(session.added) == 4
     assert session.flushed == 4
+    assert result.dataset_id is None
+    assert session.executed == []
+
+
+async def test_dataset_identifier_detected_and_written_back_to_source_row() -> None:
+    """CLAUDE.md 7.4 / README known-gaps: a real Data Availability declaration
+    in the full text should reach ``SourceModel.dataset_id``, not stay None."""
+    quote = "We found a significant association between screen time and anxiety."
+    full_text = f"{quote}\nData Availability: ICPSR study number 37183."
+    session = _FakeSession()
+    tools = _FakeToolGateway(url="https://example.test/paper.pdf")
+    model = _FakeModelGateway(_valid_payload(quote))
+    source_id = uuid4()
+    extractor = FindingExtractor(
+        session,
+        tools,
+        model,
+        uuid4(),
+        fulltext_fetcher=_fetcher(_pdf_bytes(full_text)),
+    )
+
+    result = await extractor.extract(source_id, "10.1234/example")
+
+    assert result.ok is True
+    assert result.dataset_id == "ICPSR:37183"
+    assert len(session.executed) == 1
+    params = session.executed[0].compile().params
+    assert params["dataset_id"] == "ICPSR:37183"
+
+
+async def test_dataset_identifier_written_even_when_finding_extraction_fails() -> None:
+    """Detection runs off the fetched full text alone -- it must not depend on
+    the model successfully producing a quote-verified finding afterward."""
+    full_text = (
+        "A completely different sentence is in this paper.\n"
+        "Data Availability: ICPSR study number 37183."
+    )
+    session = _FakeSession()
+    tools = _FakeToolGateway(url="https://example.test/paper.pdf")
+    model = _FakeModelGateway(
+        _valid_payload("This exact quote never appears in the pdf at all.")
+    )
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), fulltext_fetcher=_fetcher(_pdf_bytes(full_text))
+    )
+
+    result = await extractor.extract(uuid4(), "10.1234/mismatch")
+
+    assert result.ok is False
+    assert result.dataset_id == "ICPSR:37183"
+    assert len(session.executed) == 1
+    assert session.added == []
 
 
 async def test_no_open_access_url_records_gap_without_spending_model_budget() -> None:
@@ -374,3 +464,171 @@ async def test_dual_extraction_second_pass_failure_records_gap() -> None:
     assert "needs manual audit" in result.reason
     assert session.added == []
     assert session.added == []
+
+
+async def test_extract_uploaded_success_persists_four_rows(tmp_path: Path) -> None:
+    """Mirrors test_extract_success_persists_three_rows_and_returns_finding, but
+    through the uploaded-PDF path: no Unpaywall lookup, no fulltext fetch --
+    the object store is the only source of bytes."""
+    quote = "We found a significant association between screen time and anxiety."
+    store = PrivateObjectStore(root=str(tmp_path))
+    task_id = uuid4()
+    stored = store.store(task_id=task_id, content=_pdf_bytes(quote))
+    source_id = uuid4()
+    object_id = uuid4()
+    session = _FakeUploadSession([object_id, stored.object_key])
+    tools = _FakeToolGateway(url=None)
+    model = _FakeModelGateway(_valid_payload(quote))
+    extractor = FindingExtractor(
+        session, tools, model, task_id, object_store=store
+    )
+
+    result = await extractor.extract_uploaded(source_id, object_id)
+
+    assert result.ok is True
+    assert result.doi is None
+    assert result.evidence_level == "A"
+    assert isinstance(result.finding_id, UUID)
+    assert len(session.added) == 4
+    assert session.flushed == 4
+    assert tools.calls == []  # no open-access lookup on the uploaded path
+
+
+async def test_extract_uploaded_source_without_object_records_gap(
+    tmp_path: Path,
+) -> None:
+    """SourceModel.object_id is None -- nothing was ever uploaded for this
+    source -- so extraction must record a gap, not raise or fabricate."""
+    store = PrivateObjectStore(root=str(tmp_path))
+    session = _FakeUploadSession([None])
+    tools = _FakeToolGateway(url=None)
+    model = _FakeModelGateway(_valid_payload("irrelevant"))
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), object_store=store
+    )
+
+    result = await extractor.extract_uploaded(uuid4(), uuid4())
+
+    assert result.ok is False
+    assert "no uploaded object" in result.reason
+    assert session.added == []
+    assert model.calls == []
+
+
+async def test_extract_uploaded_missing_object_row_records_gap(
+    tmp_path: Path,
+) -> None:
+    """The source names an object_id, but that objects row itself is gone --
+    a distinct gap from the file simply being missing from disk."""
+    store = PrivateObjectStore(root=str(tmp_path))
+    session = _FakeUploadSession([uuid4(), None])
+    tools = _FakeToolGateway(url=None)
+    model = _FakeModelGateway(_valid_payload("irrelevant"))
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), object_store=store
+    )
+
+    result = await extractor.extract_uploaded(uuid4(), uuid4())
+
+    assert result.ok is False
+    assert "not found in private object store" in result.reason
+    assert session.added == []
+
+
+async def test_extract_uploaded_missing_file_on_disk_records_gap(
+    tmp_path: Path,
+) -> None:
+    """The objects row exists and names a real-shaped key, but the store
+    (CLAUDE.md 16-adjacent: retrieve() must fail closed, not raise past the
+    caller) never actually has bytes under that key on disk."""
+    store = PrivateObjectStore(root=str(tmp_path))
+    session = _FakeUploadSession([uuid4(), f"tasks/{uuid4()}/never-written.pdf"])
+    tools = _FakeToolGateway(url=None)
+    model = _FakeModelGateway(_valid_payload("irrelevant"))
+    extractor = FindingExtractor(
+        session, tools, model, uuid4(), object_store=store
+    )
+
+    result = await extractor.extract_uploaded(uuid4(), uuid4())
+
+    assert result.ok is False
+    assert "not found in private object store" in result.reason
+    assert session.added == []
+
+
+async def test_extract_uploaded_pdf_parse_failure_records_gap(tmp_path: Path) -> None:
+    store = PrivateObjectStore(root=str(tmp_path))
+    task_id = uuid4()
+    stored = store.store(
+        task_id=task_id, content=b"%PDF-1.4\nthis is not a real pdf body\n%%EOF"
+    )
+    session = _FakeUploadSession([uuid4(), stored.object_key])
+    tools = _FakeToolGateway(url=None)
+    model = _FakeModelGateway(_valid_payload("irrelevant"))
+    extractor = FindingExtractor(
+        session, tools, model, task_id, object_store=store
+    )
+
+    result = await extractor.extract_uploaded(uuid4(), uuid4())
+
+    assert result.ok is False
+    assert "pdf" in result.reason
+    assert model.calls == []
+    assert session.added == []
+
+
+async def test_extract_uploaded_quote_not_locatable_records_gap(
+    tmp_path: Path,
+) -> None:
+    """CLAUDE.md 7.3, uploaded-path parity with the DOI path's equivalent test."""
+    store = PrivateObjectStore(root=str(tmp_path))
+    task_id = uuid4()
+    stored = store.store(
+        task_id=task_id,
+        content=_pdf_bytes("A completely different sentence is in this paper."),
+    )
+    session = _FakeUploadSession([uuid4(), stored.object_key])
+    tools = _FakeToolGateway(url=None)
+    model = _FakeModelGateway(
+        _valid_payload("This exact quote never appears in the pdf at all.")
+    )
+    extractor = FindingExtractor(
+        session, tools, model, task_id, object_store=store
+    )
+
+    result = await extractor.extract_uploaded(uuid4(), uuid4())
+
+    assert result.ok is False
+    assert "not found in source text" in result.reason
+    assert session.added == []
+
+
+async def test_extract_uploaded_dataset_identifier_detected_and_written_back(
+    tmp_path: Path,
+) -> None:
+    """Parity with test_dataset_identifier_detected_and_written_back_to_source_row,
+    through the uploaded path -- dataset detection must not be an open-access-
+    fetch-only behaviour."""
+    quote = "We found a significant association between screen time and anxiety."
+    full_text = f"{quote}\nData Availability: ICPSR study number 37183."
+    store = PrivateObjectStore(root=str(tmp_path))
+    task_id = uuid4()
+    stored = store.store(task_id=task_id, content=_pdf_bytes(full_text))
+    source_id = uuid4()
+    session = _FakeUploadSession([uuid4(), stored.object_key])
+    tools = _FakeToolGateway(url=None)
+    model = _FakeModelGateway(_valid_payload(quote))
+    extractor = FindingExtractor(
+        session, tools, model, task_id, object_store=store
+    )
+
+    result = await extractor.extract_uploaded(source_id, uuid4())
+
+    assert result.ok is True
+    assert result.dataset_id == "ICPSR:37183"
+    # Two selects (object_id, object_key) plus one UPDATE for the dataset_id
+    # write-back -- distinct from the DOI path's single select-free UPDATE
+    # count, since extract_uploaded has the extra object lookups.
+    assert len(session.executed) == 3
+    params = session.executed[-1].compile().params
+    assert params["dataset_id"] == "ICPSR:37183"

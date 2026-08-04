@@ -496,3 +496,152 @@ async def test_admitted_events_are_marked_so_the_ledger_shows_the_verdict(
     )
     await _project(projector_session, seeded_task)
     assert await _event_status(projector_session, event_id) == STATUS_ADMITTED
+
+
+async def test_a_node_id_reused_as_a_different_type_is_quarantined(
+    app_session: AsyncSession,
+    projector_session: AsyncSession,
+    seeded_task: UUID,
+) -> None:
+    """README known-gaps: GRAPH_CONSISTENCY used to never look at the graph.
+
+    A real replay/id-collision -- the same id already admitted as a Source
+    node, now arriving as a Claim event -- is structural corruption and must
+    be caught by ``SqlGraphConsistencyQuery.existing_node_type``.
+    """
+    await app_session.commit()
+    reused_id = uuid4()
+    await _append(
+        app_session, seeded_task, SOURCE, dict(CLEAN_FINDING), "collide-src",
+        source_id=reused_id,
+    )
+    await _project(projector_session, seeded_task)
+    node = await projector_session.get(GraphNodeModel, reused_id)
+    assert node is not None and node.node_type == SOURCE
+
+    event_id = await _append(
+        app_session,
+        seeded_task,
+        CLAIM,
+        {"claim_type": "correlational", "study_design": "correlational"},
+        "collide-claim",
+        claim_id=reused_id,
+    )
+    report = await _project(projector_session, seeded_task)
+
+    assert report.quarantined == [event_id]
+    node_after = await projector_session.get(GraphNodeModel, reused_id)
+    assert node_after is not None and node_after.node_type == SOURCE
+
+
+async def test_a_distinct_fork_against_an_admitted_claim_is_still_admitted(
+    app_session: AsyncSession,
+    projector_session: AsyncSession,
+    seeded_task: UUID,
+) -> None:
+    """CLAUDE.md 4: dissent must not be silently deleted. A Fork producing a
+    new Claim with a CONTRADICTS edge to an already-admitted claim must still
+    be admitted -- GRAPH_CONSISTENCY must never reject a CONTRADICTS edge on
+    sight.
+    """
+    await app_session.commit()
+    original_id = uuid4()
+    await _append(
+        app_session,
+        seeded_task,
+        CLAIM,
+        {
+            "statement": "Use correlates with distress",
+            "claim_type": "correlational",
+            "study_design": "correlational",
+        },
+        "fork-original",
+        claim_id=original_id,
+    )
+    await _project(projector_session, seeded_task)
+
+    fork_id = uuid4()
+    event_id = await _append(
+        app_session,
+        seeded_task,
+        CLAIM,
+        {
+            "statement": "Use does not correlate with distress in this cohort",
+            "claim_type": "correlational",
+            "study_design": "correlational",
+            "edges": [
+                {
+                    "target": str(original_id),
+                    "type": EvidenceEdgeType.CONTRADICTS.value,
+                }
+            ],
+        },
+        "fork-distinct",
+        claim_id=fork_id,
+    )
+    report = await _project(projector_session, seeded_task)
+
+    assert report.admitted == [event_id]
+    assert await projector_session.get(GraphNodeModel, fork_id) is not None
+
+
+async def test_a_duplicate_fork_of_the_same_dissent_is_quarantined(
+    app_session: AsyncSession,
+    projector_session: AsyncSession,
+    seeded_task: UUID,
+) -> None:
+    """The same dissent (same target, same statement) forked twice under two
+    different Claim ids is duplicate lineage, not a second distinct
+    disagreement, so the second one is caught.
+    """
+    await app_session.commit()
+    original_id = uuid4()
+    await _append(
+        app_session,
+        seeded_task,
+        CLAIM,
+        {
+            "statement": "Use correlates with distress",
+            "claim_type": "correlational",
+            "study_design": "correlational",
+        },
+        "dup-original",
+        claim_id=original_id,
+    )
+    await _project(projector_session, seeded_task)
+
+    dissent_statement = "Use does not correlate with distress in this cohort"
+    edges = [
+        {"target": str(original_id), "type": EvidenceEdgeType.CONTRADICTS.value}
+    ]
+    await _append(
+        app_session,
+        seeded_task,
+        CLAIM,
+        {
+            "statement": dissent_statement,
+            "claim_type": "correlational",
+            "study_design": "correlational",
+            "edges": edges,
+        },
+        "dup-fork-first",
+        claim_id=uuid4(),
+    )
+    await _project(projector_session, seeded_task)
+
+    duplicate_event_id = await _append(
+        app_session,
+        seeded_task,
+        CLAIM,
+        {
+            "statement": dissent_statement,
+            "claim_type": "correlational",
+            "study_design": "correlational",
+            "edges": edges,
+        },
+        "dup-fork-second",
+        claim_id=uuid4(),
+    )
+    report = await _project(projector_session, seeded_task)
+
+    assert report.quarantined == [duplicate_event_id]

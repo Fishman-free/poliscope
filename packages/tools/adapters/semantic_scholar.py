@@ -41,3 +41,33 @@ class SemanticScholarAdapter:
                 {"semantic_scholar": str(payload.get("paper_id", ""))}
             ),
         )
+
+    async def search(self, query: str) -> NormalizedSource | None:
+        """Free-text search; returns ``None`` on an honest miss (CLAUDE.md 7)."""
+        request = ToolRequest(
+            task_id=self._task_id,
+            actor="source_adapter",
+            tool_name="semantic_scholar",
+            operation="search",
+            arguments=FrozenDict({"query": query}),
+        )
+        result: ToolResult = await self._gateway.execute(request)
+        payload = cast(dict[str, Any], result.payload)
+        doi = payload.get("doi")
+        if not isinstance(doi, str) or not doi:
+            return None
+        cleaned = normalize_doi(doi)
+        authors = tuple(str(a) for a in payload.get("authors", ()))
+        pub_types = payload.get("publication_types") or payload.get("publicationTypes")
+        publication_type = pub_types[0] if pub_types else None
+        return NormalizedSource(
+            doi=cleaned,
+            title=str(payload.get("title", "")),
+            authors=authors,
+            year=cast(int | None, payload.get("year")),
+            publication_type=publication_type,
+            retracted=False,
+            provider_ids=FrozenDict(
+                {"semantic_scholar": str(payload.get("paper_id", ""))}
+            ),
+        )

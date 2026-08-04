@@ -17,6 +17,7 @@ import pytest
 
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
+    CONFIDENCE_UPDATED,
     EmittedEvent,
     PhaseContext,
     UnavailableDeliberator,
@@ -24,6 +25,10 @@ from packages.council.rounds.registry import (
 )
 from packages.epistemo.contracts import TaskPhase
 from packages.evidence.contracts import EvidenceNodeType
+
+
+def _confidence_events(events: tuple[EmittedEvent, ...]) -> list[EmittedEvent]:
+    return [event for event in events if event.event_type == CONFIDENCE_UPDATED]
 
 
 class _ScriptedDeliberator:
@@ -130,6 +135,48 @@ async def test_consensus_annotates_unresolved_conflicts_as_merge_candidates() ->
     assert consensus_events[0].payload["merge_candidates"] == [
         "Effect direction across sexes."
     ]
+
+
+async def test_ready_consensus_emits_a_confidence_marker_per_confirmed_claim() -> (
+    None
+):
+    """Plan phase 5: JOINT_MODELING is one of the four Evolution View phase
+    boundaries -- a ready consensus gives every confirmed claim a trajectory
+    point, qualitative rather than a fabricated numeric delta (CLAUDE.md 16)."""
+    claim_id = uuid4()
+    output = {
+        "strongest_opposition_refs": [str(uuid4())],
+        "falsification_conditions": ["A null effect in a preregistered RCT."],
+        "boundary_conditions": ["Western adolescent samples only."],
+        "unresolved_conflicts": ["Effect direction across sexes."],
+    }
+
+    outcome = await run_joint_modeling(_context(claim_id, output))
+
+    markers = _confidence_events(outcome.events)
+    assert len(markers) == 1
+    assert markers[0].claim_id == claim_id
+    assert markers[0].payload["phase"] == TaskPhase.JOINT_MODELING.value
+    assert markers[0].payload["confidence_delta_note"] == (
+        "联合建模阶段：已形成条件化共识。"
+    )
+
+
+async def test_unready_consensus_emits_no_confidence_marker() -> None:
+    """No consensus was actually formed, so there is no trajectory point to
+    add -- an honest absence, not a bug."""
+    context = PhaseContext(
+        task_id=uuid4(),
+        phase=TaskPhase.JOINT_MODELING,
+        seats=(Seat.THEORY_BUILDER,),
+        question="Does screen time affect wellbeing?",
+        confirmed_claims=(uuid4(),),
+        deliberator=UnavailableDeliberator(),
+    )
+
+    outcome = await run_joint_modeling(context)
+
+    assert _confidence_events(outcome.events) == []
 
 
 async def test_no_ready_consensus_never_attempts_a_capsule() -> None:

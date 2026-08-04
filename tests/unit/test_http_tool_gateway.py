@@ -274,11 +274,182 @@ async def test_unsupported_operation_raises_config_error() -> None:
         task_id=uuid4(),
         actor="source_adapter",
         tool_name="openalex",
+        operation="reticulate_splines",
+        arguments=FrozenDict({}),
+    )
+    with pytest.raises(ToolGatewayConfigError, match="reticulate_splines"):
+        await gateway.execute(request)
+
+
+async def test_unpaywall_has_no_search_operation() -> None:
+    """Unpaywall's real API has no free-text search -- DOI-keyed OA-status
+    lookup only -- so its operation is deliberately unimplemented here."""
+    gateway = _gateway(
+        lambda _: (_ for _ in ()).throw(
+            AssertionError("must not call the vendor for an unsupported operation")
+        )
+    )
+    request = ToolRequest(
+        task_id=uuid4(),
+        actor="source_adapter",
+        tool_name="unpaywall",
         operation="search",
         arguments=FrozenDict({"query": "digital wellbeing"}),
     )
     with pytest.raises(ToolGatewayConfigError, match="search"):
         await gateway.execute(request)
+
+
+async def test_openalex_search_returns_doi_and_flattened_fields() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "works" in str(request.url)
+        assert request.url.params["search"] == "digital wellbeing screen time"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "https://openalex.org/W1",
+                        "doi": "https://doi.org/10.9999/counter",
+                        "title": "A counterexample",
+                        "publication_year": 2021,
+                        "type": "article",
+                        "is_retracted": False,
+                        "authorships": [{"author": {"display_name": "Rivera"}}],
+                    }
+                ]
+            },
+        )
+
+    gateway = _gateway(handler)
+    request = ToolRequest(
+        task_id=uuid4(),
+        actor="source_adapter",
+        tool_name="openalex",
+        operation="search",
+        arguments=FrozenDict({"query": "digital wellbeing screen time"}),
+    )
+    result = await gateway.execute(request)
+    payload = dict(result.payload)
+    assert payload["doi"] == "10.9999/counter"
+    assert payload["title"] == "A counterexample"
+    assert payload["authors"] == ("Rivera",)
+
+
+async def test_openalex_search_miss_returns_no_doi() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"results": []})
+
+    gateway = _gateway(handler)
+    request = ToolRequest(
+        task_id=uuid4(),
+        actor="source_adapter",
+        tool_name="openalex",
+        operation="search",
+        arguments=FrozenDict({"query": "no such paper exists anywhere"}),
+    )
+    result = await gateway.execute(request)
+    assert dict(result.payload)["doi"] is None
+
+
+async def test_crossref_search_returns_doi() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["query"] == "screen time anxiety"
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "items": [
+                        {
+                            "DOI": "10.5555/found",
+                            "title": ["Found via search"],
+                            "author": [{"given": "A", "family": "Author"}],
+                            "published": {"date-parts": [[2019]]},
+                            "type": "journal-article",
+                        }
+                    ]
+                }
+            },
+        )
+
+    gateway = _gateway(handler)
+    request = ToolRequest(
+        task_id=uuid4(),
+        actor="source_adapter",
+        tool_name="crossref",
+        operation="search",
+        arguments=FrozenDict({"query": "screen time anxiety"}),
+    )
+    result = await gateway.execute(request)
+    payload = dict(result.payload)
+    assert payload["doi"] == "10.5555/found"
+    assert payload["title"] == "Found via search"
+
+
+async def test_crossref_search_miss_returns_no_doi() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": {"items": []}})
+
+    gateway = _gateway(handler)
+    request = ToolRequest(
+        task_id=uuid4(),
+        actor="source_adapter",
+        tool_name="crossref",
+        operation="search",
+        arguments=FrozenDict({"query": "no such paper exists anywhere"}),
+    )
+    result = await gateway.execute(request)
+    assert dict(result.payload)["doi"] is None
+
+
+async def test_semantic_scholar_search_returns_doi_from_external_ids() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "paper/search" in str(request.url)
+        assert request.url.params["query"] == "reverse causation screen time"
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "paperId": "S9",
+                        "title": "Reverse causation candidate",
+                        "year": 2022,
+                        "authors": [{"name": "Kim"}],
+                        "publicationTypes": ["JournalArticle"],
+                        "externalIds": {"DOI": "10.7777/reverse"},
+                    }
+                ]
+            },
+        )
+
+    gateway = _gateway(handler)
+    request = ToolRequest(
+        task_id=uuid4(),
+        actor="source_adapter",
+        tool_name="semantic_scholar",
+        operation="search",
+        arguments=FrozenDict({"query": "reverse causation screen time"}),
+    )
+    result = await gateway.execute(request)
+    payload = dict(result.payload)
+    assert payload["doi"] == "10.7777/reverse"
+    assert payload["paper_id"] == "S9"
+
+
+async def test_semantic_scholar_search_miss_returns_no_doi() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": []})
+
+    gateway = _gateway(handler)
+    request = ToolRequest(
+        task_id=uuid4(),
+        actor="source_adapter",
+        tool_name="semantic_scholar",
+        operation="search",
+        arguments=FrozenDict({"query": "no such paper exists anywhere"}),
+    )
+    result = await gateway.execute(request)
+    assert dict(result.payload)["doi"] is None
 
 
 async def test_unknown_tool_name_raises_config_error() -> None:

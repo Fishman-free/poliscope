@@ -185,6 +185,49 @@ def _to_candidate(event: ScientificEventModel) -> ScientificEventCandidate:
     )
 
 
+class SqlGraphConsistencyQuery:
+    """The one production implementation of ``GraphConsistencyQuery``.
+
+    Both checks are structural, not scientific (see gate.py's Stage 6
+    docstring for why): ``existing_node_type`` catches a replay/id-collision
+    where the same node_id is now being written as a different node_type, and
+    ``duplicate_fork_exists`` catches the same dissent being recorded twice
+    under two different Claim ids, not two genuinely distinct disagreements --
+    CLAUDE.md 4 protects the latter, not the former.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def existing_node_type(self, node_id: UUID) -> str | None:
+        node = await self._session.get(GraphNodeModel, node_id)
+        return None if node is None else node.node_type
+
+    async def duplicate_fork_exists(
+        self, target_claim_id: UUID, statement: str, exclude_node_id: UUID
+    ) -> bool:
+        rows = await self._session.execute(
+            select(GraphNodeModel.id, GraphNodeModel.payload).where(
+                GraphNodeModel.node_type == EvidenceNodeType.CLAIM.value,
+                GraphNodeModel.id != exclude_node_id,
+            )
+        )
+        for _row_id, payload in rows.all():
+            if payload.get("statement") != statement:
+                continue
+            edges = payload.get("edges")
+            if not isinstance(edges, list):
+                continue
+            for edge in edges:
+                if (
+                    isinstance(edge, dict)
+                    and edge.get("type") == EvidenceEdgeType.CONTRADICTS.value
+                    and edge.get("target") == str(target_claim_id)
+                ):
+                    return True
+        return False
+
+
 class SqlGraphProjector:
     """Projects admitted ledger events into ``graph_nodes`` and ``graph_edges``.
 
@@ -199,7 +242,9 @@ class SqlGraphProjector:
         gate: FullEvidenceGate | None = None,
     ) -> None:
         self._session = session
-        self._gate = gate if gate is not None else FullEvidenceGate()
+        self._gate = gate if gate is not None else FullEvidenceGate(
+            graph_query=SqlGraphConsistencyQuery(session)
+        )
 
     async def _lock_task(self, task_id: UUID) -> None:
         """Make this the only projector running for the task.

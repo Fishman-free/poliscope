@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -45,4 +46,47 @@ def locate_quote(pages: list[PageText], quote: str) -> int | None:
     for page in pages:
         if normalized in page.text:
             return page.page_number
+    return None
+
+
+# Each pattern targets a distinct, unambiguous repository prefix or hostname
+# (Harvard Dataverse's 10.7910/DVN, Dryad's 10.5061/dryad, Zenodo's 10.5281/
+# zenodo or zenodo.org, ICPSR's own numbering, OSF's short slugs) so match
+# order never matters -- no two patterns can both fire on the same text.
+_DATASET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "ICPSR",
+        re.compile(
+            r"ICPSR\s*(?:study\s*(?:number|no\.?)\s*)?#?\s*(\d{4,6}(?:-v\d+)?)",
+            re.IGNORECASE,
+        ),
+    ),
+    ("OSF", re.compile(r"osf\.io/([a-z0-9]{5,8})", re.IGNORECASE)),
+    ("Dryad", re.compile(r"(10\.5061/dryad\.[^\s,;)\]]+)", re.IGNORECASE)),
+    (
+        "Zenodo",
+        re.compile(
+            r"(?:zenodo\.org/record/(\d+)|10\.5281/zenodo\.(\d+))", re.IGNORECASE
+        ),
+    ),
+    ("Dataverse", re.compile(r"(10\.7910/DVN/[^\s,;)\]]+)", re.IGNORECASE)),
+)
+
+
+def detect_dataset_identifier(pages: list[PageText]) -> str | None:
+    """Scan full text for a known dataset-accession pattern.
+
+    Deterministic pattern matching only -- CLAUDE.md 7 forbids fabricating a
+    dataset identifier the source text does not actually contain, so this
+    never asks a model to infer one. Recognizes a small, named set of public
+    repository accession conventions (ICPSR, OSF, Dataverse, Dryad, Zenodo)
+    commonly found in a paper's "Data Availability" statement; anything else
+    stays ``None`` rather than guessing.
+    """
+    for repository, pattern in _DATASET_PATTERNS:
+        for page in pages:
+            match = pattern.search(page.text)
+            if match:
+                identifier = next(g for g in match.groups() if g)
+                return f"{repository}:{identifier.rstrip('.,;)')}"
     return None

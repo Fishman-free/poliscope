@@ -10,26 +10,30 @@ queries per confirmed claim, attributed to the adversarial falsifier seat, so
 acquisition itself is not structurally biased toward finding only what
 supports the judgment already on the table.
 
-**Scope, stated plainly.** This module only generates the six query strings.
-Whether any of them actually resolves to a real source depends on a
-search-capable adapter existing --
-``packages.papers.candidate_pool.CandidatePool.add`` currently treats
-anything without a DOI-shaped substring as unresolvable and records it as
-such. A query produced here can therefore land in
-``AcquisitionResult.unresolvable`` today, exactly like any other free-text
-request; that is an honest gap (CLAUDE.md 7), not a failure of this module.
-Intent generation is the whole of this mechanism's first version.
+**Scope, stated plainly.** This module generates the six query strings; it
+does not itself search anything. Resolving a string to a real source is
+``packages.papers.acquisition.SourceAcquisition``'s job:
+``packages.papers.candidate_pool.CandidatePool.add`` finds no DOI-shaped
+substring in these (they name a claim id and an intent, not a paper), so each
+one is tried as free text against every free, keyless search adapter --
+OpenAlex, Crossref, Semantic Scholar, in that order (see
+``packages.tools.adapters.SEARCH_ADAPTER_NAMES``) -- and the first hit wins.
+A query genuinely without a matching paper in any of those three indexes, or
+one only a paid/keyed provider would cover, still lands in
+``AcquisitionResult.unresolvable``; that remainder is an honest gap
+(CLAUDE.md 7), not a failure of this module, and not every one of the six
+strings, every time, as in this mechanism's first version.
 
-Because that non-resolution is constant and system-wide -- every one of
-these six-per-claim queries, on every task, until a search-capable adapter
-exists -- ``packages.council.rounds.registry.run_acquisition`` deliberately
-does *not* fold it into that round's ``unfilled_slots``: a task-specific gap
-and a permanent adapter-capability gap are different kinds of fact, and
-conflating them would make ``TaskStatus.COMPLETED_WITH_GAPS`` mean nothing
-for any task with confirmed claims. The attempt (and its resolved/unresolved
-counts) instead stays visible on the audit trail through a dedicated
-``ADVERSARIAL_RETRIEVAL_ATTEMPTED`` event -- CLAUDE.md 7's "admit unknown"
-honored through visibility, not through gap-counting.
+Because some non-resolution is still expected system-wide -- the free
+providers do not index everything a paid one would --
+``packages.council.rounds.registry.run_acquisition`` deliberately does *not*
+fold these queries' outcome into that round's ``unfilled_slots``: a
+task-specific gap and an adapter-coverage gap are different kinds of fact,
+and conflating them would make ``TaskStatus.COMPLETED_WITH_GAPS`` mean
+nothing for any task with confirmed claims. The attempt (and its real
+resolved/unresolved/refused counts) instead stays visible on the audit trail
+through a dedicated ``ADVERSARIAL_RETRIEVAL_ATTEMPTED`` event -- CLAUDE.md 7's
+"admit unknown" honored through visibility, not through gap-counting.
 """
 
 from __future__ import annotations
@@ -55,8 +59,9 @@ def adversarial_retrieval_queries(claim_id: UUID) -> tuple[str, ...]:
 
     Each string names the claim by id -- the only handle available at query-
     planning time -- and one adversarial intent. Resolving the id to the
-    claim's actual statement text, and to a real search hit, is a future
-    search-capable adapter's job, not this pure function's.
+    claim's actual statement text is out of scope here; the string is instead
+    tried as-is against real search adapters downstream in
+    ``SourceAcquisition.acquire`` -- see the module docstring above.
     """
     return tuple(f"claim {claim_id}: {intent}" for intent in _INTENTS)
 

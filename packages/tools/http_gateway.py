@@ -56,6 +56,16 @@ UNPAYWALL_BASE_URL = "https://api.unpaywall.org/v2"
 SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
 SEMANTIC_SCHOLAR_FIELDS = "paperId,title,year,authors,publicationTypes"
+SEMANTIC_SCHOLAR_SEARCH_FIELDS = (
+    "paperId,title,year,authors,publicationTypes,externalIds"
+)
+
+# Providers with a real, keyless, free-text search endpoint. Unpaywall's real
+# API has no such endpoint -- it is DOI-keyed OA-status lookup only -- so it
+# deliberately has no entry here and no ``_search_unpaywall`` method below.
+SEARCHABLE_TOOL_NAMES: frozenset[str] = frozenset(
+    {"openalex", "crossref", "semantic_scholar"}
+)
 
 
 class ToolGatewayConfigError(ValueError):
@@ -106,18 +116,25 @@ class HttpToolGateway:
             await self._client.aclose()
 
     async def execute(self, request: ToolRequest) -> ToolResult:
-        if request.operation != "lookup_doi":
+        started = time.monotonic()
+        if request.operation == "lookup_doi":
+            doi = request.arguments.get("doi")
+            if not isinstance(doi, str) or not doi:
+                raise ToolGatewayConfigError(
+                    f"{request.tool_name}.lookup_doi requires a string 'doi' argument"
+                )
+            payload, retries = await self._lookup_doi(request.tool_name, doi)
+        elif request.operation == "search":
+            query = request.arguments.get("query")
+            if not isinstance(query, str) or not query:
+                raise ToolGatewayConfigError(
+                    f"{request.tool_name}.search requires a string 'query' argument"
+                )
+            payload, retries = await self._search(request.tool_name, query)
+        else:
             raise ToolGatewayConfigError(
                 f"no HTTP implementation for {request.tool_name}.{request.operation}"
             )
-        doi = request.arguments.get("doi")
-        if not isinstance(doi, str) or not doi:
-            raise ToolGatewayConfigError(
-                f"{request.tool_name}.lookup_doi requires a string 'doi' argument"
-            )
-
-        started = time.monotonic()
-        payload, retries = await self._lookup_doi(request.tool_name, doi)
         latency_ms = int((time.monotonic() - started) * 1000)
         return ToolResult(
             call_id=uuid4(),
@@ -139,6 +156,19 @@ class HttpToolGateway:
         if tool_name == "semantic_scholar":
             return await self._semantic_scholar(doi)
         raise ToolGatewayConfigError(f"no HTTP implementation for tool {tool_name!r}")
+
+    async def _search(
+        self, tool_name: str, query: str
+    ) -> tuple[dict[str, object], int]:
+        if tool_name == "openalex":
+            return await self._search_openalex(query)
+        if tool_name == "crossref":
+            return await self._search_crossref(query)
+        if tool_name == "semantic_scholar":
+            return await self._search_semantic_scholar(query)
+        # Deliberately includes unpaywall: its real API has no free-text
+        # search, only DOI-keyed OA-status lookup (see SEARCHABLE_TOOL_NAMES).
+        raise ToolGatewayConfigError(f"no HTTP implementation for {tool_name}.search")
 
     async def _get_json(
         self,
@@ -233,6 +263,99 @@ class HttpToolGateway:
         }
         return payload, retries
 
+    async def _search_openalex(self, query: str) -> tuple[dict[str, object], int]:
+        data, retries = await self._get_json(
+            f"{OPENALEX_BASE_URL}/works",
+            params={"search": query, "per-page": "1"},
+        )
+        results = data.get("results") or []
+        if not results:
+            # Honest miss: this provider found no candidate for this query.
+            # SourceAcquisition tries the next provider before giving up.
+            return {"doi": None}, retries
+        work = results[0]
+        authorships = work.get("authorships") or []
+        authors = tuple(
+            str(a["author"]["display_name"])
+            for a in authorships
+            if a.get("author", {}).get("display_name")
+        )
+        work_id = str(work.get("id") or "").rsplit("/", maxsplit=1)[-1]
+        raw_doi = str(work.get("doi") or "")
+        doi = raw_doi.rsplit("doi.org/", maxsplit=1)[-1] if raw_doi else None
+        payload: dict[str, object] = {
+            "doi": doi,
+            "id": work_id,
+            "title": work.get("title") or work.get("display_name") or "",
+            "authors": authors,
+            "year": work.get("publication_year"),
+            "type": work.get("type"),
+            "retracted": bool(work.get("is_retracted", False)),
+        }
+        return payload, retries
+
+    async def _search_crossref(self, query: str) -> tuple[dict[str, object], int]:
+        data, retries = await self._get_json(
+            f"{CROSSREF_BASE_URL}/works",
+            params={"query": query, "rows": "1"},
+        )
+        items = (data.get("message") or {}).get("items") or []
+        if not items:
+            return {"doi": None}, retries
+        item = items[0]
+        titles = item.get("title") or []
+
+        def _full_name(author: Mapping[str, Any]) -> str:
+            parts = (author.get("given"), author.get("family"))
+            return " ".join(part for part in parts if part).strip()
+
+        raw_authors = (_full_name(a) for a in item.get("author") or [])
+        authors = tuple(name for name in raw_authors if name)
+        date_parts = ((item.get("published") or {}).get("date-parts") or [[]])[0]
+        payload: dict[str, object] = {
+            "doi": item.get("DOI"),
+            "title": titles[0] if titles else "",
+            "authors": authors,
+            "year": date_parts[0] if date_parts else None,
+            "type": item.get("type"),
+        }
+        return payload, retries
+
+    async def _search_semantic_scholar(
+        self, query: str
+    ) -> tuple[dict[str, object], int]:
+        headers = (
+            {"x-api-key": self._config.semantic_scholar_api_key}
+            if self._config.semantic_scholar_api_key
+            else None
+        )
+        data, retries = await self._get_json(
+            f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search",
+            params={
+                "query": query,
+                "fields": SEMANTIC_SCHOLAR_SEARCH_FIELDS,
+                "limit": "1",
+            },
+            headers=headers,
+        )
+        papers = data.get("data") or []
+        if not papers:
+            return {"doi": None}, retries
+        paper = papers[0]
+        authors = tuple(
+            str(a["name"]) for a in paper.get("authors") or [] if a.get("name")
+        )
+        external_ids = paper.get("externalIds") or {}
+        payload: dict[str, object] = {
+            "doi": external_ids.get("DOI"),
+            "paper_id": paper.get("paperId") or "",
+            "title": paper.get("title") or "",
+            "authors": authors,
+            "year": paper.get("year"),
+            "publication_types": tuple(paper.get("publicationTypes") or ()),
+        }
+        return payload, retries
+
 
 def tool_gateway_from_env(
     environ: Mapping[str, str] | None = None,
@@ -251,6 +374,7 @@ def tool_gateway_from_env(
 __all__: list[str] = [
     "CONTACT_EMAIL_ENV",
     "SEMANTIC_SCHOLAR_API_KEY_ENV",
+    "SEARCHABLE_TOOL_NAMES",
     "HttpToolConfig",
     "HttpToolGateway",
     "ToolGateway",

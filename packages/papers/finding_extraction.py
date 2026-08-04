@@ -27,6 +27,8 @@ from decimal import Decimal
 from typing import Any, Protocol, SupportsFloat, cast
 from uuid import UUID, uuid4
 
+from sqlalchemy import select, update
+
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.models.contracts import (
     ModelClass,
@@ -42,11 +44,19 @@ from packages.papers.contracts import (
 from packages.papers.models import (
     CitationAnchorModel,
     FindingModel,
+    ObjectModel,
+    SourceModel,
     SourceVersionModel,
     StudyModel,
 )
+from packages.papers.object_store import ObjectNotFound, PrivateObjectStore
 from packages.papers.packet import build_packet
-from packages.papers.parser import PageText, PdfExtractionError, extract_pages
+from packages.papers.parser import (
+    PageText,
+    PdfExtractionError,
+    detect_dataset_identifier,
+    extract_pages,
+)
 from packages.tools.adapters.unpaywall import UnpaywallAdapter
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher, FullTextFetchError
@@ -85,7 +95,7 @@ class FindingExtractionResult:
     the package boundary (``council`` must not import ``papers`` directly).
     """
 
-    doi: str
+    doi: str | None
     source_id: UUID
     ok: bool
     reason: str = ""
@@ -95,6 +105,7 @@ class FindingExtractionResult:
     evidence_level: str = ""
     finding_statement: str = ""
     method_quality: dict[str, float] = field(default_factory=dict)
+    dataset_id: str | None = None
 
 
 def _availability(value: object) -> AvailabilityStatus:
@@ -149,7 +160,7 @@ class _Attempt:
 
 
 class _SessionWriter(Protocol):
-    """The only two AsyncSession operations this module needs.
+    """The only AsyncSession operations this module needs.
 
     Kept narrow and local rather than depending on the concrete
     ``sqlalchemy.ext.asyncio.AsyncSession`` so unit tests can exercise the
@@ -160,6 +171,7 @@ class _SessionWriter(Protocol):
 
     def add(self, instance: object) -> None: ...
     async def flush(self) -> None: ...
+    async def execute(self, statement: Any) -> Any: ...
 
 
 class FindingExtractor:
@@ -174,6 +186,7 @@ class FindingExtractor:
         budget: BudgetTracker | None = None,
         *,
         fulltext_fetcher: FullTextFetcher | None = None,
+        object_store: PrivateObjectStore | None = None,
     ) -> None:
         self._session = session
         self._tools = tools
@@ -181,6 +194,7 @@ class FindingExtractor:
         self._task_id = task_id
         self._budget = budget
         self._fetcher = fulltext_fetcher or FullTextFetcher.from_env()
+        self._object_store = object_store or PrivateObjectStore.from_env()
 
     async def extract(
         self,
@@ -205,9 +219,15 @@ class FindingExtractor:
         extractions would be exactly the confident-guess CLAUDE.md 7 forbids.
         """
 
+        dataset_id: str | None = None
+
         def _gap(reason: str) -> FindingExtractionResult:
             return FindingExtractionResult(
-                doi=doi, source_id=source_id, ok=False, reason=reason
+                doi=doi,
+                source_id=source_id,
+                ok=False,
+                reason=reason,
+                dataset_id=dataset_id,
             )
 
         if not self._spend_tool_call():
@@ -236,6 +256,22 @@ class FindingExtractor:
         if not pages:
             return _gap("pdf produced no extractable text")
 
+        # Deterministic, model-independent: runs whenever full text was
+        # fetched, regardless of whether the model extraction below succeeds,
+        # since a dataset declaration's presence has nothing to do with
+        # whether a quote-verified finding also comes out of this paper.
+        # dataset_id lives on `sources`, not `studies`/`findings`, and this
+        # method never holds the original SourceModel row (only its id), so
+        # the match is written back with a targeted UPDATE rather than
+        # threaded through session identity.
+        dataset_id = detect_dataset_identifier(pages)
+        if dataset_id is not None:
+            await self._session.execute(
+                update(SourceModel)
+                .where(SourceModel.id == source_id)
+                .values(dataset_id=dataset_id)
+            )
+
         first = await self._attempt_extraction(source_id, doi, pages)
         if not first.ok:
             return _gap(first.reason)
@@ -262,6 +298,21 @@ class FindingExtractor:
                     f"{', '.join(mismatched)} -- needs manual audit"
                 )
 
+        return await self._persist_finding(doi, source_id, first, dataset_id)
+
+    async def _persist_finding(
+        self,
+        doi: str | None,
+        source_id: UUID,
+        first: _Attempt,
+        dataset_id: str | None,
+    ) -> FindingExtractionResult:
+        """Write a verified attempt's packet to ``studies``/``findings``/
+        ``citation_anchors``. Shared by ``extract`` and ``extract_uploaded`` --
+        the two differ only in how ``pages`` was obtained (open-access fetch
+        vs. an uploaded object), not in what happens once a Level A packet
+        exists.
+        """
         packet = first.packet
         assert packet is not None  # first.ok guarantees this
         study = packet.studies[0]
@@ -335,10 +386,87 @@ class FindingExtractor:
             evidence_level=packet.evidence_level.value,
             finding_statement=finding.statement,
             method_quality=method_quality,
+            dataset_id=dataset_id,
         )
 
+    async def extract_uploaded(
+        self,
+        source_id: UUID,
+        object_id: UUID,
+    ) -> FindingExtractionResult:
+        """Try to turn an uploaded PDF's own bytes into a StudyFinding.
+
+        Mirrors ``extract`` from the point full text exists onward -- same
+        parsing, same model call, same Level A quote check, same persistence
+        -- but skips the Unpaywall lookup and full-text fetch entirely, since
+        the bytes are already sitting in the private object store under the
+        key ``acquire_uploaded`` recorded on this source's ``object_id``.
+        """
+
+        dataset_id: str | None = None
+
+        def _gap(reason: str) -> FindingExtractionResult:
+            return FindingExtractionResult(
+                doi=None,
+                source_id=source_id,
+                ok=False,
+                reason=reason,
+                dataset_id=dataset_id,
+            )
+
+        object_key_row = await self._session.execute(
+            select(SourceModel.object_id).where(SourceModel.id == source_id)
+        )
+        stored_object_id = object_key_row.scalar_one_or_none()
+        if stored_object_id is None:
+            return _gap("source has no uploaded object to extract from")
+
+        content = await self._retrieve_uploaded(stored_object_id)
+        if content is None:
+            return _gap("uploaded object not found in private object store")
+
+        try:
+            pages = extract_pages(content)
+        except PdfExtractionError as error:
+            return _gap(f"pdf parsing failed: {error}")
+        if not pages:
+            return _gap("pdf produced no extractable text")
+
+        dataset_id = detect_dataset_identifier(pages)
+        if dataset_id is not None:
+            await self._session.execute(
+                update(SourceModel)
+                .where(SourceModel.id == source_id)
+                .values(dataset_id=dataset_id)
+            )
+
+        first = await self._attempt_extraction(source_id, None, pages)
+        if not first.ok:
+            return _gap(first.reason)
+
+        return await self._persist_finding(None, source_id, first, dataset_id)
+
+    async def _retrieve_uploaded(self, object_id: UUID) -> bytes | None:
+        """Look up the stored object key, then read its bytes off disk.
+
+        Two lookups because ``objects.object_key`` -- not the id -- is what
+        ``PrivateObjectStore`` actually keys on; the id only identifies the
+        row. Returns ``None`` rather than raising on either miss, so the
+        caller records an honest gap instead of a stack trace.
+        """
+        key_row = await self._session.execute(
+            select(ObjectModel.object_key).where(ObjectModel.id == object_id)
+        )
+        object_key = key_row.scalar_one_or_none()
+        if object_key is None:
+            return None
+        try:
+            return self._object_store.retrieve(object_key)
+        except ObjectNotFound:
+            return None
+
     async def _attempt_extraction(
-        self, source_id: UUID, doi: str, pages: list[PageText]
+        self, source_id: UUID, doi: str | None, pages: list[PageText]
     ) -> _Attempt:
         """One model call, one packet build, one Level A check -- no persistence.
 

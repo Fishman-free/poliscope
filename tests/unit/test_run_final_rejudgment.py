@@ -14,12 +14,17 @@ from uuid import UUID, uuid4
 
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
+    CONFIDENCE_UPDATED,
     EmittedEvent,
     PhaseContext,
     run_final_rejudgment,
 )
 from packages.epistemo.contracts import TaskPhase
 from packages.evidence.contracts import EvidenceNodeType
+
+
+def _confidence_events(events: tuple[EmittedEvent, ...]) -> list[EmittedEvent]:
+    return [event for event in events if event.event_type == CONFIDENCE_UPDATED]
 
 
 class _ScriptedDeliberator:
@@ -112,3 +117,47 @@ async def test_no_dissenting_seats_produces_no_certificate_and_no_slot() -> None
 
     assert _dissent_events(outcome.events) == []
     assert "FINAL_REJUDGMENT:no_dissent_target" not in outcome.unfilled_slots
+
+
+async def test_final_rejudgment_emits_a_confidence_marker_regardless_of_dissent() -> (
+    None
+):
+    """Plan phase 5: FINAL_REJUDGMENT is one of the four Evolution View phase
+    boundaries -- every confirmed claim gets a trajectory point summarising
+    how many seats judged and how many dissented, whether or not anyone
+    actually dissented (unlike the DissentCertificate, which only fires when
+    someone does)."""
+    claim_id = uuid4()
+    outputs = {
+        Seat.THEORY_BUILDER: {"final_judgment": "narrowed, not withdrawn"},
+        Seat.CAUSAL_SCIENTIST: {"final_judgment": "confirmed with lower confidence"},
+    }
+
+    outcome = await run_final_rejudgment(_context((claim_id,), outputs))
+
+    markers = _confidence_events(outcome.events)
+    assert len(markers) == 1
+    assert markers[0].claim_id == claim_id
+    assert markers[0].payload["phase"] == TaskPhase.FINAL_REJUDGMENT.value
+    note = markers[0].payload["confidence_delta_note"]
+    assert isinstance(note, str)
+    # FinalRejudgmentHandler judges all seven seats regardless of how many
+    # outputs were collected this round (missing ones default to "no initial
+    # judgment", which _detect_dissent does not match).
+    assert "7 位科学家给出最终判断" in note
+    assert "0 位保留异议" in note
+
+
+async def test_final_rejudgment_no_confirmed_claims_emits_no_marker() -> None:
+    """No claim to attach a trajectory point to -- an honest absence, not a
+    bug, matching the existing FINAL_REJUDGMENT:no_dissent_target gap for the
+    DissentCertificate side."""
+    outputs = {
+        Seat.ADVERSARY_FALSIFIER: {
+            "final_judgment": "I dissent: the causal claim is unsupported."
+        },
+    }
+
+    outcome = await run_final_rejudgment(_context((), outputs))
+
+    assert _confidence_events(outcome.events) == []

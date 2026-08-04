@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
+    CONFIDENCE_UPDATED,
     RESURRECTION_GRANTED,
     EmittedEvent,
     PhaseContext,
@@ -37,16 +38,21 @@ class _ScriptedDeliberator:
 def _context(
     output: Mapping[str, object],
     quarantined: tuple[QuarantinedNode, ...] = (),
+    confirmed_claims: tuple[UUID, ...] = (),
 ) -> PhaseContext:
     return PhaseContext(
         task_id=uuid4(),
         phase=TaskPhase.EVIDENCE_EXCHANGE,
         seats=(Seat.EVIDENCE_AUDITOR,),
         question="Does screen time affect wellbeing?",
-        confirmed_claims=(),
+        confirmed_claims=confirmed_claims,
         deliberator=_ScriptedDeliberator(output),
         quarantined=quarantined,
     )
+
+
+def _confidence_events(events: tuple[EmittedEvent, ...]) -> list[EmittedEvent]:
+    return [event for event in events if event.event_type == CONFIDENCE_UPDATED]
 
 
 def _resurrection_events(events: tuple[EmittedEvent, ...]) -> list[EmittedEvent]:
@@ -149,3 +155,51 @@ async def test_no_quarantined_nodes_skips_resurrection_entirely() -> None:
     outcome = await run_evidence_exchange(_context(output, quarantined=()))
 
     assert _resurrection_events(outcome.events) == []
+
+
+async def test_published_evidence_emits_a_confidence_marker_per_confirmed_claim() -> (
+    None
+):
+    """Plan phase 5: an Evolution View trajectory point for every confirmed
+    claim once evidence actually moves in this round -- not per item, since no
+    evidence item carries a claim reference (see the production code's own
+    comment on why the scope is the whole confirmed set, not a fabricated
+    one-to-one mapping)."""
+    claim_id = uuid4()
+    other_claim_id = uuid4()
+    output = {
+        "evidence_items": [
+            {
+                "source_id": str(uuid4()),
+                "anchor_summary": "a preregistered cohort study",
+                "level": "A",
+            }
+        ]
+    }
+
+    outcome = await run_evidence_exchange(
+        _context(output, confirmed_claims=(claim_id, other_claim_id))
+    )
+
+    markers = _confidence_events(outcome.events)
+    assert {marker.claim_id for marker in markers} == {claim_id, other_claim_id}
+    for marker in markers:
+        assert marker.payload["phase"] == TaskPhase.EVIDENCE_EXCHANGE.value
+        # A plain-language count of items published, never a fabricated
+        # numeric confidence delta (CLAUDE.md 16).
+        assert marker.payload["confidence_delta_note"] == (
+            "证据交换阶段新增 1 条已发布证据条目。"
+        )
+
+
+async def test_no_published_evidence_emits_no_confidence_marker() -> None:
+    """A round where nothing was published has no trajectory point to add --
+    the honest absence, not a bug (CLAUDE.md 7)."""
+    claim_id = uuid4()
+    output: dict[str, object] = {}
+
+    outcome = await run_evidence_exchange(
+        _context(output, confirmed_claims=(claim_id,))
+    )
+
+    assert _confidence_events(outcome.events) == []

@@ -40,6 +40,13 @@ class _RecordingAcquirer:
         self.seen_requests = list(requests)
         return _AcquisitionResult()
 
+    async def acquire_uploaded(
+        self, object_ids: tuple[UUID, ...]
+    ) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none pass pdf_object_ids --
+        # but required to satisfy SourceAcquirer.
+        return _AcquisitionResult()
+
 
 class _EverythingUnresolvableAcquirer:
     """Mimics the real pipeline: any free-text (non-DOI) query is unresolvable.
@@ -62,6 +69,13 @@ class _EverythingUnresolvableAcquirer:
         return _AcquisitionResult(
             unresolvable=tuple(query for _, query in requests if "10." not in query)
         )
+
+    async def acquire_uploaded(
+        self, object_ids: tuple[UUID, ...]
+    ) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none pass pdf_object_ids --
+        # but required to satisfy SourceAcquirer.
+        return _AcquisitionResult()
 
 
 class _SilentDeliberator:

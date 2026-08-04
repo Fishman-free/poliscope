@@ -56,7 +56,7 @@ from packages.council.rounds.precommitment import (
 )
 from packages.epistemo.contracts import TaskPhase
 from packages.evidence.adversarial_retrieval import adversarial_retrieval_queries
-from packages.evidence.contracts import EvidenceEdgeType, EvidenceNodeType
+from packages.evidence.contracts import ClaimType, EvidenceEdgeType, EvidenceNodeType
 from packages.evidence.dialectical_fold import DebateCapsule
 from packages.evidence.lifecycle import QuarantinedNode, check_resurrection_conditions
 from packages.evidence.source_diversity import SourceDiversityInput, check_diversity
@@ -79,6 +79,9 @@ ADVERSARIAL_RETRIEVAL_ATTEMPTED = "ADVERSARIAL_RETRIEVAL_ATTEMPTED"
 # design spec 7's Resurrect is "emit a status-change event", not "re-run the
 # gate and rewrite the graph node" (see packages/evidence/lifecycle.py).
 RESURRECTION_GRANTED = "RESURRECTION_GRANTED"
+# A qualitative Evolution View trajectory marker (plan phase 5), not a formal
+# node -- see ``_confidence_marker`` for what it carries and why.
+CONFIDENCE_UPDATED = "CONFIDENCE_UPDATED"
 
 # Deterministic derivation for a forked claim's node id. The orchestrator's
 # idempotency keys must be stable across replay, and a random uuid4() written
@@ -157,6 +160,10 @@ class SourceAcquirer(Protocol):
 
     async def acquire(self, requests: list[tuple[Seat, str]]) -> AcquisitionLike: ...
 
+    async def acquire_uploaded(
+        self, object_ids: tuple[UUID, ...]
+    ) -> AcquisitionLike: ...
+
 
 class AcquisitionLike(Protocol):
     """The part of an acquisition result the round reads."""
@@ -178,7 +185,7 @@ class AcquiredLike(Protocol):
     def source_id(self) -> UUID: ...
 
     @property
-    def doi(self) -> str: ...
+    def doi(self) -> str | None: ...
 
     @property
     def title(self) -> str: ...
@@ -197,6 +204,10 @@ class AcquiredLike(Protocol):
 
     @property
     def dataset_id(self) -> str | None: ...
+
+    # Only set for an uploaded PDF's source (see AcquiredSource.object_id).
+    @property
+    def object_id(self) -> UUID | None: ...
 
 
 class RefusedLike(Protocol):
@@ -217,6 +228,10 @@ class FindingExtractor(Protocol):
     """
 
     async def extract(self, source_id: UUID, doi: str) -> FindingExtractionLike: ...
+
+    async def extract_uploaded(
+        self, source_id: UUID, object_id: UUID
+    ) -> FindingExtractionLike: ...
 
 
 class FindingExtractionLike(Protocol):
@@ -267,6 +282,20 @@ class PhaseContext:
     # by the worker (see apps/worker/jobs.py::_quarantined_nodes). Empty for a
     # task with nothing quarantined yet -- Resurrect then has nothing to do.
     quarantined: tuple[QuarantinedNode, ...] = ()
+    # Object ids of PDFs the researcher uploaded for this task (loaded by the
+    # worker from ResearchTaskModel.user_evidence["pdf_object_ids"] -- see
+    # apps/worker/jobs.py::deliberate). Empty when nothing was uploaded, which
+    # is the common case: most sources still arrive via DOI/free-text request.
+    pdf_object_ids: tuple[UUID, ...] = ()
+    # Plan phase 8.3: the human's advisory directional steer collected at the
+    # BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint, or None outside that one
+    # phase. Deliberately a dedicated field rather than another `carried`
+    # entry: `carried` accumulates forward into every later phase's prompt
+    # (see packages/council/deliberation.py::_user_prompt), and CLAUDE.md 4/8
+    # requires this text to be visible in JOINT_MODELING's prompt only, never
+    # treated as evidence a later phase's Evidence Gate/Claim/DissentCertificate
+    # logic can read.
+    guidance: str | None = None
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase."""
@@ -310,6 +339,40 @@ def _unavailable_events(
             idempotency_key=context.key("unavailable", seat.value),
         )
         for seat in sorted(absent, key=lambda item: item.value)
+    )
+
+
+def _confidence_marker(
+    context: PhaseContext,
+    claim_id: UUID,
+    note: str,
+    *key_parts: object,
+) -> EmittedEvent:
+    """One Evolution View trajectory point for ``claim_id`` at this phase.
+
+    Design spec 8's Evolution View (plan phase 5) could previously only plot
+    the sparse, incidental events a round happened to emit (a fork, a
+    challenge, a dissent) -- most phase boundaries left no trace at all for a
+    claim that was not itself challenged, so the view could not draw a
+    continuous per-claim trajectory. This adds one qualitative marker per
+    phase boundary that plausibly shifts a claim's standing (EVIDENCE_
+    EXCHANGE, CROSS_EXAMINATION, JOINT_MODELING, FINAL_REJUDGMENT), so every
+    confirmed claim gets a point at each of those four phases even when
+    nothing else about it changed.
+
+    ``note`` is deliberately a plain-language sentence, never a number.
+    CLAUDE.md 16 forbids substituting a model's confidence for statistical
+    uncertainty, and a fabricated "+0.07 confidence" delta would be exactly
+    that -- there is no model in this MVP that computes a real confidence
+    delta for a claim. The honest content of this marker is only "something
+    happened to this claim's standing at this phase, and here is what", not
+    "the probability changed by this much".
+    """
+    return EmittedEvent(
+        event_type=CONFIDENCE_UPDATED,
+        payload={"phase": context.phase.value, "confidence_delta_note": note},
+        idempotency_key=context.key("confidence_updated", *key_parts),
+        claim_id=claim_id,
     )
 
 
@@ -388,8 +451,17 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
     return PhaseOutcome(
         events=tuple(events),
         carry={
+            # Keys must be plain strings, not ``Seat`` members: this dict is
+            # serialised into ``CouncilCheckpoint.carried`` (a
+            # ``FrozenDict[str, object]``) whenever the run halts at the
+            # BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint, and FrozenDict
+            # rejects any key whose exact type is not ``str`` -- including a
+            # StrEnum member, which is a ``str`` subclass but not ``str``
+            # itself. ``run_final_rejudgment`` converts back to ``Seat`` on
+            # read (see below).
             "initial_judgments": {
-                seat: submission.initial_judgment for seat, submission in sealed.items()
+                seat.value: submission.initial_judgment
+                for seat, submission in sealed.items()
             }
         },
         unfilled_slots=unfilled,
@@ -491,7 +563,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
                     # The gate reads these to decide admission; passing the real
                     # retrieval state rather than an optimistic default is what
                     # makes stage three of CLAUDE.md 7.3 mean anything.
-                    "has_doi": True,
+                    "has_doi": item.doi is not None,
                     "has_title": bool(item.title),
                     "has_authors": True,
                     "is_retracted": False,
@@ -516,6 +588,14 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
             # re-running it here would spend tool/model budget on a result
             # this round cannot change, so only fresh sources are attempted.
             if context.finding_extractor is None or item.already_known:
+                continue
+            if item.doi is None:
+                # Unreachable in practice: every AcquiredSource on this branch
+                # comes from acquire()'s DOI/free-text path, which always sets
+                # a real doi -- only acquire_uploaded's results carry None.
+                # The check exists because AcquiredLike.doi widened to
+                # str | None for that upload branch, and mypy cannot see the
+                # two branches never mix.
                 continue
             extraction = await context.finding_extractor.extract(
                 item.source_id, item.doi
@@ -558,14 +638,15 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
         # CLAUDE.md 10 wants it counted rather than forgotten -- except for
         # the adversarial-retrieval queries generated above. Those are
         # inherently free-text (no DOI substring for CandidatePool.add to
-        # resolve), so they land in ``unresolvable`` every single time, on
-        # every task with confirmed claims -- a constant, system-wide
-        # adapter-capability gap (the honest scope note in
-        # packages.evidence.adversarial_retrieval), not a task-specific
-        # evidentiary hole. Counting them here would make
+        # resolve), so acquisition tries them against the free, keyless search
+        # adapters (packages.evidence.adversarial_retrieval's scope note) --
+        # some resolve, some don't, depending on whether OpenAlex/Crossref/
+        # Semantic Scholar actually index a matching paper. Either way this is
+        # a constant, system-wide adapter-coverage fact rather than a
+        # task-specific evidentiary hole: counting a miss here would make
         # TaskStatus.COMPLETED_WITH_GAPS permanent for any task that reaches
-        # this round, defeating the point of that status. They stay visible
-        # instead through the dedicated event below.
+        # this round with confirmed claims, defeating the point of that
+        # status. They stay visible instead through the dedicated event below.
         slots.extend(
             f"ACQUISITION:unresolved:{query}"
             for query in acquisition.unresolvable
@@ -633,6 +714,75 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
                     evidence_level="A",
                 )
             )
+
+    if context.acquirer is not None and context.pdf_object_ids:
+        # A separate pass rather than folding into the DOI/free-text branch
+        # above: an upload has no doi to dedup or idempotency-key on (that
+        # branch keys on context.key("source", item.doi), which every
+        # doi=None upload would collide on), and it has no discovery step to
+        # share -- acquire_uploaded skips straight to persistence.
+        uploaded = await context.acquirer.acquire_uploaded(context.pdf_object_ids)
+        events.extend(
+            EmittedEvent(
+                event_type=EvidenceNodeType.SOURCE.value,
+                payload={
+                    "node_id": str(item.source_id),
+                    "doi": item.doi,
+                    "title": item.title,
+                    "has_doi": item.doi is not None,
+                    "has_title": bool(item.title),
+                    # Unlike a DOI lookup, acquisition alone never learns an
+                    # uploaded PDF's authors -- that has to wait for
+                    # FindingExtractor.extract_uploaded to read the text, and
+                    # even then only dataset_id gets written back today. This
+                    # reports the real, usually-empty state rather than the
+                    # DOI branch's hardcoded True, per CLAUDE.md 7.
+                    "has_authors": bool(item.authors),
+                    "is_retracted": False,
+                    "authors": list(item.authors),
+                    "dataset_id": item.dataset_id,
+                    "object_id": str(item.object_id) if item.object_id else None,
+                },
+                idempotency_key=context.key("uploaded_source", str(item.object_id)),
+                evidence_level=item.evidence_level,
+                source_id=item.source_id,
+            )
+            for item in uploaded.acquired
+        )
+        for item in uploaded.acquired:
+            if (
+                context.finding_extractor is None
+                or item.already_known
+                or item.object_id is None
+            ):
+                continue
+            extraction = await context.finding_extractor.extract_uploaded(
+                item.source_id, item.object_id
+            )
+            if extraction.ok and extraction.finding_id is not None:
+                events.append(
+                    EmittedEvent(
+                        event_type=EvidenceNodeType.STUDY_FINDING.value,
+                        payload={
+                            "doi": None,
+                            "finding_statement": extraction.finding_statement,
+                            "exact_quote": extraction.exact_quote,
+                            "method_quality": dict(extraction.method_quality),
+                        },
+                        idempotency_key=context.key(
+                            "finding", str(extraction.finding_id)
+                        ),
+                        evidence_level=extraction.evidence_level,
+                        source_id=item.source_id,
+                        finding_id=extraction.finding_id,
+                    )
+                )
+            else:
+                slots.append(
+                    f"ACQUISITION:no_finding:upload:{item.object_id}:{extraction.reason}"
+                )
+    elif context.pdf_object_ids:
+        slots.append("ACQUISITION:no_tool_provider_uploaded")
 
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(
@@ -707,6 +857,7 @@ async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
     round_ = ExchangeRound()
     events: list[EmittedEvent] = []
     slots: list[str] = list(unfilled)
+    published_item_count = 0
     for seat, output in sorted(outputs.items(), key=lambda kv: kv[0].value):
         raw = output.get("evidence_items")
         if isinstance(raw, (list, tuple)):
@@ -721,6 +872,7 @@ async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
             )
             if items:
                 published = await round_.run(items)
+                published_item_count += len(published.evidence_items)
                 events.append(
                     EmittedEvent(
                         event_type=EVIDENCE_PUBLISHED,
@@ -744,6 +896,17 @@ async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
         events.extend(resurrection_events)
         slots.extend(resurrection_slots)
     events.extend(_unavailable_events(context, absent))
+    if published_item_count:
+        # A marker per confirmed claim, not per published item: this round has
+        # no claim_id on an evidence item (EvidenceProjectionItem carries a
+        # source_id, not a claim reference), so the honest scope is "evidence
+        # moved in this round" against every claim the task is about, not a
+        # fabricated one-to-one mapping this round cannot support.
+        note = f"证据交换阶段新增 {published_item_count} 条已发布证据条目。"
+        events.extend(
+            _confidence_marker(context, claim_id, note, claim_id)
+            for claim_id in context.confirmed_claims
+        )
     return PhaseOutcome(
         events=tuple(events),
         unfilled_slots=tuple(slots),
@@ -783,6 +946,24 @@ def _fork_events(
     explicit empty object, honestly saying "not recorded here" instead of
     fabricating one (CLAUDE.md 7). The fork's own scope can be self-reported by
     the seat, same as ``statement``.
+
+    ``claim_type``/``study_design`` -- deviation disclosed per CLAUDE.md 17:
+    the plan for this mechanism assumed an upstream causal-language/design
+    signal already exists on the source ``StudyFinding``. It does not --
+    ``packages.papers.finding_extraction`` only extracts ``method_quality``
+    (six 0-1 quality dimensions), never a design-type classification, and
+    nothing in the design spec defines one either. Rather than inventing a
+    classifier this MVP has no model for, the forked claim's ``claim_type``
+    and ``study_design`` are self-reported by the challenging seat inside this
+    same ``fork`` mapping -- exactly the precedent already set by ``statement``
+    and ``scope`` above, and justified the same way ``run_cross_examination``
+    already justifies self-reported ``is_fatal``: no independent computation
+    exists, so the seat making the claim states it, and an unrecognised or
+    absent value honestly falls back to ``correlational`` rather than being
+    guessed as ``causal`` (CLAUDE.md 7). The anchor -- the pre-existing claim
+    being forked *from*, not asserted here -- keeps the same ``correlational``
+    placeholder as before; its real type, like its real scope, lives in
+    ``atomic_claims`` and is not fabricated here.
     """
     statement = str(fork.get("statement", ""))
     if not statement:
@@ -793,32 +974,54 @@ def _fork_events(
     )
     raw_scope = fork.get("scope")
     scope = raw_scope if isinstance(raw_scope, Mapping) else {}
+    claim_type = _self_reported_claim_type(fork.get("claim_type"))
+    study_design = str(fork.get("study_design", ""))
     anchor = EmittedEvent(
         event_type=EvidenceNodeType.CLAIM.value,
-        payload={"claim_type": "correlational", "scope": {}},
+        payload={"claim_type": ClaimType.CORRELATIONAL.value, "scope": {}},
         idempotency_key=context.key("claim_anchor", claim_id),
         claim_id=claim_id,
     )
+    forked_payload: dict[str, object] = {
+        "claim_type": claim_type.value,
+        "scope": dict(scope),
+        "statement": statement,
+        "falsification_condition": str(
+            fork.get("falsification_condition", "")
+        ),
+        "edges": [
+            {
+                "type": EvidenceEdgeType.CONTRADICTS.value,
+                "target": str(claim_id),
+            }
+        ],
+    }
+    if study_design:
+        forked_payload["study_design"] = study_design
     forked = EmittedEvent(
         event_type=EvidenceNodeType.CLAIM.value,
-        payload={
-            "claim_type": "correlational",
-            "scope": dict(scope),
-            "statement": statement,
-            "falsification_condition": str(
-                fork.get("falsification_condition", "")
-            ),
-            "edges": [
-                {
-                    "type": EvidenceEdgeType.CONTRADICTS.value,
-                    "target": str(claim_id),
-                }
-            ],
-        },
+        payload=forked_payload,
         idempotency_key=context.key("fork", seat.value, index),
         claim_id=new_claim_id,
     )
     return (anchor, forked)
+
+
+def _self_reported_claim_type(raw: object) -> ClaimType:
+    """Parse the seat's self-reported ``claim_type``, defaulting to
+    ``CORRELATIONAL`` for anything missing or unrecognised.
+
+    An honest default (CLAUDE.md 7): understating a claim as correlational
+    when it was meant as causal loses a check ``score_causal_overclaim`` would
+    otherwise run, but guessing ``causal`` for an unparseable value would
+    fabricate the one signal that check depends on.
+    """
+    if isinstance(raw, str):
+        try:
+            return ClaimType(raw)
+        except ValueError:
+            return ClaimType.CORRELATIONAL
+    return ClaimType.CORRELATIONAL
 
 
 async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
@@ -868,11 +1071,30 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                     idempotency_key=context.key("challenge", seat.value, index),
                 )
             )
+            severity = "致命" if entry.is_fatal else "非致命"
+            events.append(
+                _confidence_marker(
+                    context,
+                    entry.claim_id,
+                    f"遭到 {seat.value} 的{severity}质询：{entry.challenge_statement}",
+                    "challenge", seat.value, index,
+                )
+            )
             fork = item.get("fork")
             if entry.is_fatal and isinstance(fork, Mapping):
-                events.extend(
-                    _fork_events(context, seat, entry.claim_id, index, fork)
-                )
+                fork_events = _fork_events(context, seat, entry.claim_id, index, fork)
+                events.extend(fork_events)
+                if len(fork_events) == 2:
+                    forked_claim_id = fork_events[1].claim_id
+                    if forked_claim_id is not None:
+                        events.append(
+                            _confidence_marker(
+                                context,
+                                forked_claim_id,
+                                f"作为对 {entry.claim_id} 的分支主张被提出。",
+                                "fork_confidence", seat.value, index,
+                            )
+                        )
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(
         events=tuple(events),
@@ -1004,6 +1226,11 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
     )
     events: list[EmittedEvent] = []
     if result.ready:
+        note = "联合建模阶段：已形成条件化共识。"
+        events.extend(
+            _confidence_marker(context, claim_id, note, claim_id)
+            for claim_id in context.confirmed_claims
+        )
         events.append(
             EmittedEvent(
                 event_type=CONSENSUS_DRAFTED,
@@ -1100,7 +1327,11 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
         for seat, output in outputs.items()
     }
     if not judgments and isinstance(initial, Mapping):
-        judgments = {seat: str(text) for seat, text in initial.items()}
+        # Read back with str keys (see run_precommitment's carry comment) and
+        # convert to Seat here, where FinalRejudgmentInput needs it.
+        judgments = {
+            Seat(str(seat_value)): str(text) for seat_value, text in initial.items()
+        }
     if not judgments:
         return PhaseOutcome(
             events=_unavailable_events(context, absent),
@@ -1137,6 +1368,15 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
         for judgment in result.judgments
     ]
     dissenters = [judgment for judgment in result.judgments if judgment.has_dissent]
+    if context.confirmed_claims:
+        note = (
+            f"最终复判阶段：{len(result.judgments)} 位科学家给出最终判断，"
+            f"其中 {len(dissenters)} 位保留异议。"
+        )
+        events.extend(
+            _confidence_marker(context, claim_id, note, claim_id)
+            for claim_id in context.confirmed_claims
+        )
     if dissenters and context.confirmed_claims:
         # The first confirmed claim is the MVP target for a dissent: a seat
         # dissenting about several claims separately is future scope. Every

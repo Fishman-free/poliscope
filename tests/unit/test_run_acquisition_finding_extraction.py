@@ -28,12 +28,13 @@ _DOI = "10.1234/example"
 @dataclass(frozen=True, slots=True)
 class _Acquired:
     source_id: UUID
-    doi: str
+    doi: str | None
     title: str
     evidence_level: str
     already_known: bool = False
     authors: tuple[str, ...] = ()
     dataset_id: str | None = None
+    object_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,13 @@ class _FakeAcquirer:
         self, requests: list[tuple[Seat, str]]
     ) -> _AcquisitionResult:
         return self._result
+
+    async def acquire_uploaded(
+        self, object_ids: tuple[UUID, ...]
+    ) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none of them pass
+        # pdf_object_ids -- but required to satisfy SourceAcquirer.
+        return _AcquisitionResult()
 
 
 class _RequestingDeliberator:
@@ -85,9 +93,17 @@ class _FakeFindingExtractor:
     def __init__(self, result: _Extraction) -> None:
         self._result = result
         self.calls: list[tuple[UUID, str]] = []
+        self.uploaded_calls: list[tuple[UUID, UUID]] = []
 
     async def extract(self, source_id: UUID, doi: str) -> _Extraction:
         self.calls.append((source_id, doi))
+        return self._result
+
+    async def extract_uploaded(
+        self, source_id: UUID, object_id: UUID
+    ) -> _Extraction:
+        # Not exercised by this file's scenarios -- see acquire_uploaded above.
+        self.uploaded_calls.append((source_id, object_id))
         return self._result
 
 

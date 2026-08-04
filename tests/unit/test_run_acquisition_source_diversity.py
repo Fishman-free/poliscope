@@ -24,12 +24,13 @@ _DOI_B = "10.1234/study-b"
 @dataclass(frozen=True, slots=True)
 class _Acquired:
     source_id: UUID
-    doi: str
+    doi: str | None
     title: str
     evidence_level: str
     already_known: bool = False
     authors: tuple[str, ...] = ()
     dataset_id: str | None = None
+    object_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,13 @@ class _FakeAcquirer:
         self, requests: list[tuple[Seat, str]]
     ) -> _AcquisitionResult:
         return self._result
+
+    async def acquire_uploaded(
+        self, object_ids: tuple[UUID, ...]
+    ) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none pass pdf_object_ids --
+        # but required to satisfy SourceAcquirer.
+        return _AcquisitionResult()
 
 
 class _RequestingDeliberator:

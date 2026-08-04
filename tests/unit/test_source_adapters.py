@@ -7,8 +7,8 @@ from uuid import UUID
 import pytest
 
 from packages.kernel.contracts import FrozenDict
-from packages.tools.adapters import adapter
-from packages.tools.contracts import ToolRequest
+from packages.tools.adapters import adapter, search_adapter
+from packages.tools.contracts import ToolRequest, ToolResult
 from packages.tools.recorded import RecordedToolGateway, _request_hash
 
 FIXED_TASK_ID = UUID("11111111-1111-1111-1111-111111111111")
@@ -166,3 +166,78 @@ async def test_unknown_adapter_raises_value_error() -> None:
 
     with pytest.raises(ValueError, match="unknown adapter"):
         adapter("unknown_source", None)  # type: ignore[arg-type]
+
+
+class _FakeSearchGateway:
+    """Minimal ``ToolGateway`` double returning a scripted search payload."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+        self.requests: list[ToolRequest] = []
+
+    async def execute(self, request: ToolRequest) -> ToolResult:
+        self.requests.append(request)
+        return ToolResult(
+            call_id=UUID(int=0),
+            payload=FrozenDict(self._payload),
+            latency_ms=0,
+            retries=0,
+            error_code=None,
+        )
+
+
+_SEARCH_HIT_PAYLOADS: dict[str, dict[str, object]] = {
+    "openalex": {
+        "doi": "https://doi.org/10.9999/counter",
+        "id": "W9",
+        "title": "A counterexample",
+        "authors": ["Rivera"],
+        "year": 2021,
+        "type": "article",
+        "retracted": False,
+    },
+    "crossref": {
+        "doi": "10.5555/found",
+        "title": "Found via search",
+        "authors": ["A Author"],
+        "year": 2019,
+        "type": "journal-article",
+    },
+    "semantic_scholar": {
+        "doi": "10.7777/reverse",
+        "paper_id": "S9",
+        "title": "Reverse causation candidate",
+        "authors": ["Kim"],
+        "year": 2022,
+        "publication_types": ["JournalArticle"],
+    },
+}
+
+
+@pytest.mark.parametrize("adapter_name", ["openalex", "crossref", "semantic_scholar"])
+async def test_search_adapter_returns_normalized_source_on_hit(
+    adapter_name: str,
+) -> None:
+    gateway = _FakeSearchGateway(_SEARCH_HIT_PAYLOADS[adapter_name])
+    inst = search_adapter(adapter_name, gateway, task_id=FIXED_TASK_ID)
+    source = await inst.search("digital wellbeing screen time")
+    assert source is not None
+    assert source.doi.startswith("10.")
+    assert source.title
+    assert gateway.requests[0].operation == "search"
+    assert gateway.requests[0].arguments["query"] == "digital wellbeing screen time"
+
+
+@pytest.mark.parametrize("adapter_name", ["openalex", "crossref", "semantic_scholar"])
+async def test_search_adapter_returns_none_on_miss(adapter_name: str) -> None:
+    """No DOI in the payload is an honest miss, not a fabricated hit."""
+    gateway = _FakeSearchGateway({"doi": None})
+    inst = search_adapter(adapter_name, gateway, task_id=FIXED_TASK_ID)
+    source = await inst.search("no such paper exists anywhere")
+    assert source is None
+
+
+async def test_search_adapter_rejects_unpaywall() -> None:
+    """Unpaywall has no free-text search capability -- not a valid name here."""
+    with pytest.raises(ValueError, match="unknown searchable adapter"):
+        search_adapter("unpaywall", None)  # type: ignore[arg-type]

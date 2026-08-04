@@ -17,15 +17,22 @@ hand-built :class:`LedgerEntry` fixtures.
 **Causal Overclaim is the one score this case cannot produce, honestly.**
 ``score_causal_overclaim`` reads ``study_design`` off a ``Claim`` event's
 payload (see ``packages/evidence/gate.py``'s Stage 6 and ``packages/
-evaluation/scoring.py``), but grepping ``packages/council/rounds/registry.py``
-shows the only two places that ever emit a ``Claim`` event (the Fork path in
-``_fork_events``) hardcode ``claim_type="correlational"`` and never set
-``study_design`` at all. No round currently produces a causal Claim event
-through the real orchestrator, scripted gateway or not -- so this test asserts
-``score_causal_overclaim`` returns ``None`` here and says why, rather than
-manufacturing a Claim event no production code path would ever emit
-(CLAUDE.md 7: the system must admit what it does not know, including about
-its own evaluation harness).
+evaluation/scoring.py``). The only place that ever emits a ``Claim`` event is
+the Fork path in ``packages.council.rounds.registry._fork_events``, and since
+Phase 4 it no longer hardcodes ``claim_type="correlational"`` -- a seat that
+self-reports ``claim_type``/``study_design`` in its ``fork`` mapping (see that
+function's docstring on why self-reporting, not a classifier, is the honest
+option here) can produce a genuine causal claim. This demo case's
+``_DemoGateway`` simply never answers ``CROSS_EXAMINATION`` with any
+challenge at all, let alone a fatal one with a ``fork``, so no ``Claim`` event
+of any kind is emitted here -- a scenario-specific gap (this scripted run
+does not exercise that phase), not the system-wide impossibility it used to
+be. This test asserts ``score_causal_overclaim`` returns ``None`` here and
+says why, rather than manufacturing a Claim event this particular scripted
+run does not produce (CLAUDE.md 7: the system must admit what it does not
+know, including about its own evaluation harness). The Fork-produced causal
+path itself is covered directly in ``tests/unit/
+test_run_cross_examination_fork.py``.
 """
 
 from __future__ import annotations
@@ -80,6 +87,7 @@ class _Acquired:
     already_known: bool = False
     authors: tuple[str, ...] = ()
     dataset_id: str | None = None
+    object_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +130,13 @@ class _DemoAcquirer:
                 for doi in _DOIS
             )
         )
+
+    async def acquire_uploaded(
+        self, object_ids: tuple[UUID, ...]
+    ) -> _AcquisitionResult:
+        # Not exercised by this file's scenario -- see module docstring on
+        # what this demo case does and does not exercise.
+        return _AcquisitionResult()
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +187,12 @@ class _DemoFindingExtractor:
 
     async def extract(self, source_id: UUID, doi: str) -> _Extraction:
         return self._by_doi[doi]
+
+    async def extract_uploaded(
+        self, source_id: UUID, object_id: UUID
+    ) -> _Extraction:
+        # Not exercised by this file's scenario -- see acquire_uploaded above.
+        raise NotImplementedError
 
 
 class _DemoGateway:
@@ -297,8 +318,9 @@ async def test_full_poliscope_demo_case_produces_real_scores() -> None:
     # DissentCertificate rather than being silently dropped (CLAUDE.md 4).
     assert dissent == 1.0
 
-    # Documented gap, not a bug: see the module docstring. No round in
-    # packages/council/rounds/registry.py currently emits a Claim event with a
-    # `study_design` field, so this baseline -- like every baseline -- cannot
-    # produce a non-None causal overclaim score today.
+    # Documented gap, not a bug: see the module docstring. This scripted
+    # gateway never answers CROSS_EXAMINATION with a fatal fork, so no Claim
+    # event is emitted in this run at all -- a scenario-specific gap, not
+    # proof that no run ever could (see test_run_cross_examination_fork.py
+    # for the Fork path that now can, since Phase 4).
     assert score_causal_overclaim(outcome.events) is None

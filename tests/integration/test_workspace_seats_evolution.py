@@ -19,13 +19,19 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import run_task
+from apps.worker.jobs import JobResult, run_task
 from packages.council.contracts import Seat
 from packages.epistemo.contracts import TaskPhase, TaskStatus
 from packages.kernel.contracts import FrozenDict
-from packages.models.contracts import ModelRequest, ModelResult, SchemaStatus
+from packages.models.contracts import (
+    ModelGateway,
+    ModelRequest,
+    ModelResult,
+    SchemaStatus,
+)
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
-from packages.research.repository import CLAIM_CONFIRMED
+from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
+from packages.research.service import ResearchService
 
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
 
@@ -141,6 +147,32 @@ class _WorkspacePanelGateway:
         )
 
 
+async def _run_to_completion(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+    *,
+    gateway: ModelGateway | None = None,
+) -> JobResult:
+    """Run a task past the JOINT_MODELING checkpoint to a terminal status.
+
+    Both tests below need FINAL_REJUDGMENT's per-seat judgments and the
+    DissentCertificate it can produce, but the BLINDSPOT_BOUNTY ->
+    JOINT_MODELING checkpoint (plan phase 8.2) halts every first pass before
+    either runs. An empty guidance submission stands in for the deliberate
+    "no intervention" CLAUDE.md 4/8 requires; see the identically-shaped
+    helper in tests/integration/test_worker_pipeline.py.
+    """
+    first = await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
+    if first.run.final_status != TaskStatus.AWAITING_COUNCIL_INPUT:
+        return first
+    async with app_sessions() as session:
+        service = ResearchService(ResearchRepository(session))
+        await service.submit_council_guidance(task_id, "")
+        await session.commit()
+    return await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
+
+
 async def _seed_queued_task(
     sessions: async_sessionmaker[AsyncSession],
 ) -> tuple[UUID, UUID]:
@@ -185,7 +217,7 @@ async def test_seats_panel_carries_real_precommitment_challenge_and_judgment(
 ) -> None:
     task_id, claim_id = await _seed_queued_task(app_sessions)
     gateway = _WorkspacePanelGateway(claim_id)
-    await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
+    await _run_to_completion(app_sessions, projector_sessions, task_id, gateway=gateway)
 
     body = (await api_client.get(f"/api/workspace/{task_id}")).json()
     seats = {entry["seat"]: entry for entry in body["seats"]}
@@ -226,7 +258,7 @@ async def test_evolution_feed_carries_the_fork_challenge_and_dissent(
 ) -> None:
     task_id, claim_id = await _seed_queued_task(app_sessions)
     gateway = _WorkspacePanelGateway(claim_id)
-    await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
+    await _run_to_completion(app_sessions, projector_sessions, task_id, gateway=gateway)
 
     body = (await api_client.get(f"/api/workspace/{task_id}")).json()
     evolution = body["evolution"]
@@ -249,3 +281,27 @@ async def test_evolution_feed_carries_the_fork_challenge_and_dissent(
 
     for entry in evolution:
         assert set(entry) == {"sequence", "event_type", "status", "claim_id", "payload"}
+
+    # Plan phase 5: the seeded claim survives CROSS_EXAMINATION (challenged
+    # twice), JOINT_MODELING (a ready consensus, since the gateway answers
+    # with non-empty boundary/unresolved fields) and FINAL_REJUDGMENT (every
+    # seat judges) -- three distinct phase boundaries, not the sparse single
+    # discrete event a claim happened to be forked or challenged in. This is
+    # what turns the feed from disconnected dots into an actual per-claim
+    # trajectory the client can draw a continuous line through.
+    confidence_entries = [
+        entry for entry in evolution if entry["event_type"] == "CONFIDENCE_UPDATED"
+    ]
+    claim_confidence_phases = {
+        entry["payload"]["phase"]
+        for entry in confidence_entries
+        if entry["claim_id"] == str(claim_id)
+    }
+    assert claim_confidence_phases == {
+        TaskPhase.CROSS_EXAMINATION.value,
+        TaskPhase.JOINT_MODELING.value,
+        TaskPhase.FINAL_REJUDGMENT.value,
+    }
+    for entry in confidence_entries:
+        note = entry["payload"]["confidence_delta_note"]
+        assert isinstance(note, str) and note

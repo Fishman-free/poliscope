@@ -21,6 +21,7 @@ from apps.api.dependencies import SessionDep
 from apps.api.schemas import SafetyNotice, WorkspaceSnapshot
 from packages.council.rounds.registry import (
     CHALLENGE_RAISED,
+    CONFIDENCE_UPDATED,
     FINAL_JUDGMENT,
     PRECOMMITMENT_SEALED,
     SEAT_UNAVAILABLE,
@@ -51,15 +52,17 @@ DISCRIMINATING_STUDY_NODE_TYPE = "DiscriminatingStudy"
 DISSENT_CERTIFICATE_NODE_TYPE = "DissentCertificate"
 
 # Events the Evolution View draws from: only ones that name a claim, either
-# through the ledger's own ``claim_id`` column (today only ``_fork_events``
-# sets it) or a claim reference inside their payload (a challenge's
-# ``claim_id``, a dissent certificate's ``target_id``). Deliberately narrower
-# than the Audit Trail, which is design spec 8's own separate panel and covers
-# every process event, not just claim-referencing ones.
+# through the ledger's own ``claim_id`` column (``_fork_events`` and, since
+# plan phase 5, every ``CONFIDENCE_UPDATED`` marker) or a claim reference
+# inside their payload (a challenge's ``claim_id``, a dissent certificate's
+# ``target_id``). Deliberately narrower than the Audit Trail, which is design
+# spec 8's own separate panel and covers every process event, not just
+# claim-referencing ones.
 _EVOLUTION_EVENT_TYPES = (
     EvidenceNodeType.CLAIM.value,
     CHALLENGE_RAISED,
     EvidenceNodeType.DISSENT_CERTIFICATE.value,
+    CONFIDENCE_UPDATED,
 )
 
 
@@ -236,14 +239,22 @@ async def _evolution(
     session: AsyncSession,
     task_id: UUID,
 ) -> tuple[FrozenDict[str, object], ...]:
-    """Chronological feed of Claim-referencing events: forks, challenges, dissents.
+    """Chronological feed of Claim-referencing events: forks, challenges,
+    dissents, and (since plan phase 5) qualitative confidence markers.
 
-    A task with no fork, challenge, or dissent against a claim produces an
-    empty feed -- the honest result of what the council actually recorded,
-    not a bug. No round in ``packages/council/rounds/registry.py`` currently
-    emits a dedicated "confidence changed" event for a Claim, so this cannot
-    show a continuous confidence curve, only the discrete events that do
-    exist; see README's known-gaps entry for the same limitation.
+    A task with no fork, challenge, dissent, or confidence marker against a
+    claim produces an empty feed -- the honest result of what the council
+    actually recorded, not a bug. ``CONFIDENCE_UPDATED``
+    (``packages.council.rounds.registry._confidence_marker``) gives every
+    confirmed claim a point at each of EVIDENCE_EXCHANGE, CROSS_EXAMINATION,
+    JOINT_MODELING, and FINAL_REJUDGMENT, so the client can now draw a
+    continuous per-claim trajectory across those four phases rather than only
+    the sparse discrete events a claim happened to be challenged or forked in.
+    That marker's ``confidence_delta_note`` is a plain-language sentence, not
+    a number -- CLAUDE.md 16 forbids treating a model's confidence as a
+    substitute for real statistical uncertainty, and no model in this MVP
+    computes an actual confidence delta for a claim, so this stays a
+    qualitative trajectory, not a fabricated quantitative curve.
     """
     result = await session.execute(
         select(ScientificEventModel)

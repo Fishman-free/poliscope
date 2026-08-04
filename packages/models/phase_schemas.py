@@ -69,6 +69,46 @@ CHALLENGE_SET: Final[dict[str, Any]] = {
                     },
                     "statement": {"type": "string"},
                     "is_fatal": {"type": "boolean"},
+                    "fork": {
+                        "type": "object",
+                        "description": (
+                            "Only consulted when is_fatal is true. Produces a "
+                            "parallel Claim node (packages.council.rounds."
+                            "registry._fork_events) instead of silently "
+                            "dropping a disagreement that QUALIFY cannot "
+                            "reconcile."
+                        ),
+                        "properties": {
+                            "statement": {"type": "string"},
+                            "scope": {"type": "object"},
+                            "falsification_condition": {"type": "string"},
+                            "claim_type": {
+                                "type": "string",
+                                "description": (
+                                    "causal, correlational, measurement, "
+                                    "boundary, mechanism, or null_result -- "
+                                    "self-reported because no independent "
+                                    "model computes this in the MVP. An "
+                                    "unrecognised value falls back to "
+                                    "correlational rather than being guessed "
+                                    "as causal."
+                                ),
+                            },
+                            "study_design": {
+                                "type": "string",
+                                "description": (
+                                    "cross_sectional, longitudinal, "
+                                    "experimental, quasi_experimental, "
+                                    "qualitative, meta_analysis, or other -- "
+                                    "same vocabulary as STUDY_FINDING_"
+                                    "EXTRACTION's design field. Only "
+                                    "meaningful alongside claim_type=causal; "
+                                    "packages.evidence.causal_policy."
+                                    "CausalUpgradePolicy checks the pair."
+                                ),
+                            },
+                        },
+                    },
                 },
                 "required": ["claim_id", "statement", "is_fatal"],
             },

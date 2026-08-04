@@ -9,13 +9,18 @@ be detected. Two call sites (``packages/reports/service.py`` and
 ``apps/api/routers/workspace.py``) built the same DOI-only triple inline. This
 module is the one place that logic lives now.
 
-``dataset_id`` is schema-ready, not adapter-wired: no current provider adapter
-(OpenAlex, Crossref, Semantic Scholar, Unpaywall) resolves a dataset
-identifier from a DOI lookup, so in production every row's ``dataset_id`` is
-``None`` until a future extraction path populates it. ``SAME_DATASET`` links
-below are exercised by unit tests with synthetic data, not by any live
-pipeline yet -- this asymmetry is documented in README's known-gaps section
-rather than implied as fully wired.
+``dataset_id`` is wired for sources that reach the full-text stage: no
+metadata-only adapter (OpenAlex, Crossref, Semantic Scholar, Unpaywall)
+resolves a dataset identifier from a DOI lookup alone, so a Level B source
+still has ``dataset_id = None``. Once ``packages.papers.finding_extraction``
+fetches a source's open-access full text, it scans it with
+``packages.papers.parser.detect_dataset_identifier`` for a known repository
+accession pattern (ICPSR/OSF/Dataverse/Dryad/Zenodo) and writes a match back
+onto that same ``sources`` row. ``SAME_DATASET`` links are therefore real for
+any two Level A sources sharing a detected identifier, not only exercised by
+unit tests with synthetic data -- though detection is limited to that named
+pattern set, so an accession style outside it still reads as ``None`` rather
+than a guess.
 
 ``authors`` is genuinely wired end to end: every adapter already parses it
 onto ``NormalizedSource``, and ``SourceAcquisition._persist`` now saves it.
