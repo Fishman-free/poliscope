@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
+import getpass
 import json
 import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
-
-import httpx
 
 from apps.cli import exit_codes
 from apps.cli.client import (
@@ -26,8 +26,17 @@ from apps.cli.client import (
     CLIClient,
 )
 
+# One bearer token per base URL, so a single machine can talk to a local API
+# and several deployed instances without re-logging in. The file is plain
+# JSON; the token expires server-side after 30 days, so a leaked copy is a
+# time-bounded secret rather than a password.
+CREDENTIALS_FILE = Path.home() / ".poliscope" / "credentials.json"
+
 EPILOG = """\
 examples:
+  poliscope login --username alice
+  poliscope register --username alice
+  poliscope logout
   poliscope start --contract research.json
   poliscope status --task-id 7f3a... --json
   poliscope pause --task-id 7f3a...
@@ -72,6 +81,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="check that the API and its database are reachable",
     )
     health.set_defaults(handler=_cmd_health)
+
+    login = subparsers.add_parser(
+        "login",
+        help="log in and remember the session token for this base URL",
+        description=(
+            "Exchanges username/password for a 30-day bearer token and stores "
+            "it in ~/.poliscope/credentials.json; every later command sends it "
+            "automatically. Prefer flags when running non-interactively."
+        ),
+    )
+    login.add_argument("--username", default=None, metavar="NAME")
+    login.add_argument("--password", default=None, metavar="PASSWORD")
+    login.set_defaults(handler=_cmd_login)
+
+    register = subparsers.add_parser(
+        "register",
+        help="create an account and log in",
+        description=(
+            "Registers a new account and stores the session token like login "
+            "does. Interactive mode asks for the password twice; --password "
+            "skips the confirmation (and leaves the password in shell "
+            "history -- prefer the interactive prompt)."
+        ),
+    )
+    register.add_argument("--username", default=None, metavar="NAME")
+    register.add_argument("--password", default=None, metavar="PASSWORD")
+    register.set_defaults(handler=_cmd_register)
+
+    logout = subparsers.add_parser(
+        "logout",
+        help="revoke the session token and forget it locally",
+        description=(
+            "Revokes the token for this base URL server-side and removes it "
+            "from the credentials file. A token set via POLISCOPE_API_TOKEN "
+            "is revoked too, but the environment variable itself cannot be "
+            "unset by this command."
+        ),
+    )
+    logout.set_defaults(handler=_cmd_logout)
 
     start = subparsers.add_parser(
         "start",
@@ -371,26 +419,106 @@ def _print_json(payload: Any) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def _auth_from_env() -> httpx.BasicAuth | None:
-    """Credentials for a deployed instance gated by Caddy's shared HTTP Basic
-    Auth (see ``deploy/caddy/Caddyfile``).
-
-    Read from the environment rather than a ``--flag`` so every subcommand's
-    ``--help`` stays uncluttered by a password argument, and so an Agent/Skill
-    invocation only needs these two variables set once in its own environment
-    -- not threaded through every ``poliscope`` call it makes. Unset (the
-    default) reproduces today's behaviour exactly: no ``Authorization``
-    header, unchanged for anyone still talking to a local, un-gated API.
-    """
-    username = os.environ.get("POLISCOPE_API_USERNAME")
-    password = os.environ.get("POLISCOPE_API_PASSWORD")
-    if username is None or password is None:
+def _load_token(base_url: str) -> str | None:
+    """Bearer token for ``base_url``: ``POLISCOPE_API_TOKEN`` wins (non-interactive
+    agents), then the credentials file. A corrupt or unreadable file is treated
+    as "not logged in" rather than a crash -- the 401 that follows is honest
+    and self-explanatory."""
+    token = os.environ.get("POLISCOPE_API_TOKEN")
+    if token:
+        return token
+    try:
+        credentials = json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return None
-    return httpx.BasicAuth(username, password)
+    token = credentials.get(base_url.rstrip("/"))
+    return token if isinstance(token, str) and token else None
+
+
+def _save_token(base_url: str, token: str) -> None:
+    """Merge ``token`` into the credentials file, preserving other base URLs.
+    chmod 0600 is best-effort -- it is meaningful on POSIX and a no-op (with
+    a swallowed error) on Windows."""
+    CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    credentials: dict[str, Any] = {}
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        credentials = json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
+    credentials[base_url.rstrip("/")] = token
+    CREDENTIALS_FILE.write_text(
+        json.dumps(credentials, indent=2), encoding="utf-8"
+    )
+    with contextlib.suppress(OSError):
+        CREDENTIALS_FILE.chmod(0o600)
+
+
+def _drop_token(base_url: str) -> None:
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        credentials = json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
+        key = base_url.rstrip("/")
+        if key not in credentials:
+            return
+        del credentials[key]
+        CREDENTIALS_FILE.write_text(
+            json.dumps(credentials, indent=2), encoding="utf-8"
+        )
+    if key not in credentials:
+        return
+    del credentials[key]
+    CREDENTIALS_FILE.write_text(
+        json.dumps(credentials, indent=2), encoding="utf-8"
+    )
+
+
+def _ask_username_password(
+    args: argparse.Namespace, *, confirm: bool = False
+) -> tuple[str, str]:
+    """Username/password from --flags, falling back to an interactive prompt.
+
+    ``confirm`` re-reads the password once (register) so a typo does not
+    silently create an account whose password nobody knows.
+    """
+    username = args.username if args.username else input("username: ").strip()
+    password = args.password
+    if password is None:
+        password = getpass.getpass("password: ")
+        if confirm and getpass.getpass("password (again): ") != password:
+            raise ValueError("passwords do not match")
+    return username, password
+
+
+async def _cmd_login(client: CLIClient, args: argparse.Namespace) -> int:
+    username, password = _ask_username_password(args)
+    result = await client.login(username, password)
+    _save_token(args.base_url, result["token"])
+    print(f"logged in as {result['username']}")
+    print(f"token saved to {CREDENTIALS_FILE} (base URL {args.base_url.rstrip('/')})")
+    return exit_codes.OK
+
+
+async def _cmd_register(client: CLIClient, args: argparse.Namespace) -> int:
+    try:
+        username, password = _ask_username_password(args, confirm=True)
+    except ValueError as error:
+        print(f"poliscope: {error}", file=sys.stderr)
+        return exit_codes.FAILED
+    result = await client.register(username, password)
+    _save_token(args.base_url, result["token"])
+    print(f"registered and logged in as {result['username']}")
+    print(f"token saved to {CREDENTIALS_FILE} (base URL {args.base_url.rstrip('/')})")
+    return exit_codes.OK
+
+
+async def _cmd_logout(client: CLIClient, args: argparse.Namespace) -> int:
+    # The endpoint is idempotent: without a token it still answers 204, and a
+    # token from POLISCOPE_API_TOKEN is revoked even though the variable stays.
+    await client.logout()
+    _drop_token(args.base_url)
+    print(f"logged out; token removed from {CREDENTIALS_FILE}")
+    return exit_codes.OK
 
 
 async def _run(args: argparse.Namespace) -> int:
-    async with CLIClient(args.base_url, auth=_auth_from_env()) as client:
+    async with CLIClient(args.base_url, token=_load_token(args.base_url)) as client:
         handler = args.handler
         result: int = await handler(client, args)
         return result
@@ -416,6 +544,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return exit_codes.REQUEST_REJECTED
     except KeyboardInterrupt:
         return exit_codes.INTERRUPTED
+    except EOFError:
+        print(
+            "poliscope: no interactive input available; pass --username and "
+            "--password, or set POLISCOPE_API_TOKEN",
+            file=sys.stderr,
+        )
+        return exit_codes.FAILED
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ Poliscope 的设计从一开始就是反着来的：先决定"一个可靠的争
 
 七人议会的执行记忆基座是 [MemoBrain](https://github.com/qhjqhj00/MemoBrain)：每位科学家有独立的私人记忆，按各自角色取景地回忆证据；被反驳的假设进入隔离区，满足条件时可以复活；压缩历史时正反两边的证据都保留在辩论胶囊（`DebateCapsule`）里。
 
-而**你的记忆**，存在知识库里。上传的 PDF 会被解析、保存、跨任务复用——这是属于研究者的长期记忆：一次整理，长期生效。任务关联知识库后，议会在获取证据时会**检索你的知识库**并把命中片段带进科学家的判断上下文（明确标注为"非正式证据"），你的文献真正参与七人的推理，而不是躺在一个无人读取的文件夹里。
+而**你的记忆**，存在知识库里。上传的 PDF、Word、PPT、Excel、CSV，乃至直接粘贴进来的文本，都会被解析、保存、跨任务复用——这是属于研究者的长期记忆：一次整理，长期生效。任务关联知识库后，议会在获取证据时会**检索你的知识库**并把命中片段带进科学家的判断上下文（明确标注为"非正式证据"），你的文献真正参与七人的推理，而不是躺在一个无人读取的文件夹里。
 
 ---
 
@@ -62,16 +62,15 @@ Poliscope 没有官方托管的公共网站——它按 MIT 协议开源，**你
 - 部署到服务器后，把 `.env` 里的 `POLISCOPE_SITE_ADDRESS` 改成你的域名，Caddy 自动签发 HTTPS，网址就是你的域名。
 - **打不开 `http://localhost:8080/`？** 先查两件事：`grep POLISCOPE_SITE_HOST_PORT .env`（看实际端口）和 `docker compose ps caddy`（看 Caddy 容器绑定）。如果 80 端口被别的项目占用，真地址是 `http://localhost:<PORT>/`。改了 `deploy/caddy/Caddyfile` 后要 **`docker compose up -d --build caddy`** 重建——Caddyfile 是构建进镜像的，不重建不生效。
 
-根路径 `/` 是公开落地页；研究证据工作台在 `/workspace`（站点设了口令时这里会弹登录框，账号密码在 `.env` 的 `POLISCOPE_SITE_USERNAME` / `POLISCOPE_SITE_PASSWORD`）。
+根路径 `/` 是公开落地页；研究证据工作台在 `/workspace`——**首次访问会看到注册/登录页**：注册一个账号即可进入（本机记住登录状态，30 天内免登录；换机器/过期后重新登录）。账号系统已取代旧的共享口令（`.env` 里的 `POLISCOPE_SITE_USERNAME` / `POLISCOPE_SITE_PASSWORD` 已不再使用，可删除）。
 
 ### 三步开始研究
 
-1. **进入工作台。** 打开 `http://localhost:8080/`，点"进入工作台"（或直接访问 `/workspace`），输入口令。
+1. **进入工作台。** 打开 `http://localhost:8080/`，点"进入工作台"（或直接访问 `/workspace`）。首次使用先注册账号（用户名 + 密码），之后本机自动登录。
 2. **建任务。** 写清楚你的争议问题。可选地：
-   - 关联一个**知识库**（你的文献作为 Level A 用户提供源参与议会）；
+   - 关联一个**知识库**（你的文献作为 Level A 用户提供源参与议会；需要整理文档时点「管理知识库」）；
    - 上传 **PDF**（任务级，全文核验后按 Level A 进入证据图）；
-   - 填 **DOI / BibTeX**（DOI 直接解析进证据源，BibTeX 自动提取 DOI）；
-   - 在**模型设置**里填你自己的 Base URL / API Key / 模型名（留空则用系统默认模型）。API Key 只随本次任务存储，任何页面都不会回显。
+   - 模型不用每次填——右侧栏的**模型设置**面板保存一次，之后所有任务自动使用；不设置则用系统默认模型。
    
    系统会先列出可以拆开调查的几条原子主张，勾选你关心的，点"确认并开始研究"。
 3. **跟踪与导出。** 研究过程中页面自动跟随议会进度：每个轮次自动切换到对应视图，盲点悬赏轮结束后你还有一次**方向调整机会**（可提交一段方向性备注，或明确留空继续）。跑完后可以在网页上查看结论，也可以导出 Markdown / JSON 报告存档。
@@ -80,32 +79,56 @@ Poliscope 没有官方托管的公共网站——它按 MIT 协议开源，**你
 
 ### 知识库：你的长期记忆
 
-工作台的"知识库"标签页（无任务时也出现在首页右侧）：
+工作台的"知识库"标签页（有任务时在顶部标签栏，无任务时通过首页上方的「知识库」分段按钮进入）：
 
-- 创建知识库 → 上传 PDF（单个 ≤ 20 MB）→ 自动解析全文并保存；
+- 创建知识库 → 上传 **PDF / TXT / MD / CSV / DOCX / PPTX / XLSX**（单个 ≤ 20 MB）→ 自动解析全文并保存；老版 .doc / .ppt / .xls 无法解析，系统会明确提示另存为新格式，不会假装解析成功；知识库按账号隔离；
+- 不想整理成文件？直接**粘贴文本**（标题 + 内容）也能入库——笔记、网页摘录、报告片段都可以，检索与 Level A 待遇和上传完全一致；
 - 任务创建时关联知识库，议会的获取轮会把你的文档作为 Level A 源核验，并把检索命中带进科学家的判断上下文；
 - 关键词检索为 Postgres 全文检索 + 子串匹配：英文享受词干匹配，**中文为子串匹配**（检索定位在段落内展开原文，不做分词，这是当前版本的已知边界）；
 - 删除保护：已被任务引用或已产生证据的知识库/文档会拒绝删除，证据追溯不会被抹掉。
 
+### 右侧栏：模型设置、Skills 与会话历史
+
+工作台的右侧栏在任何页面都可见，三件事（全部按账号隔离）：
+
+- **模型设置**：填一次 Base URL / API Key / 模型名并保存（存服务器，创建任务时自动套用），之后所有任务都使用它。API Key 只存服务器、**任何页面都不会回显**——界面只显示"已配置"状态，改配置时留空即保留旧 Key。不设置则使用部署方配置的系统默认模型。
+- **Skills**：把 GitHub 技能仓库地址（如 `https://github.com/owner/skill-name`）粘贴到面板下方的输入框，点击「下载并添加」即可下载其 SKILL.md 并加入列表；勾选 = 启用。启用后新建任务默认携带，worker 会把技能内容注入议会 prompt 作为**「研究者提供的技能指令（非正式证据）」**——它指导科学家的调查方法，但永远不作为证据支持或反驳主张。
+- **会话历史**：本账号的所有研究会话按时间倒序排列，点击即跳转——不再需要复制粘贴任务 ID，换机器、关对话后都能从历史里直接回来。
+
 ### Skill 使用方法：从编程 Agent 里直接调用
 
-如果你平时在 Claude Code、Codex 或其它支持 `AGENTS.md` 约定的编程 Agent 里工作，不想切换到网页，可以直接让 Agent 调用 Poliscope。仓库里放了三份内容一致的 Skill 副本：
+如果你平时在 Claude Code、Codex 或其它支持 `AGENTS.md` 约定的编程 Agent 里工作，不想切换到网页，可以直接让 Agent 调用 Poliscope。仓库里放了四份内容一致的 Skill 副本，供不同 Agent 环境读取（`.claude-plugin/plugin.json` 是 Claude Code 插件元数据，本身不含 SKILL.md）：
 
 ```
-.claude/skills/poliscope/    Claude Code 的 Agent Skill
-.codex/skills/poliscope/     Codex 对应副本
-.agents/skills/poliscope/    通用 AGENTS.md 约定读取的副本
+skills/poliscope/             Claude Code 插件内的 Skill（/plugin install 后可用）
+.claude/skills/poliscope/     Claude Code 的 Agent Skill
+.codex/skills/poliscope/      Codex 对应副本
+.agents/skills/poliscope/     通用 AGENTS.md 约定读取的副本
 ```
 
-Skill 本质上都在调用同一个 `poliscope` 命令行工具（Python 3.12）。两种装法：
+Skill 本质上都在调用同一个 `poliscope` 命令行工具（Python 3.12）。装法三选一：
 
-**方式一：零安装，直接跑（`uvx` 是 `npx` 的 Python 等价物）：**
+**方式一：Claude Code 里 `/plugin install`（推荐，一条命令装好插件 + Skill）：**
+
+```bash
+/plugin install Fishman-free/poliscope
+```
+
+装完后直接输入 `/poliscope` 即可调用（也可以 `/plugin marketplace add Fishman-free/poliscope` 把它加进市场列表再浏览）。
+
+**方式二：`npx` 零安装运行（有 Node 18+ 即可，底层自动用仓库 venv 或 uvx 拉取 Python CLI）：**
+
+```bash
+npx github:Fishman-free/poliscope --help
+```
+
+发布到 npm registry 后，`npx poliscope --help` 同样可用。也可以用 Python 生态的等价物直接跑：
 
 ```bash
 uvx --from "git+https://github.com/Fishman-free/poliscope.git" poliscope --help
 ```
 
-**方式二：克隆仓库常驻安装：**
+**方式三：克隆仓库常驻安装：**
 
 ```bash
 git clone https://github.com/Fishman-free/poliscope.git
@@ -114,9 +137,15 @@ uv sync                       # 或者 pip install -e ".[dev]"
 poliscope --help              # 能打印帮助信息就说明装好了
 ```
 
-Skill 本身不内置任何服务器地址，它调用的命令行默认连 `http://localhost:8000`（本机起的 API）。连已部署实例时每次调用带 `--base-url`，设了共享口令则在环境变量里设好 `POLISCOPE_API_USERNAME` / `POLISCOPE_API_PASSWORD`。
+Skill 本身不内置任何服务器地址，它调用的命令行默认连 `http://localhost:8000`（本机起的 API）。连已部署实例时每次调用带 `--base-url`，并**先登录一次**：
 
-工作流：你用自然语言描述研究问题 → Skill 生成待确认的 Research Contract（**先给你看，不会直接提交**）→ 你确认后依次调用 `poliscope start`（给出建议主张）→ `poliscope confirm-claims` → `poliscope watch` / `status` → `poliscope export`。任务会返回 `task_id`，换机器、关对话后都能接着查。
+```bash
+poliscope login --base-url <URL>     # 输入用户名密码；首次使用可用 register 注册
+```
+
+token 保存在 `~/.poliscope/credentials.json`（一个 base URL 一个 token，30 天过期），之后所有命令自动带上；非交互环境（Agent 脚本）也可以直接设置 `POLISCOPE_API_TOKEN` 环境变量，优先级高于凭据文件。本机 API 不需要登录——`poliscope health` 可以先确认 API 活着。
+
+工作流：你用自然语言描述研究问题 → Skill 生成待确认的 Research Contract（**先给你看，不会直接提交**）→ 你确认后依次调用 `poliscope start`（给出建议主张）→ `poliscope confirm-claims` → `poliscope watch` / `status` → `poliscope export`。连已部署实例时先 `poliscope login` 一次（见上）。任务会返回 `task_id`，换机器、关对话后都能接着查。
 
 > **已知的诚实缺口**：任务级 PDF 上传接口（`POST /api/tasks/{task_id}/papers/upload`）本身能用，但 Skill 和命令行还没有对应的封装命令——想附带 PDF 时需要用 curl 直接调上传接口，或者在网页工作台操作。
 
@@ -125,6 +154,7 @@ Skill 本身不内置任何服务器地址，它调用的命令行默认连 `htt
 ## 请诚实对待它的结论
 
 - **它不是医疗建议。** 涉及心理健康的问题，报告里会明确标注"这是科研辅助，不是临床诊断"。
+- **登录 token 有一处已知的 URL 泄露面。** 浏览器的事件流（EventSource）无法携带请求头，所以实时进度流的登录 token 会出现在 URL 查询参数里，进而可能被 nginx 访问日志记录。本机或可信网络部署影响有限；介意的话请关闭或缩短访问日志保留时间（这是当前版本的已知边界）。
 - **它不会为了显得"有结论"而编结论。** 如果部署方没配好 AI 模型的访问权限，系统会诚实报告"未接入模型"，某些科学家的判断会显式标记为缺席。
 - **模型置信度不是统计证据。** 报告把模型判断、作者原话和统计推断分开标注，不用模型置信度替代统计不确定性。
 - **被反驳、被隔离的观点不会消失。** 报告里的分歧和反例都留着原文出处，你可以自己判断该信哪一边。

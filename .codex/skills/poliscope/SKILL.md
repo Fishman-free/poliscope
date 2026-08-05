@@ -38,6 +38,13 @@ invocation, which is fine for occasional calls but wasteful in a tight loop.
 
 ## Workflow
 
+0. **Authenticate once (deployed instances only).** A local API on
+   localhost needs no credentials. A deployed instance requires an account:
+   `poliscope login --base-url <URL>` exchanges username/password for a
+   30-day token saved under `~/.poliscope/credentials.json`, and every later
+   command picks it up automatically. Non-interactive agents set
+   `POLISCOPE_API_TOKEN` instead.
+
 1. **Understand the question.** From the user's request, extract: the
    research question itself, target populations/regions/languages, a date
    range if implied, which `evidence_priorities` matter most (see the enum
@@ -144,8 +151,7 @@ invocation, which is fine for occasional calls but wasteful in a tight loop.
 - Model confidence does not replace statistical uncertainty or expert judgment.
 - Every command needs a reachable Poliscope API (`poliscope health` checks
   this first if you are unsure one is running).
-- If the target is a deployed instance sitting behind a shared password
-  (Caddy's HTTP Basic Auth, see `deploy/caddy/Caddyfile`), set
-  `POLISCOPE_API_USERNAME` and `POLISCOPE_API_PASSWORD` in your environment
-  before calling `poliscope` -- every command reads them automatically, no
-  extra flag needed. Leave them unset for a local, un-gated API.
+- A deployed instance requires an account: run `poliscope login
+  --base-url <URL>` once (or set `POLISCOPE_API_TOKEN`), and every command
+  sends the session token automatically. Leave both unset for a local,
+  un-gated API.

@@ -124,12 +124,12 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 | 三个数据库身份的权限隔离（迁移者 / 应用 / 投影器） | 集成测试断言应用身份写图会被数据库拒绝 |
 | 事件账本幂等与断线续传（SSE 按 `Last-Event-ID` 续传） | 集成测试 + 浏览器实测 53/53 事件 |
 | 证据门六阶段审核、A–D 分级、因果越级隔离 | 集成测试，关键项经变异测试自证 |
-| 十个 CLI 子命令（含 `pause`/`resume`/`health`/`council-preview`/`council-guidance`） | 逐条对真实 API 手工验证 |
+| 十三个 CLI 子命令（含 `pause`/`resume`/`health`/`council-preview`/`council-guidance`/`login`/`register`/`logout`） | 逐条对真实 API 手工验证 |
 | 六个前端视图（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View）+ 议会检查点模态框 + 建任务/确认主张首屏 | 真实数据 + 浏览器截图核对，无控制台错误 |
 | 全文获取 → 解析 → StudyFinding 抽取 → 引用锚点核验 | 单元测试（程序化生成 PDF fixture，无需网络）+ 集成测试断言 `DERIVED_FROM` 边真正出现在证据图上 |
 | 联合建模 → Dialectical Fold → `DebateCapsule`；最终复判 → 异议 → `DissentCertificate` | 单元测试覆盖两条产出路径与「无边界/无冲突则不折叠」「无异议目标则记未填槽位」两条弃权路径；集成测试断言完整任务运行后证据图上真的出现对应节点 |
 | Docker Compose 一键部署（postgres / migrate / api / worker / web / caddy） | `docker compose up --build` 后真实提交一个任务，走完整 CLI → API → Worker → 图投影路径，再经 Caddy → web 容器 nginx 反代验证 |
-| Claude Code / Codex Skill（薄封装：生成待确认 Contract → 调用 CLI），支持带共享口令访问已部署实例 | 手工跑通一次 `start`/`confirm-claims`/`watch`/`export` 全链路，见[Agent Skill 集成细节](#agent-skill-集成细节) |
+| Claude Code / Codex Skill（薄封装：生成待确认 Contract → 调用 CLI），`login` 后即可访问已部署实例 | 手工跑通一次 `start`/`confirm-claims`/`watch`/`export` 全链路，见[Agent Skill 集成细节](#agent-skill-集成细节) |
 
 **尚未接入真实厂商凭证的：**
 
@@ -214,7 +214,7 @@ Worker 用 `SELECT ... FOR UPDATE SKIP LOCKED` 从 `research_tasks` 认领任务
 cd apps/web && npm install && npm run dev
 ```
 
-打开 `http://localhost:5173/`。开发服务器把 `/api` 代理到 8000 端口，浏览器看到同源，SSE 不需要 CORS 配置。`/` 是公开落地页，研究证据工作台在 `http://localhost:5173/workspace`（开发模式无口令；部署时由 Caddy 在 `/workspace*` 上保留共享口令）——首屏是建任务表单，也可以在页头粘贴一个已有的 `task_id` 直接打开。
+打开 `http://localhost:5173/`。开发服务器把 `/api` 代理到 8000 端口，浏览器看到同源，SSE 不需要 CORS 配置。`/` 是公开落地页，研究证据工作台在 `http://localhost:5173/workspace`（开发模式无账号；部署时首次访问需注册/登录账号）——首屏是建任务表单，也可以在页头粘贴一个已有的 `task_id` 直接打开。
 
 ### 5. 看一个跑完的任务
 
@@ -231,7 +231,7 @@ python scripts/seed_demo_task.py     # 用真实 Worker 跑一个演示任务
 不想手动起五个进程，可以直接用根目录的 `docker-compose.yml`：
 
 ```bash
-cp .env.example .env        # 按注释填数据库密码、共享口令；模型/工具网关留空也能跑
+cp .env.example .env        # 按注释填数据库密码；模型/工具网关留空也能跑
 docker compose up --build -d
 ```
 
@@ -244,26 +244,24 @@ docker compose up --build -d
 ### 为什么 `api`/`web` 不直接暴露端口
 
 `api` 和 `web` 只在 Compose 内部网络上用 `expose:` 声明端口，不映射到宿主机——`caddy` 是**唯一**
-绑定 `80`/`443` 的服务。这样共享口令是唯一对外入口，不存在「绕过 Caddy 直接打 API」的漏洞。`web`
-容器自己的 nginx（`apps/web/nginx.conf`）已经把 `/api/*`（含 SSE，`proxy_buffering off` +
-`proxy_read_timeout 3600s`）和静态资源拆开转发到 `api:8000` / 自身静态文件，所以 Caddy 只需要两条
-`handle` 规则（见 `deploy/caddy/Caddyfile`），不需要在边缘再拆一次路由。
+绑定 `80`/`443` 的服务。Caddy 只做反代不做认证（不再有 `basic_auth`）：访问控制由 API 层的账号
+系统完成（见下节）。`web` 容器自己的 nginx（`apps/web/nginx.conf`）已经把 `/api/*`（含 SSE，
+`proxy_buffering off` + `proxy_read_timeout 3600s`）和静态资源拆开转发到 `api:8000` / 自身静态文件，
+所以 Caddy 只需要两条 `handle` 规则（见 `deploy/caddy/Caddyfile`），不需要在边缘再拆一次路由。
 
-### 公开落地页与共享口令的边界
+### 公开落地页与账号系统的边界
 
-站点分两层访问控制（见 `deploy/caddy/Caddyfile`）：
+访问控制分两层：
 
-- **`/` 落地页是公开的**：它只有静态文案和链接，不读任何任务数据、不花模型调用的钱，所以不设口令。
-- **`/workspace*` 研究证据工作台保留共享口令**：每次研究运行都真花模型调用的钱，所以用 Caddy 的
-  `basic_auth` 挡一层，而不是做一套完整账号系统——这是刻意选择的最简方案，不是阉割版账号系统。
+- **`/` 落地页是公开的**：它只有静态文案和链接，不读任何任务数据、不花模型调用的钱，所以不需要登录。
+- **研究证据工作台与全部 `/api/*` 需要账号**：注册/登录后拿到 30 天 bearer token（浏览器存
+  localStorage 实现本机免登录）；所有业务端点按账号隔离，跨账号访问一律 404（不泄露存在性）。
 
-共享口令怎么工作：
-
-- `.env` 里只需要写一个**明文**密码（`POLISCOPE_SITE_PASSWORD`）。
-- `deploy/caddy/entrypoint.sh` 在容器每次启动时用 `caddy hash-password` 现算成 bcrypt 哈希再注入
-  Caddyfile——用户不需要自己跑哈希命令，哈希也不落盘持久化。
-- 账号默认 `poliscope`（`POLISCOPE_SITE_USERNAME`），也可以在 `.env` 里改。
-- 没设口令的本地开发模式没有这层限制，`/` 和 `/workspace` 都直接可访问。
+账号系统已取代旧的 Caddy 共享口令（`basic_auth`）。`.env` 里的 `POLISCOPE_SITE_USERNAME` /
+`POLISCOPE_SITE_PASSWORD` 已不再使用，可删除；`deploy/caddy/Caddyfile` 与 `entrypoint.sh` 不再
+生成或注入任何口令。账号模型（`users` / `auth_tokens`，PBKDF2 密码哈希、token 仅存 sha256）在
+`packages/accounts/`，API 端点在 `apps/api/routers/auth.py`，按账号隔离的数据列由迁移 0012–0014
+管理。
 
 ### 域名与 HTTPS：只改一行
 
@@ -340,10 +338,14 @@ poliscope export --task-id <id> --format markdown --output brief.md
 
 注意 `--json` 是全局选项，要放在子命令**前面**。
 
-访问一个设了共享口令（Caddy `basic_auth`）的已部署实例时，在环境变量里设置
-`POLISCOPE_API_USERNAME`/`POLISCOPE_API_PASSWORD`，`poliscope` 的每个子命令会自动带上——不需要额外
-flag（见[Agent Skill 集成细节](#agent-skill-集成细节)）。本机直连一个没设口令的 API 时不设这两个
-变量，行为和过去完全一样。
+访问一个已部署实例时，先登录一次：
+
+```bash
+poliscope login --base-url <URL>          # 交互输入用户名密码；首次可用 register 注册
+```
+
+token 保存在 `~/.poliscope/credentials.json`，之后每个子命令自动带上；非交互环境也可以设置
+`POLISCOPE_API_TOKEN` 环境变量（优先级更高）。本机直连一个本地 API 不需要登录。
 
 ### 议会检查点：盲点悬赏结束后，研究者可以插一句话，但不能投票
 
@@ -463,7 +465,7 @@ SSE 帧只有 `id:` 和 `data:`，没有 `event:` 行。原因是 SSE 的类型�
   ├─ CLI (apps/cli) ─────┐
   └─ Web (apps/web) ─────┤
                          ▼
-                  Caddy（唯一公开端口，basic_auth）
+                  Caddy（唯一公开端口；认证在 API 层）
                          ▼
                    API (apps/api)  ← 只持有应用身份
                          │
@@ -579,11 +581,12 @@ migrations/      Alembic：建表 + 建角色 + 授权
 scripts/         开发辅助（演示任务播种）
 docker-compose.yml  一键部署：postgres / migrate / api / worker / web / caddy
 .env.example        部署所需环境变量，不含真实凭证
-deploy/caddy/       反向代理 + 共享口令 + HTTPS-when-domain-exists 配置
+deploy/caddy/       反向代理 + HTTPS-when-domain-exists 配置（访问控制由 API 层账号系统负责）
 
 .claude/skills/poliscope/   Claude Code 的 Agent Skill（项目级，随仓库自动发现）
 .codex/skills/poliscope/    同一 Skill 的 Codex 副本，内容与上面保持一致
 .agents/skills/poliscope/   同一 Skill 的通用 AGENTS.md 副本，内容与上面保持一致
+skills/poliscope/           Claude Code 插件分发用副本（/plugin install 后可用；.claude-plugin/plugin.json 为插件元数据）
 tests/
   unit/        无外部依赖，约 1 秒跑完
   integration/ 需要 Docker，跨真实数据库与真实角色
@@ -608,19 +611,21 @@ CLI 是纯 HTTP 客户端，不 import `packages`。第二条进入研究服务�
 
 ## Agent Skill 集成细节
 
-第四个入口：`.claude/skills/poliscope/`（Claude Code 项目级 Skill，随仓库自动发现）、
-`.codex/skills/poliscope/`（Codex 对应副本）与 `.agents/skills/poliscope/`（通用
-`AGENTS.md` 约定读取的第三份副本）——三份内容保持一致，避免多个入口的科研逻辑分叉——设计规格
-§8.7 的硬约束。三者本质上都只是薄封装：解析用户意图 → 用
+四个入口：`.claude/skills/poliscope/`（Claude Code 项目级 Skill，随仓库自动发现）、
+`.codex/skills/poliscope/`（Codex 对应副本）、`.agents/skills/poliscope/`（通用
+`AGENTS.md` 约定读取的第三份副本）与 `skills/poliscope/`（Claude Code 插件分发结构，
+`/plugin install` 后可用，配套 `.claude-plugin/plugin.json`）——四份内容保持一致，避免多个入口
+的科研逻辑分叉——设计规格 §8.7 的硬约束。它们本质上都只是薄封装：解析用户意图 → 用
 `scripts/new_contract.py` 生成待确认的 Research Contract → 展示给用户确认 → 依次调用
 `poliscope start` / `confirm-claims` / `watch` / `status` / `export`，不直接 import
 `packages`，不直接调模型或论文数据源，不绕过原子主张确认和证据门。
 
-**访问已部署实例：** 如果目标是一个设了 Caddy 共享口令的公开实例（见[自建部署](#自建部署docker-compose--caddy)），
-在调用 `poliscope` 之前设置 `POLISCOPE_API_USERNAME`/`POLISCOPE_API_PASSWORD` 两个环境变量——每个
-子命令会自动读取并附带 `Authorization` 头，不需要额外 flag（避免每个子命令的 `--help` 都被口令参数
-污染）。这两个变量由 `apps/cli/main.py::_auth_from_env()` 读取，传给 `apps/cli/client.py::CLIClient`
-的 `auth` 参数；留空时行为和过去完全一样，不影响本机直连一个没设口令的 API。
+**访问已部署实例：** 先登录一次——`poliscope login --base-url <URL>`（或 `poliscope register
+--base-url <URL>` 注册新账号），token 保存在 `~/.poliscope/credentials.json`
+（`apps/cli/main.py::_save_token()`），之后每个子命令自动附带 `Authorization: Bearer` 头
+（`apps/cli/main.py::_load_token()` 传给 `apps/cli/client.py::CLIClient` 的 `token` 参数）。非交互
+环境（Agent 场景）也可以设置 `POLISCOPE_API_TOKEN` 环境变量，优先级高于凭据文件。本机直连一个
+本地 API 不需要登录。
 
 **已知缺口：** `POST /api/tasks/{id}/papers/upload` 这个 HTTP 接口本身已经真实可用（见上表），但
 `apps/cli` 和 Skill 侧都还没有对应的封装命令——Skill 只能诚实地告诉用户"任务必须先建好，PDF 要绕开
@@ -683,7 +688,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 - 导出会脱敏签名 URL 与本地路径，避免上传材料通过报告泄露。
 - 报告始终声明 AI 辅助、证据覆盖与系统局限。
 - **不以模型置信度替代统计不确定性或专家判断。** 这句话出现在每一份报告的局限一节，不是免责套话——它是这个系统全部设计取舍的出发点。
-- 公开部署实例的共享口令（见[自建部署](#自建部署docker-compose--caddy)）只解决「挡住随意访问、控制模型调用花费」这一个问题，不是身份认证或授权系统——所有通过口令的访问者拥有完全相同的权限，不要把它当成多租户隔离机制。
+- 账号系统（注册/登录/按账号隔离）能把不同研究者及其任务、知识库、设置分开，但本机部署的信任模型是「能进这台机器就是这台机器的主人」；公开部署时应配套 HTTPS、强密码与备份策略。密码哈希（PBKDF2）与 token 只存 sha256 是对泄库的缓解，不是授权边界本身。
 
 ---
 

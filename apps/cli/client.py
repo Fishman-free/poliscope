@@ -50,7 +50,7 @@ class CLIClient:
         *,
         timeout: float = DEFAULT_TIMEOUT,
         transport: httpx.AsyncBaseTransport | None = None,
-        auth: httpx.BasicAuth | None = None,
+        token: str | None = None,
     ) -> None:
         """``transport`` exists so a test can assert which URL was requested.
 
@@ -58,24 +58,26 @@ class CLIClient:
         arguments around; it cannot catch a route that does not exist, which is
         how ``export`` shipped pointing at a path the API never served.
 
-        ``auth`` exists for the same reason a deployed instance can sit behind
-        Caddy's shared HTTP Basic Auth (see ``deploy/caddy/Caddyfile``): a CLI
-        or Skill invocation pointed at that instance needs to send the same
-        credentials a browser would, or every request 401s before it reaches
-        the API at all. ``None`` (the default) preserves today's unauthenticated
-        behaviour for a local, un-gated API.
+        ``token`` is the account bearer token (from ``poliscope login`` or
+        ``POLISCOPE_API_TOKEN``); every request then carries ``Authorization:
+        Bearer``. ``None`` (the default) sends no header, which is correct for
+        a local API before anyone has logged in, and for the public endpoints
+        (``health``, ``register``, ``login``) that never need one.
         """
         self.base_url = base_url.rstrip("/")
         # A developer machine often exports HTTP_PROXY for outbound traffic. Sending
         # loopback requests through that proxy makes a not-yet-started API look like
         # a broken one, because the proxy answers with its own error status instead
         # of the connection being refused. Remote hosts still honour the proxy.
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=timeout,
             trust_env=not _is_loopback(self.base_url),
             transport=transport,
-            auth=auth,
+            headers=headers,
         )
 
     async def __aenter__(self) -> CLIClient:
@@ -107,8 +109,32 @@ class CLIClient:
             ) from error
         if response.is_error:
             raise APIError(response.status_code, _extract_detail(response))
+        if response.status_code == 204:
+            return {}
         decoded: dict[str, Any] = response.json()
         return decoded
+
+    async def register(self, username: str, password: str) -> dict[str, Any]:
+        """Create an account. Returns the session ``{id, username, token}``."""
+        return await self._request(
+            "POST",
+            "/api/auth/register",
+            json={"username": username, "password": password},
+        )
+
+    async def login(self, username: str, password: str) -> dict[str, Any]:
+        """Log in. Returns the session ``{id, username, token}`` exactly once;
+        the token is never recoverable afterwards, so the CLI stores it."""
+        return await self._request(
+            "POST",
+            "/api/auth/login",
+            json={"username": username, "password": password},
+        )
+
+    async def logout(self) -> None:
+        """Revoke the presented token server-side. Idempotent (204 even for an
+        unknown or missing token), so calling it without a token is harmless."""
+        await self._request("POST", "/api/auth/logout")
 
     async def health(self) -> dict[str, Any]:
         return await self._request("GET", "/health")

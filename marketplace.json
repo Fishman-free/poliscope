@@ -1,0 +1,12 @@
+{
+  "name": "poliscope",
+  "description": "Poliscope: auditable controversy evidence mapping (EpistemoBrain 7-scientist council).",
+  "version": "0.1.0",
+  "plugins": [
+    {
+      "name": "poliscope",
+      "description": "Run auditable Poliscope research tasks; /poliscope drafts a Research Contract, confirms claims, and streams the council's progress.",
+      "path": ".claude-plugin/plugin.json"
+    }
+  ]
+}

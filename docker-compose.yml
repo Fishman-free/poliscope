@@ -102,11 +102,10 @@ services:
 
   # The single public entrypoint. Everything else in this file is only
   # reachable on the compose-internal network -- this is the one service
-  # that binds a host port, and the one place the shared password is
-  # enforced. See deploy/caddy/Caddyfile for the routing (it forwards
-  # everything to `web`, whose own nginx already splits /api/* from the
-  # static build) and deploy/caddy/entrypoint.sh for how a plaintext
-  # POLISCOPE_SITE_PASSWORD becomes the bcrypt hash Caddy's basic_auth wants.
+  # that binds a host port. Caddy only proxies (no basic_auth since the
+  # account system took over access control); see deploy/caddy/Caddyfile for
+  # the routing (it forwards everything to `web`, whose own nginx already
+  # splits /api/* from the static build).
   #
   # POLISCOPE_SITE_ADDRESS defaults to ":80" (plain HTTP, works on localhost
   # or a bare cloud IP with no domain). Once a real domain is pointed at this

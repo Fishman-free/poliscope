@@ -1,0 +1,11 @@
+{
+  "name": "poliscope",
+  "description": "Run auditable Poliscope research tasks: the EpistemoBrain 7-scientist council produces a controversy evidence map with blindspots and preserved dissent instead of a single summarized answer. /poliscope turns a contested empirical question into a Research Contract, confirms atomic claims with the researcher, and streams the council's progress.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Fishman",
+    "email": ""
+  },
+  "license": "MIT",
+  "repository": "https://github.com/Fishman-free/poliscope"
+}

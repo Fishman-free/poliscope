@@ -17,10 +17,16 @@ import pytest
 
 from apps.cli import exit_codes
 from apps.cli.client import APIError, APIUnreachable, CLIClient, _is_loopback
-from apps.cli.main import _auth_from_env, build_parser, main
+from apps.cli.main import _load_token, _save_token, build_parser, main
 
 SUBCOMMANDS: tuple[tuple[list[str], dict[str, object]], ...] = (
     (["health"], {}),
+    (["login", "--username", "alice", "--password", "pw"], {"username": "alice"}),
+    (
+        ["register", "--username", "bob", "--password", "pw"],
+        {"username": "bob"},
+    ),
+    (["logout"], {}),
     (["start", "--contract", "c.json"], {"contract": "c.json"}),
     (
         ["confirm-claims", "--task-id", "t", "--claim-ids", "a", "b"],
@@ -322,31 +328,12 @@ def test_loopback_detection_decides_proxy_trust(
     assert _is_loopback(base_url) is expected
 
 
-def test_auth_from_env_returns_none_when_credentials_are_unset(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Unset is the default -- an un-gated local API must see no change."""
-    monkeypatch.delenv("POLISCOPE_API_USERNAME", raising=False)
-    monkeypatch.delenv("POLISCOPE_API_PASSWORD", raising=False)
-    assert _auth_from_env() is None
+async def test_token_adds_bearer_header_and_absence_omits_it() -> None:
+    """A deployed instance 401s without this header.
 
-
-def test_auth_from_env_builds_basic_auth_when_credentials_are_set(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("POLISCOPE_API_USERNAME", "poliscope")
-    monkeypatch.setenv("POLISCOPE_API_PASSWORD", "s3cret")
-    assert isinstance(_auth_from_env(), httpx.BasicAuth)
-
-
-async def test_env_credentials_add_an_authorization_header_and_absence_omits_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A Caddy-gated deployment 401s without this header.
-
-    Every request must carry it when ``POLISCOPE_API_USERNAME`` /
-    ``POLISCOPE_API_PASSWORD`` are set, and carry nothing when they are not --
-    the unauthenticated case is today's behaviour and must not regress.
+    Every request must carry ``Authorization: Bearer`` when a token is known
+    (from login or ``POLISCOPE_API_TOKEN``), and carry nothing when it is not
+    -- the unauthenticated case is today's behaviour and must not regress.
     """
     seen: list[httpx.Request] = []
 
@@ -356,21 +343,173 @@ async def test_env_credentials_add_an_authorization_header_and_absence_omits_it(
 
     transport = httpx.MockTransport(handler)
 
-    monkeypatch.setenv("POLISCOPE_API_USERNAME", "poliscope")
-    monkeypatch.setenv("POLISCOPE_API_PASSWORD", "s3cret")
     async with CLIClient(
-        "http://poliscope.test", transport=transport, auth=_auth_from_env()
+        "http://poliscope.test", transport=transport, token="tok-abc"
     ) as client:
         await client.health()
-    assert "authorization" in seen[-1].headers
+    assert seen[-1].headers["authorization"] == "Bearer tok-abc"
 
-    monkeypatch.delenv("POLISCOPE_API_USERNAME", raising=False)
-    monkeypatch.delenv("POLISCOPE_API_PASSWORD", raising=False)
-    async with CLIClient(
-        "http://poliscope.test", transport=transport, auth=_auth_from_env()
-    ) as client:
+    async with CLIClient("http://poliscope.test", transport=transport) as client:
         await client.health()
     assert "authorization" not in seen[-1].headers
+
+
+def test_save_and_load_token_roundtrip_per_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """One credentials file, one token per base URL -- a local API and several
+    deployed instances can be reached from the same machine."""
+    credentials = tmp_path / "credentials.json"
+    monkeypatch.setattr("apps.cli.main.CREDENTIALS_FILE", credentials)
+    _save_token("https://poliscope.example.org/", "tok-remote")
+    _save_token("http://localhost:8000", "tok-local")
+    assert _load_token("https://poliscope.example.org") == "tok-remote"
+    assert _load_token("http://localhost:8000/") == "tok-local"
+    assert json.loads(credentials.read_text(encoding="utf-8")) == {
+        "http://localhost:8000": "tok-local",
+        "https://poliscope.example.org": "tok-remote",
+    }
+
+
+def test_load_token_prefers_environment_over_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """POLISCOPE_API_TOKEN wins -- that is how a non-interactive agent logs in
+    without a credentials file."""
+    monkeypatch.setattr("apps.cli.main.CREDENTIALS_FILE", tmp_path / "credentials.json")
+    _save_token("http://localhost:8000", "file-tok")
+    monkeypatch.setenv("POLISCOPE_API_TOKEN", "env-tok")
+    assert _load_token("http://localhost:8000") == "env-tok"
+
+
+def test_load_token_handles_a_corrupt_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A corrupt credentials file reads as "not logged in", so the 401 that
+    follows is honest instead of a crash with a traceback."""
+    credentials = tmp_path / "credentials.json"
+    credentials.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr("apps.cli.main.CREDENTIALS_FILE", credentials)
+    assert _load_token("http://localhost:8000") is None
+
+
+async def test_auth_commands_request_the_endpoints_that_actually_exist() -> None:
+    """Same failure mode as export: a stubbed client cannot catch a dead route."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/auth/logout":
+            return httpx.Response(204)
+        return httpx.Response(
+            200, json={"id": "u1", "username": "alice", "token": "tok-abc"}
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with CLIClient("http://poliscope.test", transport=transport) as client:
+        await client.register("alice", "pw")
+        await client.login("alice", "pw")
+        await client.logout()
+
+    assert [request.url.path for request in seen] == [
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/logout",
+    ]
+    assert json.loads(seen[0].content) == {"username": "alice", "password": "pw"}
+
+
+def test_login_command_saves_the_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`poliscope login --username ... --password ...` must persist the token
+    so every later command picks it up without re-authenticating."""
+    monkeypatch.setattr("apps.cli.main.CREDENTIALS_FILE", tmp_path / "credentials.json")
+
+    async def do_login(*_: object, **__: object) -> dict[str, object]:
+        return {"id": "u1", "username": "alice", "token": "tok-abc"}
+
+    monkeypatch.setattr(CLIClient, "login", do_login)
+    assert (
+        main(["login", "--username", "alice", "--password", "pw"])
+        == exit_codes.OK
+    )
+    assert _load_token("http://localhost:8000") == "tok-abc"
+    assert "logged in as alice" in capsys.readouterr().out
+
+
+def test_login_rejection_maps_to_request_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wrong credentials surface as the documented 401 exit code, and nothing
+    is written to the credentials file."""
+
+    async def reject(*_: object, **__: object) -> dict[str, object]:
+        raise APIError(401, "invalid username or password")
+
+    monkeypatch.setattr(CLIClient, "login", reject)
+    assert (
+        main(["login", "--username", "alice", "--password", "wrong"])
+        == exit_codes.REQUEST_REJECTED
+    )
+
+
+def test_register_with_flags_saves_the_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("apps.cli.main.CREDENTIALS_FILE", tmp_path / "credentials.json")
+
+    async def do_register(*_: object, **__: object) -> dict[str, object]:
+        return {"id": "u2", "username": "bob", "token": "tok-bob"}
+
+    monkeypatch.setattr(CLIClient, "register", do_register)
+    assert (
+        main(["register", "--username", "bob", "--password", "pw"])
+        == exit_codes.OK
+    )
+    assert _load_token("http://localhost:8000") == "tok-bob"
+
+
+def test_logout_revokes_the_token_and_forgets_only_this_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Logout must hit the revoke endpoint and drop this base URL's token
+    while leaving other instances' tokens alone."""
+    credentials = tmp_path / "credentials.json"
+    monkeypatch.setattr("apps.cli.main.CREDENTIALS_FILE", credentials)
+    _save_token("http://localhost:8000", "tok-abc")
+    _save_token("https://poliscope.example.org", "tok-other")
+
+    revoked: list[str] = []
+
+    async def do_logout(*_: object, **__: object) -> None:
+        revoked.append("called")
+
+    monkeypatch.setattr(CLIClient, "logout", do_logout)
+    assert main(["logout"]) == exit_codes.OK
+    assert revoked == ["called"]
+    assert _load_token("http://localhost:8000") is None
+    assert _load_token("https://poliscope.example.org") == "tok-other"
+
+
+def test_login_without_flags_in_a_noninteractive_shell_fails_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """input() raises EOFError with no stdin; that must be a clean message,
+    not a traceback, and it must not write a credentials file."""
+
+    def no_input(*_: object) -> object:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", no_input)
+    assert main(["login"]) == exit_codes.FAILED
 
 
 async def test_watch_decodes_server_sent_event_frames() -> None:
