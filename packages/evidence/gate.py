@@ -82,11 +82,14 @@ def _source_flags(payload: Mapping[str, object]) -> dict[str, bool]:
     flags = {
         key: bool(payload[key]) for key in _SOURCE_FLAG_KEYS if key in payload
     }
-    if payload.get("object_id"):
-        # Only registry.py's uploaded-PDF branch ever sets object_id on a
-        # SOURCE event payload -- the DOI branch never does. Signals
-        # verify_source to waive the has_doi/has_authors checks that no
-        # upload can ever satisfy (see source_verifier.verify_source).
+    if payload.get("object_id") or payload.get("knowledge_document_id"):
+        # Only registry.py's upload-style branches ever set object_id or
+        # knowledge_document_id on a SOURCE event payload -- the DOI branch
+        # never does. Signals verify_source to waive the has_doi/has_authors
+        # checks that no upload or knowledge document can ever satisfy (see
+        # source_verifier.verify_source). A knowledge-base document carries
+        # its own provenance key rather than reusing object_id, so the gate
+        # must recognise both.
         flags["is_uploaded"] = True
     return flags
 

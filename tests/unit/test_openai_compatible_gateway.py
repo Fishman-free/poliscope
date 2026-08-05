@@ -56,12 +56,15 @@ FULL_ENV = {
 }
 
 
-def _request(output_schema: str = "FinalJudgment") -> ModelRequest:
+def _request(
+    output_schema: str = "FinalJudgment",
+    model_class: ModelClass = ModelClass.STRONG_REASONING,
+) -> ModelRequest:
     return ModelRequest(
         task_id=uuid4(),
         actor="theory_builder",
         purpose="final_rejudgment",
-        model_class=ModelClass.STRONG_REASONING,
+        model_class=model_class,
         messages=(ModelMessage(role="user", content="give your final judgment"),),
         output_schema=output_schema,
         evidence_refs=(),
@@ -122,19 +125,159 @@ def _content_response(content: str, **usage: int) -> httpx.Response:
 
 
 async def test_parses_forced_tool_call_structured_output() -> None:
+    """Extraction tiers (MEDIUM/LIGHTWEIGHT) keep the forced tool_choice."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["tool_choice"] == {
             "type": "function",
             "function": {"name": "FinalJudgment"},
         }
+        assert body["thinking"] == {"type": "disabled"}
         return _tool_call_response({"final_judgment": "narrowed, not withdrawn"})
 
     gateway = _gateway(handler)
-    result = await gateway.invoke(_request())
+    result = await gateway.invoke(_request(model_class=ModelClass.MEDIUM))
     assert dict(result.payload) == {"final_judgment": "narrowed, not withdrawn"}
     assert result.schema_status is SchemaStatus.OK
     assert result.retries == 0
+
+
+async def test_extraction_calls_keep_thinking_mode_off() -> None:
+    """Regression test for a real production incident (V3.2 era).
+
+    DeepSeek's reasoning models (e.g. ``deepseek-v4-pro``) default to
+    "thinking mode", and thinking mode rejects any forced ``tool_choice`` with
+    a 400 ``"Thinking mode does not support this tool_choice"`` -- confirmed
+    directly against the live DeepSeek API. Extraction phases force a specific
+    function via ``tool_choice`` (see the assertion above), so those calls
+    must keep thinking disabled; every phase of this tier failed identically
+    in production once: 14 ``SEAT_UNAVAILABLE`` events on one real task, each
+    looking like a plain vendor outage but actually being this
+    tool_choice/thinking-mode conflict. ``thinking: disabled`` on these
+    requests is the fix; this asserts it never regresses back off.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["thinking"] == {"type": "disabled"}
+        return _tool_call_response({"final_judgment": "thinking mode off"})
+
+    gateway = _gateway(handler)
+    result = await gateway.invoke(_request(model_class=ModelClass.LIGHTWEIGHT))
+    assert dict(result.payload) == {"final_judgment": "thinking mode off"}
+
+
+async def test_thinking_phases_enable_thinking_without_forced_tool_choice() -> None:
+    """The four thinking-heavy phases run in thinking mode.
+
+    That is what makes the chain of thought capturable at all -- DeepSeek
+    returns it in ``reasoning_content`` only when thinking is on -- and DeepSeek
+    V4 also *requires* it, since it rejects any forced ``tool_choice`` with a
+    400. The tools stay defined so the model may still call them (the
+    tool_calls parse path handles that); nothing forces the choice.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["thinking"] == {"type": "enabled"}
+        assert "tool_choice" not in body
+        assert "tools" in body
+        return _tool_call_response({"final_judgment": "thinking mode on"})
+
+    gateway = _gateway(handler)
+    result = await gateway.invoke(_request())
+    assert dict(result.payload) == {"final_judgment": "thinking mode on"}
+    assert result.schema_status is SchemaStatus.OK
+
+
+async def test_captures_reasoning_content_on_thinking_phases() -> None:
+    """DeepSeek's ``reasoning_content`` (or OpenAI-style ``reasoning``) is
+    captured verbatim on the result, never summarised or dropped."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "reasoning_content": "The claim assumes exposure "
+                            "precedes outcome, but every cited design is "
+                            "cross-sectional.",
+                            "content": '{"final_judgment": "holds"}',
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 40},
+            },
+        )
+
+    gateway = _gateway(handler)
+    result = await gateway.invoke(_request())
+    assert "cross-sectional" in (result.reasoning or "")
+    assert dict(result.payload) == {"final_judgment": "holds"}
+
+
+async def test_reasoning_is_none_when_vendor_returns_none() -> None:
+    """A thinking-off extraction call that returns no reasoning stays None."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _tool_call_response({"final_judgment": "no thinking returned"})
+
+    gateway = _gateway(handler)
+    result = await gateway.invoke(_request(model_class=ModelClass.MEDIUM))
+    assert result.reasoning is None
+
+
+async def test_degrades_to_thinking_mode_on_tool_choice_400() -> None:
+    """DeepSeek V4 answers a forced tool_choice with a 400; the gateway
+    retries the same attempt once in thinking mode without the forced choice,
+    instead of surfacing a vendor outage the seat would report as absent."""
+
+    calls: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        calls.append(body)
+        if len(calls) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Thinking mode does not support this tool_choice",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        assert body["thinking"] == {"type": "enabled"}
+        assert "tool_choice" not in body
+        return _tool_call_response({"final_judgment": "degraded and recovered"})
+
+    gateway = _gateway(handler)
+    result = await gateway.invoke(_request(model_class=ModelClass.MEDIUM))
+    assert calls[0]["thinking"] == {"type": "disabled"}
+    assert calls[0]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "FinalJudgment"},
+    }
+    assert dict(result.payload) == {"final_judgment": "degraded and recovered"}
+    assert result.schema_status is SchemaStatus.OK
+    assert result.retries == 1
+
+
+async def test_unrelated_400_still_raises() -> None:
+    """Only the tool_choice/thinking conflict degrades; any other 400 is a
+    broken request and must surface as an exception, not be masked."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400, json={"error": {"message": "model not found", "type": "invalid_request_error"}}
+        )
+
+    gateway = _gateway(handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        await gateway.invoke(_request(model_class=ModelClass.MEDIUM))
 
 
 async def test_falls_back_to_raw_json_content_when_no_tool_call() -> None:

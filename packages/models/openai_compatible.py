@@ -173,18 +173,56 @@ class OpenAICompatibleModelGateway:
         payload: dict[str, object] = {}
         errors: list[str] = []
         repaired = False
+        reasoning_parts: list[str] = []
+
+        # The four thinking-heavy phases (precommitment, cross examination,
+        # blindspot bounty, final rejudgment) run in "thinking mode": the
+        # vendor returns its chain of thought as ``reasoning_content`` --
+        # captured for the chain-of-thought view -- and the structured result
+        # in content or a tool call. DeepSeek V4 also *requires* this mode:
+        # it rejects any forced ``tool_choice`` with a 400 (see the regression
+        # test's note). Extraction phases (MEDIUM/LIGHTWEIGHT) keep thinking
+        # disabled and the forced tool_choice, and degrade to thinking mode
+        # only when the vendor answers that exact 400.
+        thinking = request.model_class is ModelClass.STRONG_REASONING
+        force_tool = not thinking
 
         for attempt in range(MAX_SCHEMA_REPAIR_ATTEMPTS + 1):
             if attempt:
                 repaired = True
                 retries += 1
                 messages.append(_repair_message(errors))
-            content, usage, transport_retries = await self._call_once(
-                model_name, messages, request.output_schema, schema
-            )
+            for _ in range(2):
+                # Second pass = the one automatic downgrade for a vendor that
+                # rejects the forced tool_choice (DeepSeek V4). Anything else
+                # raises and the seat reports absent, per the file header.
+                try:
+                    content, usage, transport_retries, reasoning = (
+                        await self._call_once(
+                            model_name,
+                            messages,
+                            request.output_schema,
+                            schema,
+                            thinking=thinking,
+                            force_tool=force_tool,
+                        )
+                    )
+                    break
+                except httpx.HTTPStatusError as error:
+                    if (
+                        force_tool
+                        and error.response.status_code == 400
+                        and _is_tool_choice_conflict(error.response)
+                    ):
+                        thinking, force_tool = True, False
+                        retries += 1
+                        continue
+                    raise
             retries += transport_retries
             input_tokens += int(usage.get("prompt_tokens", 0) or 0)
             output_tokens += int(usage.get("completion_tokens", 0) or 0)
+            if reasoning:
+                reasoning_parts.append(reasoning)
             payload, errors = _parse_and_validate(content, schema)
             if not errors:
                 break
@@ -208,6 +246,7 @@ class OpenAICompatibleModelGateway:
             latency_ms=latency_ms,
             retries=retries,
             schema_status=schema_status,
+            reasoning="\n\n".join(reasoning_parts) or None,
         )
 
     def _cost(self, input_tokens: int, output_tokens: int) -> Decimal:
@@ -222,30 +261,43 @@ class OpenAICompatibleModelGateway:
         messages: list[dict[str, str]],
         schema_name: str,
         schema: Mapping[str, Any],
-    ) -> tuple[str, dict[str, Any], int]:
-        body = {
-            "model": model_name,
-            "messages": messages,
-            "tools": [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": schema_name,
-                        "description": f"Emit the {schema_name} structured result.",
-                        "parameters": schema,
-                    },
-                }
-            ],
-            "tool_choice": {"type": "function", "function": {"name": schema_name}},
-        }
+        *,
+        thinking: bool,
+        force_tool: bool,
+    ) -> tuple[str, dict[str, Any], int, str | None]:
+        """One HTTP round trip, returning (content, usage, retries, reasoning).
+
+        ``force_tool`` requests the strict schema via a forced
+        ``tool_choice``; ``thinking`` toggles DeepSeek's thinking mode. The
+        caller resolves the two together (thinking mode rejects a forced
+        tool_choice) and owns the one-time degradation on a 400.
+        """
+        body = _build_body(
+            model_name, messages, schema_name, schema, force_tool=force_tool
+        )
+        if thinking:
+            body["thinking"] = {"type": "enabled"}
+        else:
+            # DeepSeek's reasoning models default to "thinking mode", which
+            # rejects any forced tool_choice with 400 "Thinking mode does not
+            # support this tool_choice" -- confirmed directly against the live
+            # API. Extraction phases force a specific function, so thinking
+            # mode must be off on those calls. This is an extra field outside
+            # the OpenAI dialect proper; LongCat and the relay stations this
+            # gateway also targets are expected to ignore an unrecognised body
+            # field per ordinary REST leniency, not error on it -- there is no
+            # live credential for either to verify that here, so this is
+            # recorded as an assumption, per CLAUDE.md 17.
+            body["thinking"] = {"type": "disabled"}
         response, transport_retries = await send_with_retry(
             lambda: self._client.post("/chat/completions", json=body)
         )
         data = response.json()
         message = data["choices"][0]["message"]
         content = _extract_structured_content(message, schema_name)
+        reasoning = _extract_reasoning(message)
         usage = data.get("usage") or {}
-        return content, usage, transport_retries
+        return content, usage, transport_retries, reasoning
 
 
 def gateway_from_env(
@@ -264,6 +316,76 @@ def gateway_from_env(
     if not values.get(API_KEY_ENV):
         return None
     return OpenAICompatibleModelGateway.from_env(values)
+
+
+def _build_body(
+    model_name: str,
+    messages: list[dict[str, str]],
+    schema_name: str,
+    schema: Mapping[str, Any],
+    *,
+    force_tool: bool,
+) -> dict[str, object]:
+    """Build the chat-completions body; thinking is set by the caller.
+
+    The tools definition is always present so both output paths work: a
+    forced tool call (strict extraction mode) and -- in thinking mode, where
+    a forced ``tool_choice`` is rejected -- either an auto tool call or a
+    raw JSON answer in content, which ``_extract_structured_content`` and the
+    repair round handle.
+    """
+    body: dict[str, object] = {
+        "model": model_name,
+        "messages": messages,
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "name": schema_name,
+                    "description": f"Emit the {schema_name} structured result.",
+                    "parameters": schema,
+                },
+            }
+        ],
+    }
+    if force_tool:
+        body["tool_choice"] = {"type": "function", "function": {"name": schema_name}}
+    return body
+
+
+def _is_tool_choice_conflict(response: httpx.Response) -> bool:
+    """True when a 400 says the provider rejected our forced tool_choice.
+
+    DeepSeek V4's thinking mode answers ``"Thinking mode does not support
+    this tool_choice"``; a missing or unparseable error body is treated as
+    *not* this conflict, so an ordinary bad request still raises normally.
+    """
+    try:
+        data = response.json()
+    except ValueError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    error = data.get("error")
+    message = (
+        str(error.get("message", "")) if isinstance(error, dict) else str(error)
+    ).lower()
+    return "tool_choice" in message or "thinking mode" in message
+
+
+def _extract_reasoning(message: Mapping[str, Any]) -> str | None:
+    """The vendor's raw chain of thought, if it returned one.
+
+    DeepSeek puts it in ``reasoning_content``; OpenAI-style reasoning models
+    use ``reasoning``. Only non-empty text counts, and it is passed through
+    verbatim -- never summarised, never paraphrased (CLAUDE.md 6: what the
+    model produced and what we say about it must stay distinguishable).
+    """
+    for key in ("reasoning_content", "reasoning", "reasoning_summary"):
+        value = message.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 def _repair_message(errors: list[str]) -> dict[str, str]:

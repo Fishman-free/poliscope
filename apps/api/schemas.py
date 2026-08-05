@@ -84,6 +84,13 @@ class CreateTaskRequest(ContractModel):
     scope: FrozenDict[str, object]
     budget: FrozenDict[str, object]
     user_evidence: FrozenDict[str, object]
+    # Optional per-task model endpoint: {"base_url", "api_key", "model_name?"}.
+    # Validated by TaskModelConfig in packages/research/contracts.py; the key
+    # is stored on the task row and never returned by any endpoint.
+    task_model_config: FrozenDict[str, object] | None = None
+    # Optional knowledge base whose documents the council should treat as
+    # Level A user-provided sources; the router validates the id exists.
+    knowledge_base_id: UUID | None = None
 
 
 class ConfirmClaimsRequest(ContractModel):

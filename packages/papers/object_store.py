@@ -37,13 +37,23 @@ class PrivateObjectStore:
         return f"tasks/{task_id}/{digest}.pdf"
 
     def store(self, task_id: UUID, content: bytes) -> StoredObject:
-        key = self.build_key(task_id, content)
+        return self.store_named(f"tasks/{task_id}", content)
+
+    def store_named(self, namespace: str, content: bytes) -> StoredObject:
+        """Store bytes under ``namespace/<sha256>.pdf``.
+
+        Namespaced per collection so unrelated uploads cannot collide on the
+        same content hash: a knowledge base keeps its documents under
+        ``knowledge/{kb_id}``, a task under ``tasks/{task_id}``.
+        """
+        digest = hashlib.sha256(content).hexdigest()
+        key = f"{namespace}/{digest}.pdf"
         path = self._root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         return StoredObject(
             object_key=key,
-            content_hash=hashlib.sha256(content).hexdigest(),
+            content_hash=digest,
             encryption="AES256",
             content_type="application/pdf",
             size_bytes=len(content),

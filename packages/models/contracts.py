@@ -44,6 +44,13 @@ class ModelResult(ContractModel):
     latency_ms: int
     retries: int
     schema_status: SchemaStatus
+    # Raw chain-of-thought the vendor actually returned (DeepSeek's
+    # ``reasoning_content``, OpenAI-style ``reasoning``). Never derived or
+    # summarised by us; ``None`` when the vendor did not return one (e.g.
+    # thinking-mode-off calls). This is process material for the
+    # chain-of-thought view, not part of the structured payload, and it never
+    # reaches the Evidence Graph.
+    reasoning: str | None = None
 
 
 class ModelGateway(Protocol):

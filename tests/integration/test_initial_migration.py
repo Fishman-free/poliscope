@@ -32,6 +32,12 @@ EXPECTED_COLUMNS = {
         # Plan phase 8.1: serialized CouncilCheckpoint, set only while the
         # task sits in AWAITING_COUNCIL_INPUT (migration 0008).
         "council_checkpoint",
+        # Per-task model endpoint (migration 0009): the researcher's own
+        # base_url/api_key/model_name, or NULL for the deployment gateway.
+        "model_config",
+        # Linked knowledge base (migration 0010): whose documents the council
+        # treats as Level A user-provided sources, or NULL for web-only.
+        "knowledge_base_id",
     },
     "research_scopes": {
         "id",
@@ -101,7 +107,7 @@ EXPECTED_COLUMNS = {
     },
 }
 NULLABLE_COLUMNS = {
-    "research_tasks": {"council_checkpoint"},
+    "research_tasks": {"council_checkpoint", "model_config", "knowledge_base_id"},
     "research_scopes": {"date_from"},
     "atomic_claims": set(),
     "model_calls": {"output_hash", "error_code"},

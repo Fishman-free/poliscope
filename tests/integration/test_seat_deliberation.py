@@ -14,22 +14,28 @@ from uuid import UUID, uuid4
 
 import fitz  # type: ignore[import-untyped]
 import httpx
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import JobResult, run_task
+from apps.worker.jobs import JobResult, _gateway_for_task_config, run_task
 from packages.council.contracts import Seat
 from packages.council.deliberation import (
     PHASE_OUTPUT_SCHEMAS,
     GatewayDeliberator,
     deliberator_for,
 )
-from packages.council.rounds.registry import SEAT_UNAVAILABLE, SeatDeliberator
+from packages.council.rounds.registry import (
+    MODEL_REASONING_CAPTURED,
+    SEAT_UNAVAILABLE,
+    SeatDeliberator,
+)
 from packages.epistemo.contracts import TaskPhase, TaskStatus
 from packages.evidence.contracts import EvidenceNodeType
 from packages.evidence.models import GraphNodeModel, ScientificEventModel
 from packages.kernel.contracts import FrozenDict
 from packages.models.contracts import (
+    ModelClass,
     ModelGateway,
     ModelRequest,
     ModelResult,
@@ -62,11 +68,16 @@ class _ScriptedGateway:
         claim_id: UUID,
         blindspot_id: UUID,
         schema_status: SchemaStatus = SchemaStatus.OK,
+        reasoning: str | None = None,
     ) -> None:
         self.calls: list[ModelRequest] = []
         self._claim_id = claim_id
         self._blindspot_id = blindspot_id
         self._schema_status = schema_status
+        # When set, every call pretends the vendor returned this chain of
+        # thought (as DeepSeek does in thinking mode) -- for the reasoning
+        # event tests, not for the structured-output tests above.
+        self._reasoning = reasoning
 
     def _payload(self, request: ModelRequest) -> dict[str, object]:
         if request.output_schema == "StudyFindingExtraction":
@@ -168,6 +179,7 @@ class _ScriptedGateway:
             latency_ms=12,
             retries=0,
             schema_status=self._schema_status,
+            reasoning=self._reasoning,
         )
 
 
@@ -238,6 +250,7 @@ def _fake_fulltext_fetcher() -> FullTextFetcher:
 
 async def _seed_queued_task(
     sessions: async_sessionmaker[AsyncSession],
+    model_config: dict[str, object] | None = None,
 ) -> tuple[UUID, UUID]:
     task_id = uuid4()
     claim_id = uuid4()
@@ -254,6 +267,7 @@ async def _seed_queued_task(
                 tool_call_limit=100,
                 source_limit=50,
                 user_evidence={},
+                model_config=model_config,
             )
         )
         await session.flush()
@@ -472,6 +486,113 @@ async def test_quarantined_output_never_becomes_a_seat_judgment(
     assert len(gateway.calls) == 7 * 7
 
 
+async def test_captured_reasoning_becomes_a_process_only_ledger_event(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """CLAUDE.md 5.1/11: a seat's raw chain of thought is recorded on the
+    ledger as process material and must never become evidence-graph input.
+
+    The event carries the seat, the phase, and the vendor's verbatim text; the
+    projector's allowlist marks it ``process_only`` and no node of that kind
+    appears in ``graph_nodes``.
+    """
+    task_id, claim_id = await _seed_queued_task(app_sessions)
+    gateway = _ScriptedGateway(
+        claim_id, uuid4(), reasoning="Exposure measurement is self-report, "
+        "so reverse causation cannot be excluded."
+    )
+
+    await _run_to_completion(
+        app_sessions, projector_sessions, task_id, gateway=gateway
+    )
+
+    async with app_sessions() as session:
+        events = (
+            await session.execute(
+                select(ScientificEventModel).where(
+                    ScientificEventModel.task_id == task_id,
+                    ScientificEventModel.event_type == MODEL_REASONING_CAPTURED,
+                )
+            )
+        ).scalars().all()
+    assert events, "a reasoning event must be recorded for every seat call"
+    assert len(events) == 7 * 7  # seven seats across the seven deliberating rounds
+    first = events[0]
+    assert first.status == "process_only"
+    assert first.payload["seat"] in {seat.value for seat in Seat}
+    assert first.payload["phase"] in {phase.value for phase in TaskPhase}
+    assert "self-report" in str(first.payload["reasoning"])
+    assert first.payload["char_count"] == len(first.payload["reasoning"])
+
+    # The projector saw the event and refused to turn it into a graph node --
+    # there is no node whose payload is this reasoning text.
+    async with app_sessions() as session:
+        graph_nodes = (
+            await session.execute(
+                select(GraphNodeModel).where(
+                    GraphNodeModel.task_id == task_id
+                )
+            )
+        ).scalars().all()
+    assert all(
+        "self-report" not in str(node.payload.get("reasoning", ""))
+        for node in graph_nodes
+    )
+
+
+async def test_task_model_config_builds_a_per_task_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """A task with its own model configuration runs against the researcher's
+    endpoint, not the worker process's gateway -- and the per-task gateway is
+    built from exactly what the task row stores."""
+    task_id, claim_id = await _seed_queued_task(
+        app_sessions,
+        model_config={
+            "base_url": "https://api.researcher.example",
+            "api_key": "sk-researcher-secret",
+            "model_name": "my-own-model",
+        },
+    )
+    scripted = _ScriptedGateway(claim_id, uuid4())
+    captured: dict[str, object] = {}
+
+    class _PerTaskGateway:
+        """Stands in for OpenAICompatibleModelGateway: records the config it
+        was built with, then delegates to the scripted answerer."""
+
+        def __init__(self, config: Mapping[str, object]) -> None:
+            captured["config"] = dict(config)
+
+        async def invoke(self, request: ModelRequest) -> ModelResult:
+            return await scripted.invoke(request)
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "apps.worker.jobs._gateway_for_task_config", _PerTaskGateway
+    )
+
+    result = await _run_to_completion(
+        app_sessions, projector_sessions, task_id, gateway=scripted
+    )
+
+    # No tools are configured here, so the run honestly reports the
+    # acquisition gaps -- the point is that no round failed and the per-task
+    # gateway carried every seat call.
+    assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
+    assert result.run.failures == ()
+    assert captured["config"]["api_key"] == "sk-researcher-secret"
+    assert captured["config"]["base_url"] == "https://api.researcher.example"
+    # Every seat call went through the per-task gateway (which forwards to the
+    # scripted answerer) -- the worker really did run on the task's endpoint.
+    assert len(scripted.calls) == 7 * 7
+
+
 async def test_a_provider_outage_degrades_the_run_instead_of_failing_it(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
@@ -541,6 +662,34 @@ async def test_a_seat_is_given_its_own_recall_and_no_one_elses(
     assert all(
         "Your private recall:" in request.messages[1].content for request in first
     )
+
+
+def test_per_task_gateway_resolves_the_model_name_in_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The task's own model_name wins; then the deployment's configured model;
+    then the honest default of ``deepseek-chat``."""
+    monkeypatch.delenv("POLISCOPE_MODEL_NAME", raising=False)
+
+    gateway = _gateway_for_task_config(
+        {"base_url": "https://api.example", "api_key": "k"}
+    )
+    assert gateway._config.model_names[ModelClass.MEDIUM] == "deepseek-chat"
+
+    monkeypatch.setenv("POLISCOPE_MODEL_NAME", "env-configured-model")
+    gateway = _gateway_for_task_config(
+        {"base_url": "https://api.example", "api_key": "k"}
+    )
+    assert gateway._config.model_names[ModelClass.STRONG_REASONING] == "env-configured-model"
+
+    gateway = _gateway_for_task_config(
+        {
+            "base_url": "https://api.example",
+            "api_key": "k",
+            "model_name": "researcher-model",
+        }
+    )
+    assert gateway._config.model_names[ModelClass.LIGHTWEIGHT] == "researcher-model"
 
 
 def test_a_scripted_payload_matches_what_the_rounds_read() -> None:

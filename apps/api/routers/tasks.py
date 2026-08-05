@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from apps.api.dependencies import SessionDep
 from apps.api.routers.workspace import _seats
+from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
 from apps.api.schemas import (
     ConfirmClaimsRequest,
     CouncilGuidanceRequest,
@@ -51,6 +52,19 @@ async def create_task(
     session: SessionDep,
 ) -> dict[str, Any]:
     """Create a task and return the atomic claims it suggests."""
+    if request.knowledge_base_id is not None:
+        # The contract cannot validate this itself (cross-table), so the
+        # router does: a task linked to a knowledge base that does not exist
+        # would silently lose the researcher's documents at worker time.
+        try:
+            await KnowledgeRepository(session).get_knowledge_base(
+                request.knowledge_base_id
+            )
+        except KnowledgeBaseNotFound as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown knowledge base {request.knowledge_base_id}",
+            ) from error
     try:
         contract = ResearchContract.model_validate(
             {
@@ -58,6 +72,12 @@ async def create_task(
                 "scope": dict(request.scope),
                 "budget": dict(request.budget),
                 "user_evidence": dict(request.user_evidence),
+                "task_model_config": (
+                    dict(request.task_model_config)
+                    if request.task_model_config
+                    else None
+                ),
+                "knowledge_base_id": request.knowledge_base_id,
             }
         )
     except ValueError as error:

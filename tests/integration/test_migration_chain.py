@@ -28,6 +28,7 @@ EVIDENCE_TABLES = frozenset(
     }
 )
 COUNCIL_TABLES = frozenset({"council_rounds", "scientist_runs", "round_outputs"})
+KNOWLEDGE_TABLES = frozenset({"knowledge_bases", "knowledge_documents"})
 
 
 def _list_tables(connection: Connection) -> set[str]:
@@ -61,6 +62,7 @@ def test_full_chain_upgrade_downgrade_upgrade_is_reversible(
         at_head = _tables_sync(isolated_postgres_admin_url)
         assert at_head >= EVIDENCE_TABLES
         assert at_head >= COUNCIL_TABLES
+        assert at_head >= KNOWLEDGE_TABLES
 
         command.downgrade(config, "base")
         assert _tables_sync(isolated_postgres_admin_url) == set()

@@ -16,8 +16,10 @@ passing an AI derivation off as evidence.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import logging
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
+from uuid import UUID
 
 from packages.council.contracts import Seat
 from packages.council.roles import ROLE_SPECS
@@ -31,6 +33,8 @@ from packages.models.contracts import (
     ModelRequest,
     SchemaStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 # What each seat is for. These are the questioning rules that make seven seats
 # different rather than seven copies; CLAUDE.md 3 forbids the latter.
@@ -138,7 +142,30 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
         if key.lower() in _BIBLIOGRAPHIC_IDENTITY_KEYS:
             # Blind evidence review: never render this, whatever produced it.
             continue
+        if key == "knowledge_base_context":
+            # Rendered with its own dedicated block below -- the generic
+            # {key}: {value!r} line would dump raw dicts into the prompt.
+            continue
         lines.append(f"{key}: {context.carried[key]!r}")
+    # Knowledge-base retrieval hits, carried forward from the acquisition
+    # round (registry's run_acquisition). Explicitly labelled as non-evidence
+    # process context -- the researcher's own documents may suggest what to
+    # look at, but a hit list is not a citation, and the Evidence Gate never
+    # reads it (it lives in `carried`, not in any event payload). The value
+    # is a tuple of dicts, or of FrozenDicts once a checkpoint has frozen it;
+    # both are Mappings, so one rendering path covers both shapes.
+    kb_hits = context.carried.get("knowledge_base_context")
+    if isinstance(kb_hits, (list, tuple)):
+        for raw in kb_hits:
+            if not isinstance(raw, Mapping):
+                continue
+            title = str(raw.get("document_title", "?"))
+            snippet = str(raw.get("snippet", ""))
+            if snippet:
+                lines.append(
+                    f"【研究者知识库检索命中（非正式证据，来源文档：{title}）】"
+                    f"{snippet}"
+                )
     # Plan phase 8.3: the human's advisory steer from the BLINDSPOT_BOUNTY ->
     # JOINT_MODELING checkpoint, rendered only in this one phase and clearly
     # labelled as non-scientific. CLAUDE.md 4/8 forbid a human vote from
@@ -174,6 +201,11 @@ def generic_system_prompt(seat: Seat, phase: TaskPhase) -> str:
 SystemPromptBuilder = Callable[[Seat, TaskPhase], str]
 UserPromptBuilder = Callable[[Seat, PhaseContext], str]
 
+# Receives a seat's raw chain of thought once a model call captured one, so
+# the caller can surface it (the ledger's process-only MODEL_REASONING_CAPTURED
+# event). Optional: evaluation baselines and tests can omit it.
+ReasoningCallback = Callable[[UUID, Seat, TaskPhase, str], Awaitable[None]]
+
 
 class GatewayDeliberator:
     """Produces one seat's structured output for one phase, via the gateway.
@@ -196,11 +228,13 @@ class GatewayDeliberator:
         *,
         system_prompt: SystemPromptBuilder = _system_prompt,
         user_prompt: UserPromptBuilder = _user_prompt,
+        on_reasoning: ReasoningCallback | None = None,
     ) -> None:
         self._gateway = gateway
         self._budget = budget
         self._system_prompt = system_prompt
         self._user_prompt = user_prompt
+        self._on_reasoning = on_reasoning
 
     def _request(self, seat: Seat, phase: TaskPhase, ctx: PhaseContext) -> ModelRequest:
         return ModelRequest(
@@ -242,6 +276,25 @@ class GatewayDeliberator:
             # discarding this answer would throw away work already paid for.
             with suppress(BudgetExhausted):
                 self._budget.consume_model_cost(result.cost_usd)
+
+        if self._on_reasoning is not None and result.reasoning:
+            # The chain of thought is auxiliary process material. Recorded
+            # before the quarantine check on purpose: a quarantined result
+            # (schema repair failed) still had real thinking behind it, and
+            # showing that thinking is honest. A failure to record it must not
+            # sink the seat's structured output or fail the round.
+            try:
+                await self._on_reasoning(
+                    context.task_id, seat, phase, result.reasoning
+                )
+            except Exception:
+                logger.warning(
+                    "failed to record reasoning for %s/%s/%s",
+                    context.task_id,
+                    seat,
+                    phase,
+                    exc_info=True,
+                )
 
         if result.schema_status is SchemaStatus.QUARANTINED:
             # CLAUDE.md 10: structured output that could not be repaired is

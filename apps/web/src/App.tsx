@@ -21,11 +21,20 @@ import { BriefView } from "./views/BriefView";
 import { CheckpointGate } from "./views/CheckpointGate";
 import { CouncilView } from "./views/CouncilView";
 import { EvolutionView } from "./views/EvolutionView";
+import { KnowledgeBaseView } from "./views/KnowledgeBaseView";
 import { MapView } from "./views/MapView";
+import { NewTaskView } from "./views/NewTaskView";
 
 import "./App.css";
 
-type Tab = "brief" | "map" | "council" | "radar" | "evolution" | "audit";
+type Tab =
+  | "brief"
+  | "map"
+  | "council"
+  | "radar"
+  | "evolution"
+  | "audit"
+  | "knowledge";
 
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "brief", label: "Research Brief", hint: "结论与局限并排" },
@@ -34,6 +43,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "radar", label: "Blindspot Radar", hint: "影响 x 可调查性" },
   { id: "evolution", label: "Evolution View", hint: "主张分叉与异议时间线" },
   { id: "audit", label: "Audit Trail", hint: "事件账本与拒绝记录" },
+  { id: "knowledge", label: "知识库", hint: "长期记忆与检索" },
 ];
 
 const STATUS_TONE: Record<string, Tone> = {
@@ -57,6 +67,27 @@ const STATUS_TONE: Record<string, Tone> = {
  * showing the gate the instant the researcher's own submission succeeds. */
 const CHECKPOINT_POLL_MS = 3000;
 
+/** Phase -> the tab that shows that phase's product. The council panel is
+ * where the protocol runs; blindspot bounty is the one phase whose product
+ * has a tab of its own (Blindspot Radar). Values match TaskPhase StrEnum
+ * values in PHASE_STARTED payloads. */
+const PHASE_TAB: Record<string, Tab> = {
+  PRECOMMITMENT: "council",
+  ACQUISITION: "council",
+  EVIDENCE_EXCHANGE: "council",
+  CROSS_EXAMINATION: "council",
+  BLINDSPOT_BOUNTY: "radar",
+  JOINT_MODELING: "council",
+  FINAL_REJUDGMENT: "council",
+};
+
+/** Terminal ledger events -> the brief is what a finished task has to offer. */
+const TERMINAL_TABS: Record<string, Tab> = {
+  TASK_COMPLETED: "brief",
+  TASK_COMPLETED_WITH_GAPS: "brief",
+  TASK_FAILED: "brief",
+};
+
 /** Read the task id from ?task=, so a researcher can share a link to exactly
  * the workspace they are looking at. */
 function taskIdFromLocation(): string | null {
@@ -66,6 +97,12 @@ function taskIdFromLocation(): string | null {
 export function App() {
   const [taskId, setTaskId] = useState<string | null>(taskIdFromLocation);
   const [tab, setTab] = useState<Tab>("brief");
+  // Auto-follow: while it is on, each new phase event moves the active tab to
+  // the phase's own view ("模型走到哪一步，界面切到哪一步"). The moment the
+  // researcher clicks a tab themselves, follow stops -- a live run must not
+  // yank the screen away from what they chose to look at. Opening a different
+  // task re-arms it.
+  const [follow, setFollow] = useState(true);
   const [draft, setDraft] = useState(taskId ?? "");
   const { snapshot, load, stream, error, events, refresh } = useWorkspace(taskId);
 
@@ -81,6 +118,21 @@ export function App() {
     return () => window.clearInterval(id);
   }, [snapshot?.task.status, refresh]);
 
+  // Follow the newest ledger event while auto-follow is armed. This reads the
+  // wire's event list, never the snapshot -- the projector, not the browser,
+  // decides what an event means (see useWorkspace's docstring).
+  useEffect(() => {
+    if (!follow) return;
+    const latest = events[events.length - 1];
+    if (!latest) return;
+    const phase = latest.kind === "PHASE_STARTED"
+      && typeof latest.payload.phase === "string"
+      ? latest.payload.phase
+      : "";
+    const next = PHASE_TAB[phase] ?? TERMINAL_TABS[latest.kind];
+    if (next) setTab(next);
+  }, [events, follow]);
+
   function open(next: string) {
     const trimmed = next.trim();
     if (!trimmed) return;
@@ -88,6 +140,14 @@ export function App() {
     url.searchParams.set("task", trimmed);
     window.history.pushState({}, "", url);
     setTaskId(trimmed);
+    setTab("brief");
+    setFollow(true);
+  }
+
+  /** A manual tab choice always wins over auto-follow. */
+  function selectTab(next: Tab) {
+    setFollow(false);
+    setTab(next);
   }
 
   async function exportMarkdown() {
@@ -112,7 +172,9 @@ export function App() {
     <div className="app">
       <header className="app__chrome">
         <div className="app__identity">
-          <span className="app__wordmark">Poliscope</span>
+          <a className="app__wordmark" href="/" title="返回公开落地页">
+            Poliscope
+          </a>
           <span className="app__method">EpistemoBrain · 争议证据地图</span>
         </div>
 
@@ -141,15 +203,11 @@ export function App() {
       </header>
 
       {taskId === null ? (
-        <main className="app__main app__placeholder">
-          <h1>打开一个研究任务</h1>
-          <p>
-            用 <code>poliscope start</code> 创建任务并确认原子主张，
-            然后把返回的 task_id 粘贴到上方。
-          </p>
-          <p className="app__placeholder-note">
-            本系统为科研辅助工具，不提供医学诊断或医疗建议。
-          </p>
+        <main className="app__main app__main--split">
+          {/* 无任务时并排展示：左表单建任务，右知识库管理（长期记忆）。
+              有任务后知识库仍可通过同名 tab 访问。 */}
+          <NewTaskView onCreated={open} />
+          <KnowledgeBaseView />
         </main>
       ) : (
         <>
@@ -184,7 +242,7 @@ export function App() {
                   type="button"
                   className={`app__tab${tab === item.id ? " app__tab--on" : ""}`}
                   aria-current={tab === item.id ? "page" : undefined}
-                  onClick={() => setTab(item.id)}
+                  onClick={() => selectTab(item.id)}
                 >
                   <span>{item.label}</span>
                   <span className="app__tab-hint">{item.hint}</span>
@@ -218,24 +276,32 @@ export function App() {
                     onSubmitted={refresh}
                   />
                 ) : null}
-                {tab === "brief" ? (
-                  <BriefView
-                    brief={brief}
-                    safety={snapshot.safety_notice}
-                    onExport={exportMarkdown}
-                  />
-                ) : null}
-                {tab === "map" ? <MapView graph={snapshot.graph} /> : null}
-                {tab === "council" ? <CouncilView seats={snapshot.seats} /> : null}
-                {tab === "radar" ? (
-                  <BlindspotRadarView blindspots={snapshot.blindspots} />
-                ) : null}
-                {tab === "evolution" ? (
-                  <EvolutionView entries={snapshot.evolution} />
-                ) : null}
-                {tab === "audit" ? (
-                  <AuditView events={events} streamOpen={stream === "open"} />
-                ) : null}
+                {/* key={tab} forces a fresh mount per tab switch, so the
+                    entrance animation in App.css replays every time instead
+                    of only on first load -- see .app__panel there. */}
+                <div className="app__panel" key={tab}>
+                  {tab === "brief" ? (
+                    <BriefView
+                      brief={brief}
+                      safety={snapshot.safety_notice}
+                      onExport={exportMarkdown}
+                    />
+                  ) : null}
+                  {tab === "map" ? <MapView graph={snapshot.graph} /> : null}
+                  {tab === "council" ? (
+                    <CouncilView seats={snapshot.seats} events={events} />
+                  ) : null}
+                  {tab === "radar" ? (
+                    <BlindspotRadarView blindspots={snapshot.blindspots} />
+                  ) : null}
+                  {tab === "evolution" ? (
+                    <EvolutionView entries={snapshot.evolution} />
+                  ) : null}
+                  {tab === "audit" ? (
+                    <AuditView events={events} streamOpen={stream === "open"} />
+                  ) : null}
+                  {tab === "knowledge" ? <KnowledgeBaseView /> : null}
+                </div>
               </>
             ) : null}
           </main>

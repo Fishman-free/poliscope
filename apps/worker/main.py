@@ -25,7 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
 from packages.epistemo.contracts import TaskStatus
 from packages.kernel.config import DatabaseConfig
-from packages.kernel.database import create_database_engine, create_session_factory
+from packages.kernel.database import (
+    canonical_uuid,
+    create_database_engine,
+    create_session_factory,
+)
 from packages.models.contracts import ModelGateway
 from packages.models.openai_compatible import gateway_from_env
 from packages.papers.object_store import PrivateObjectStore
@@ -137,7 +141,12 @@ async def claim_queued_tasks(
                 .limit(limit)
                 .with_for_update(skip_locked=True)
             )
-            claimed = tuple(result.scalars())
+            # canonical_uuid at the driver boundary: asyncpg returns its own UUID
+            # subclass, and every ContractModel this id later flows into (e.g.
+            # ModelRequest) admits a leaf only when its type matches exactly. See
+            # packages.kernel.database and apps/worker/jobs.py's
+            # _confirmed_claim_ids for the same normalisation.
+            claimed = tuple(canonical_uuid(value) for value in result.scalars())
             await session.commit()
             return claimed
         except BaseException:

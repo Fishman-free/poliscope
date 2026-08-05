@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from packages.council import models as council_models  # noqa: F401
 from packages.evidence import models as evidence_models  # noqa: F401
 from packages.kernel.database import Base
+from packages.knowledge import models as knowledge_models  # noqa: F401
 from packages.models import models as model_models  # noqa: F401
 from packages.papers import models as paper_models  # noqa: F401
 from packages.research import models as research_models  # noqa: F401

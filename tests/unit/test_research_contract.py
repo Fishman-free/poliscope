@@ -10,6 +10,7 @@ from packages.research.contracts import (
     ResearchBudget,
     ResearchContract,
     ResearchScope,
+    TaskModelConfig,
 )
 
 
@@ -118,6 +119,28 @@ def test_research_contract_from_plain_containers_is_immutable(
     assert isinstance(valid_research_contract.scope.evidence_priorities, tuple)
     assert isinstance(valid_research_contract.user_evidence.dois, tuple)
     assert isinstance(valid_research_contract.model_extra, FrozenDict | type(None))
+
+
+def test_task_model_config_defaults_model_name_to_none() -> None:
+    config = TaskModelConfig(
+        base_url="https://api.deepseek.com", api_key="sk-test"
+    )
+    assert config.model_name is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"base_url": "api.deepseek.com", "api_key": "sk-test"},  # 缺 scheme
+        {"base_url": "", "api_key": "sk-test"},  # 空 URL
+        {"base_url": "https://api.deepseek.com", "api_key": ""},  # 空密钥
+    ),
+)
+def test_task_model_config_rejects_broken_endpoint_pairs(
+    payload: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError):
+        TaskModelConfig.model_validate(payload)
 
 
 def test_research_contract_serializes_to_json_compatible_values(

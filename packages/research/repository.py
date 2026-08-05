@@ -56,6 +56,10 @@ class StoredTask:
     # caller that needs the checkpoint already calls get_task() first to
     # check status -- a second round trip would just re-fetch the same row.
     council_checkpoint: dict[str, Any] | None = None
+    # Knowledge base linked at creation (migration 0010), None when the task
+    # retrieves from the open web only. The worker reads this to feed the
+    # council the researcher's own documents.
+    knowledge_base_id: UUID | None = None
 
 
 class TaskNotFound(Exception):
@@ -96,6 +100,12 @@ class ResearchRepository:
                 tool_call_limit=contract.budget.tool_call_limit,
                 source_limit=contract.budget.source_limit,
                 user_evidence=contract.user_evidence.model_dump(mode="json"),
+                model_config=(
+                    contract.task_model_config.model_dump(mode="json")
+                    if contract.task_model_config is not None
+                    else None
+                ),
+                knowledge_base_id=contract.knowledge_base_id,
             )
         )
         # Flushed before the dependent rows because their foreign key targets
@@ -147,6 +157,7 @@ class ResearchRepository:
             status=row.status,
             created_by=row.created_by,
             council_checkpoint=row.council_checkpoint,
+            knowledge_base_id=row.knowledge_base_id,
         )
 
     async def list_claims(self, task_id: UUID) -> tuple[StoredClaim, ...]:

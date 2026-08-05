@@ -50,12 +50,20 @@ class CLIClient:
         *,
         timeout: float = DEFAULT_TIMEOUT,
         transport: httpx.AsyncBaseTransport | None = None,
+        auth: httpx.BasicAuth | None = None,
     ) -> None:
         """``transport`` exists so a test can assert which URL was requested.
 
         Stubbing the client's own methods proves only that the CLI passes
         arguments around; it cannot catch a route that does not exist, which is
         how ``export`` shipped pointing at a path the API never served.
+
+        ``auth`` exists for the same reason a deployed instance can sit behind
+        Caddy's shared HTTP Basic Auth (see ``deploy/caddy/Caddyfile``): a CLI
+        or Skill invocation pointed at that instance needs to send the same
+        credentials a browser would, or every request 401s before it reaches
+        the API at all. ``None`` (the default) preserves today's unauthenticated
+        behaviour for a local, un-gated API.
         """
         self.base_url = base_url.rstrip("/")
         # A developer machine often exports HTTP_PROXY for outbound traffic. Sending
@@ -67,6 +75,7 @@ class CLIClient:
             timeout=timeout,
             trust_env=not _is_loopback(self.base_url),
             transport=transport,
+            auth=auth,
         )
 
     async def __aenter__(self) -> CLIClient:

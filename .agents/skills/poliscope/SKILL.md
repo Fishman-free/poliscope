@@ -1,7 +1,6 @@
 ---
 name: poliscope
 description: Run an auditable Poliscope research task for a computational-social-science controversy (digital behavior, social media, mental health). Use when the user asks to research a contested empirical question, wants an evidence map with blindspots and preserved dissent instead of a single summarized answer, or explicitly mentions Poliscope, a Research Contract, or the 7-scientist council.
-allowed-tools: Bash(poliscope *), Bash(python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py *)
 ---
 
 # Poliscope
@@ -16,13 +15,30 @@ section 8.7). If you are tempted to shortcut any of this to "just get an
 answer faster," don't -- that would make this a second, divergent Poliscope
 implementation, which is exactly what the design forbids.
 
-**Known limitation, stated plainly rather than silently assumed away:** the
-`allowed-tools` line above only pre-approves those two command shapes so you
-are not asked to confirm every single invocation -- it does not technically
-prevent you from calling other tools. Do not use it as an excuse to reach for
-`packages/`, a database client, or a model API directly during a Poliscope
-task; the constraint is enforced by your own discipline here, not by the
-platform.
+This file targets the generic `AGENTS.md`/`.agents/skills/` convention, so it
+has no tool-specific frontmatter (e.g. Claude Code's `allowed-tools`) and no
+tool-specific environment variables -- every command below is plain,
+portable Bash. It is kept content-identical to `.claude/skills/poliscope/SKILL.md`
+(the Claude Code copy of this same skill) aside from that, so there is one
+shared workflow, not several that can drift apart. Whatever agent is reading
+this file, the discipline in "Hard constraints" below is enforced by your own
+judgment, not by the platform.
+
+## Getting the `poliscope` CLI without cloning
+
+If `poliscope` is not already on PATH, the fastest path is a zero-install run
+via `uv` (the Python ecosystem's equivalent of `npx`) -- no clone, no venv to
+manage:
+
+```bash
+uvx --from "git+https://github.com/Fishman-free/poliscope.git" poliscope --help
+```
+
+Every `poliscope` subcommand in this file works the same way, e.g.
+`uvx --from "git+https://github.com/Fishman-free/poliscope.git" poliscope health`.
+Prefer a normal `pip install`/local checkout instead if you expect to run many
+commands in one session -- `uvx` resolves the environment on every
+invocation, which is fine for occasional calls but wasteful in a tight loop.
 
 ## Workflow
 
@@ -36,18 +52,22 @@ platform.
    material the user explicitly handed you.
 
 2. **Draft a Research Contract, do not submit it yet.** Build it with the
-   shared scaffolding script so the JSON shape always matches
+   shared scaffolding script, kept next to this file at
+   `scripts/new_contract.py`, so the JSON shape always matches
    `packages/research/contracts.py`'s `ResearchContract` schema without you
    hand-typing it:
 
    ```bash
-   python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py \
+   python scripts/new_contract.py \
      --question "<verbatim research question>" \
      --population "<population>" --region "<region>" --language "<lang>" \
      --evidence-priority CAUSAL_OR_REVERSE_CAUSAL --evidence-priority MEASUREMENT \
      --doi "<doi if the user gave one>" \
      --output poliscope_contract.json
    ```
+
+   (Resolve `scripts/new_contract.py` relative to this SKILL.md file's own
+   directory, wherever this skill was installed.)
 
    `--evidence-priority` accepts `CORRELATION`, `CAUSAL_OR_REVERSE_CAUSAL`,
    `MEASUREMENT`, `REPLICATION`, `BOUNDARY`, `MECHANISM`, or
@@ -128,3 +148,8 @@ platform.
 - Model confidence does not replace statistical uncertainty or expert judgment.
 - Every command needs a reachable Poliscope API (`poliscope health` checks
   this first if you are unsure one is running).
+- If the target is a deployed instance sitting behind a shared password
+  (Caddy's HTTP Basic Auth, see `deploy/caddy/Caddyfile`), set
+  `POLISCOPE_API_USERNAME` and `POLISCOPE_API_PASSWORD` in your environment
+  before calling `poliscope` -- every command reads them automatically, no
+  extra flag needed. Leave them unset for a local, un-gated API.

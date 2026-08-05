@@ -20,6 +20,7 @@ changes no other code.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -82,6 +83,11 @@ RESURRECTION_GRANTED = "RESURRECTION_GRANTED"
 # A qualitative Evolution View trajectory marker (plan phase 5), not a formal
 # node -- see ``_confidence_marker`` for what it carries and why.
 CONFIDENCE_UPDATED = "CONFIDENCE_UPDATED"
+# A seat's raw model chain of thought, captured for the chain-of-thought view.
+# Process material only: the projector's ``NODE_EVENT_TYPES`` allowlist
+# refuses it as process-only, so it can never become SUPPORTS/REFUTES input
+# (CLAUDE.md 5.1/11: reasoning is shown as process, never as evidence).
+MODEL_REASONING_CAPTURED = "MODEL_REASONING_CAPTURED"
 
 # Deterministic derivation for a forked claim's node id. The orchestrator's
 # idempotency keys must be stable across replay, and a random uuid4() written
@@ -164,6 +170,12 @@ class SourceAcquirer(Protocol):
         self, object_ids: tuple[UUID, ...]
     ) -> AcquisitionLike: ...
 
+    async def acquire_dois(self, dois: tuple[str, ...]) -> AcquisitionLike: ...
+
+    async def acquire_knowledge_documents(
+        self, documents: tuple[KnowledgeDocumentLike, ...]
+    ) -> AcquisitionLike: ...
+
 
 class AcquisitionLike(Protocol):
     """The part of an acquisition result the round reads."""
@@ -209,6 +221,11 @@ class AcquiredLike(Protocol):
     @property
     def object_id(self) -> UUID | None: ...
 
+    # Only set for a knowledge-base document's source (see
+    # AcquiredSource.document_id / acquire_knowledge_documents).
+    @property
+    def document_id(self) -> UUID | None: ...
+
 
 class RefusedLike(Protocol):
     @property
@@ -216,6 +233,47 @@ class RefusedLike(Protocol):
 
     @property
     def reason(self) -> str: ...
+
+
+class KnowledgeDocumentLike(Protocol):
+    """One linked knowledge-base document, duck-typed across the package
+    boundary -- the concrete implementation is
+    :class:`packages.papers.acquisition.KnowledgeDocumentRef`."""
+
+    @property
+    def document_id(self) -> UUID: ...
+
+    @property
+    def object_key(self) -> str: ...
+
+    @property
+    def title(self) -> str: ...
+
+
+class KnowledgeHitLike(Protocol):
+    """One knowledge-base search hit, fed to later phases' prompts as
+    process context (never as evidence)."""
+
+    @property
+    def document_id(self) -> UUID: ...
+
+    @property
+    def document_title(self) -> str: ...
+
+    @property
+    def snippet(self) -> str: ...
+
+    @property
+    def score(self) -> float: ...
+
+
+class KnowledgeSearcher(Protocol):
+    """Keyword search over the linked knowledge base (implemented by
+    :class:`packages.knowledge.search.KnowledgeBaseSearch`)."""
+
+    async def search(
+        self, query: str, limit: int = 5
+    ) -> tuple[KnowledgeHitLike, ...]: ...
 
 
 class FindingExtractor(Protocol):
@@ -231,6 +289,10 @@ class FindingExtractor(Protocol):
 
     async def extract_uploaded(
         self, source_id: UUID, object_id: UUID
+    ) -> FindingExtractionLike: ...
+
+    async def extract_knowledge_document(
+        self, source_id: UUID, document_id: UUID
     ) -> FindingExtractionLike: ...
 
 
@@ -257,6 +319,38 @@ class FindingExtractionLike(Protocol):
 
     @property
     def method_quality(self) -> Mapping[str, float]: ...
+
+
+# The longest TaskPhase value is 17 characters (CROSS_EXAMINATION,
+# FINAL_REJUDGMENT); this bound is on each individual *part*, not the whole
+# key, so it leaves generous headroom under idempotency_key's VARCHAR(255)
+# (packages/evidence/models.py) even with several bounded parts joined.
+_MAX_KEY_PART_CHARS = 60
+_KEY_PART_HASH_HEX_CHARS = 16
+
+
+def _bounded_key_part(part: object) -> str:
+    """Bound one idempotency-key part to a safe, deterministic length.
+
+    Short parts (seat names, UUIDs, small indices) pass through unchanged --
+    this is the overwhelming majority of ``PhaseContext.key`` callers today.
+    A part whose ``str()`` exceeds ``_MAX_KEY_PART_CHARS`` -- a model-generated
+    free-text search query is the confirmed production case -- is replaced by
+    a short prefix of the original text plus a stable hash of the *full*
+    text, not a bare truncation. Prefix-only truncation would let two
+    different long queries that happen to share a long common prefix collide
+    onto the same key, which would corrupt idempotency rather than protect
+    it (see ``EventConflict`` in packages/evidence/sql_ledger.py). Hashing the
+    full text keeps the result deterministic across replay (same input, same
+    key, always -- CLAUDE.md 10), which a random or object-identity-based
+    scheme would not be.
+    """
+    text = str(part)
+    if len(text) <= _MAX_KEY_PART_CHARS:
+        return text
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:_KEY_PART_HASH_HEX_CHARS]
+    prefix_chars = _MAX_KEY_PART_CHARS - _KEY_PART_HASH_HEX_CHARS - 1
+    return f"{text[:prefix_chars]}-{digest}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +381,23 @@ class PhaseContext:
     # apps/worker/jobs.py::deliberate). Empty when nothing was uploaded, which
     # is the common case: most sources still arrive via DOI/free-text request.
     pdf_object_ids: tuple[UUID, ...] = ()
+    # DOIs the researcher supplied themselves (from user_evidence.dois, plus
+    # any extracted from user_evidence.bibtex_entries by
+    # packages/papers/bibtex.py -- resolved in apps/worker/jobs.py::_user_dois).
+    # Acquired in their own pass so they dedupe against seat requests without
+    # needing a request to exist; empty when the researcher listed none.
+    user_dois: tuple[str, ...] = ()
+    # Documents from the knowledge base the researcher linked at task
+    # creation (loaded by the worker from knowledge_documents -- see
+    # apps/worker/jobs.py::_knowledge_documents). Empty when no knowledge
+    # base was linked. Acquired as Level A user-provided sources in their own
+    # pass, keyed by sources.knowledge_document_id.
+    knowledge_documents: tuple[KnowledgeDocumentLike, ...] = ()
+    # Keyword search over the linked knowledge base, or None when no
+    # knowledge base was linked. When present, the acquisition round runs
+    # each seat's requests against it and carries the hits into later
+    # phases' prompts as process context (never as evidence).
+    knowledge_search: KnowledgeSearcher | None = None
     # Plan phase 8.3: the human's advisory directional steer collected at the
     # BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint, or None outside that one
     # phase. Deliberately a dedicated field rather than another `carried`
@@ -298,8 +409,35 @@ class PhaseContext:
     guidance: str | None = None
 
     def key(self, *parts: object) -> str:
-        """Build a replay-stable idempotency key for this phase."""
-        return ":".join([self.phase.value, *(str(part) for part in parts)])
+        """Build a replay-stable idempotency key for this phase.
+
+        Real production incident: ``ScientificEventModel.idempotency_key`` is
+        a ``VARCHAR(255)`` (packages/evidence/models.py), and this used to
+        join every part's ``str()`` with no length bound at all. Most callers
+        only ever pass short, bounded parts (a seat name, a UUID, a small
+        index), but the ACQUISITION phase's ``SOURCE_REFUSED`` event keys on
+        a model-generated free-text search query, which has no length bound
+        whatsoever. A live task hit exactly this: a genuine DeepSeek-generated
+        query long enough that ``"ACQUISITION:refused:" + query`` exceeded 255
+        characters, and ``SqlEventLedger.append``'s ``session.flush()``
+        (packages/evidence/sql_ledger.py) raised
+        ``asyncpg.exceptions.StringDataRightTruncationError``, rolling back
+        the whole phase and leaving the task stuck at QUEUED. This was
+        invisible until now because the Model Gateway's thinking-mode bug
+        (packages/models/openai_compatible.py, now fixed) previously failed
+        every model call with a 400 before any real, long query could ever
+        reach this code path.
+
+        A part longer than ``_MAX_KEY_PART_CHARS`` is bounded via
+        :func:`_bounded_key_part` rather than truncated outright: plain
+        truncation could silently collapse two different long, free-text
+        queries onto the same idempotency key whenever they share a long
+        enough prefix, which is exactly the identity clash
+        ``EventConflict`` (packages/evidence/sql_ledger.py) exists to catch.
+        """
+        return ":".join(
+            [self.phase.value, *(_bounded_key_part(part) for part in parts)]
+        )
 
 
 async def _collect(
@@ -497,6 +635,9 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     outputs, unfilled, absent = await _collect(context)
     round_ = AcquisitionRound()
     events: list[EmittedEvent] = []
+    # Values later phases read; the knowledge-search pass adds
+    # "knowledge_base_context" here when it finds hits.
+    carry: dict[str, object] = {}
     all_requests: list[tuple[Seat, str]] = []
     for seat, output in sorted(outputs.items(), key=lambda kv: kv[0].value):
         requests = _strings(output.get("requests"))
@@ -784,9 +925,202 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     elif context.pdf_object_ids:
         slots.append("ACQUISITION:no_tool_provider_uploaded")
 
+    if context.acquirer is not None and context.user_dois:
+        # The researcher's own DOIs, in their own pass. These must not share
+        # the seat-request branch's idempotency keys: a DOI the researcher
+        # supplied that a seat also requested would collide on
+        # context.key("source", doi) -- and their already_known=True handling
+        # is what makes a replay (and the overlap) safe: acquire_dois dedupes
+        # against the same canonical-DOI _existing lookup the seat branch
+        # uses, so both paths resolve to one Source row.
+        user_acquired = await context.acquirer.acquire_dois(context.user_dois)
+        events.extend(
+            EmittedEvent(
+                event_type=EvidenceNodeType.SOURCE.value,
+                payload={
+                    "node_id": str(item.source_id),
+                    "doi": item.doi,
+                    "title": item.title,
+                    "has_doi": item.doi is not None,
+                    "has_title": bool(item.title),
+                    "has_authors": True,
+                    "is_retracted": False,
+                    "authors": list(item.authors),
+                    "dataset_id": item.dataset_id,
+                    "kind": "user_doi",
+                },
+                idempotency_key=context.key("user_doi_source", str(item.source_id)),
+                evidence_level=item.evidence_level,
+                source_id=item.source_id,
+            )
+            for item in user_acquired.acquired
+        )
+        for item in user_acquired.acquired:
+            if context.finding_extractor is None or item.already_known:
+                continue
+            if item.doi is None:
+                # Same unreachable-on-this-branch guard as the seat branch:
+                # every item here comes from acquire_dois, which always sets a
+                # real doi. mypy cannot see that; the check costs nothing.
+                continue
+            extraction = await context.finding_extractor.extract(
+                item.source_id, item.doi
+            )
+            if extraction.ok and extraction.finding_id is not None:
+                events.append(
+                    EmittedEvent(
+                        event_type=EvidenceNodeType.STUDY_FINDING.value,
+                        payload={
+                            "doi": item.doi,
+                            "finding_statement": extraction.finding_statement,
+                            "exact_quote": extraction.exact_quote,
+                            "method_quality": dict(extraction.method_quality),
+                        },
+                        idempotency_key=context.key(
+                            "finding", str(extraction.finding_id)
+                        ),
+                        evidence_level=extraction.evidence_level,
+                        source_id=item.source_id,
+                        finding_id=extraction.finding_id,
+                    )
+                )
+            else:
+                slots.append(
+                    f"ACQUISITION:no_finding:{item.doi}:{extraction.reason}"
+                )
+        events.extend(
+            EmittedEvent(
+                event_type=SOURCE_REFUSED,
+                payload={"query": item.query, "reason": item.reason},
+                idempotency_key=context.key("user_doi_refused", item.query),
+            )
+            for item in user_acquired.refused
+        )
+        slots.extend(
+            f"ACQUISITION:refused:{item.query}"
+            for item in user_acquired.refused
+        )
+    elif context.user_dois:
+        slots.append("ACQUISITION:no_tool_provider_user_dois")
+
+    if context.acquirer is not None and context.knowledge_documents:
+        # The researcher's linked knowledge base, in its own pass: documents
+        # become Level A user-provided sources keyed by
+        # sources.knowledge_document_id (idempotency keys in the kb_source
+        # domain, so they cannot collide with the uploaded_source or source
+        # domains even when the same file also sits in user_evidence).
+        kb_acquired = await context.acquirer.acquire_knowledge_documents(
+            context.knowledge_documents
+        )
+        events.extend(
+            EmittedEvent(
+                event_type=EvidenceNodeType.SOURCE.value,
+                payload={
+                    "node_id": str(item.source_id),
+                    "doi": item.doi,
+                    "title": item.title,
+                    "has_doi": item.doi is not None,
+                    "has_title": bool(item.title),
+                    # Same honest default as the uploaded branch: acquisition
+                    # never learns a document's authors.
+                    "has_authors": bool(item.authors),
+                    "is_retracted": False,
+                    "authors": list(item.authors),
+                    "dataset_id": item.dataset_id,
+                    "knowledge_document_id": str(item.document_id)
+                    if item.document_id
+                    else None,
+                    "kind": "knowledge_document",
+                },
+                idempotency_key=context.key(
+                    "kb_source", str(item.document_id)
+                ),
+                evidence_level=item.evidence_level,
+                source_id=item.source_id,
+            )
+            for item in kb_acquired.acquired
+        )
+        for item in kb_acquired.acquired:
+            if (
+                context.finding_extractor is None
+                or item.already_known
+                or item.document_id is None
+            ):
+                continue
+            extraction = await context.finding_extractor.extract_knowledge_document(
+                item.source_id, item.document_id
+            )
+            if extraction.ok and extraction.finding_id is not None:
+                events.append(
+                    EmittedEvent(
+                        event_type=EvidenceNodeType.STUDY_FINDING.value,
+                        payload={
+                            "doi": None,
+                            "finding_statement": extraction.finding_statement,
+                            "exact_quote": extraction.exact_quote,
+                            "method_quality": dict(extraction.method_quality),
+                            "knowledge_document_id": str(item.document_id),
+                        },
+                        idempotency_key=context.key(
+                            "kb_finding", str(extraction.finding_id)
+                        ),
+                        evidence_level=extraction.evidence_level,
+                        source_id=item.source_id,
+                        finding_id=extraction.finding_id,
+                    )
+                )
+            else:
+                slots.append(
+                    f"ACQUISITION:no_finding:kb:{item.document_id}:"
+                    f"{extraction.reason}"
+                )
+    elif context.knowledge_documents:
+        slots.append("ACQUISITION:no_tool_provider_knowledge_documents")
+
+    if (
+        context.knowledge_search is not None
+        and context.acquirer is not None
+        and all_requests
+    ):
+        # Knowledge-base retrieval: each distinct request the seats made is
+        # run against the researcher's own collection, and the top hits are
+        # carried forward into later phases' prompts as process context --
+        # "the researcher's documents mention X", explicitly labelled as
+        # non-evidence in _user_prompt. Zero hits carry nothing (CLAUDE.md 7
+        # does not want an empty hit list to read as coverage).
+        hits: list[KnowledgeHitLike] = []
+        seen_queries: set[str] = set()
+        for _, query in all_requests:
+            if query in seen_queries:
+                continue
+            seen_queries.add(query)
+            try:
+                hits.extend(await context.knowledge_search.search(query, limit=3))
+            except Exception:
+                # A search failure degrades the pass rather than aborting it
+                # (CLAUDE.md 10); the researcher's documents simply do not
+                # contribute this round.
+                continue
+        if hits:
+            outcome_hits = tuple(
+                {
+                    "document_id": str(hit.document_id),
+                    "document_title": hit.document_title,
+                    "snippet": hit.snippet,
+                    "score": hit.score,
+                }
+                for hit in sorted(hits, key=lambda item: item.score, reverse=True)[:10]
+            )
+            # Set on the round's carry, not the events: a retrieval hit is
+            # context for later prompts, never a ledger event of its own
+            # (rendered by packages/council/deliberation.py::_user_prompt as
+            # explicitly non-evidence process context).
+            carry["knowledge_base_context"] = outcome_hits
+
     events.extend(_unavailable_events(context, absent))
     return PhaseOutcome(
         events=tuple(events),
+        carry=carry,
         unfilled_slots=tuple(slots),
         absent_seats=absent,
     )

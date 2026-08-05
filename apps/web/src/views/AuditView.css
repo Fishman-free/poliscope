@@ -2,8 +2,20 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  margin: 0 0 0 calc(-1 * var(--space-2));
+  border-radius: var(--radius-2);
   font-size: var(--text-small);
   cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.audit__filter:hover {
+  background: var(--surface-2);
+}
+
+.audit__filter input {
+  accent-color: var(--accent);
 }
 
 .audit__stream {

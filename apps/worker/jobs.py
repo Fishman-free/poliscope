@@ -18,18 +18,25 @@ nothing but this file's good intentions.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Mapping
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from packages.council.deliberation import GatewayDeliberator
-from packages.council.rounds.registry import SeatDeliberator
+from packages.council.contracts import Seat
+from packages.council.deliberation import GatewayDeliberator, ReasoningCallback
+from packages.council.rounds.registry import (
+    MODEL_REASONING_CAPTURED,
+    SeatDeliberator,
+)
 from packages.epistemo.budget import BudgetTracker, ResearchBudget
 from packages.epistemo.contracts import CouncilCheckpoint, TaskPhase, TaskStatus
 from packages.epistemo.orchestrator import CouncilOrchestrator, TaskRunReport
+from packages.evidence.ledger import EventConflict
 from packages.evidence.lifecycle import QuarantinedNode
 from packages.evidence.models import EventAuditModel, ScientificEventModel
 from packages.evidence.sql_ledger import SqlEventLedger
@@ -42,9 +49,17 @@ from packages.evidence.sql_projector import (
 from packages.kernel.database import canonical_uuid
 from packages.memory.adapter import create_memory_adapter
 from packages.memory.council_memory import CouncilMemory
-from packages.models.contracts import ModelGateway
+from packages.models.contracts import ModelClass, ModelGateway
 from packages.models.gateway import AuditedModelGateway
-from packages.papers.acquisition import SourceAcquisition
+from packages.models.openai_compatible import (
+    OpenAICompatibleConfig,
+    OpenAICompatibleModelGateway,
+)
+from packages.research.contracts import TaskModelConfig
+from packages.knowledge.models import KnowledgeDocumentModel
+from packages.knowledge.search import KnowledgeBaseSearch
+from packages.papers.acquisition import KnowledgeDocumentRef, SourceAcquisition
+from packages.papers.bibtex import extract_dois_from_bibtex
 from packages.papers.finding_extraction import FindingExtractor
 from packages.papers.object_store import PrivateObjectStore
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
@@ -86,6 +101,63 @@ async def _claim(session: AsyncSession, task_id: UUID) -> ResearchTaskModel:
             f"task {task_id} is {row.status}, not {TaskStatus.QUEUED}"
         )
     return row
+
+
+def _gateway_for_task_config(
+    config: Mapping[str, object],
+) -> OpenAICompatibleModelGateway:
+    """Build a per-task gateway from the task's own model configuration.
+
+    All three model tiers use the task's single model name: a researcher who
+    brings their own endpoint brings one model, not a tier ladder. The name
+    defaults to the deployment's configured model, or ``deepseek-chat`` when
+    the deployment has none -- the "system default DeepSeek" the web form
+    promises (TaskModelConfig's docstring).
+    """
+    parsed = TaskModelConfig.model_validate(dict(config))
+    model_name = parsed.model_name or os.environ.get("POLISCOPE_MODEL_NAME") or "deepseek-chat"
+    return OpenAICompatibleModelGateway(
+        OpenAICompatibleConfig(
+            api_key=parsed.api_key,
+            base_url=parsed.base_url,
+            model_names={
+                ModelClass.STRONG_REASONING: model_name,
+                ModelClass.MEDIUM: model_name,
+                ModelClass.LIGHTWEIGHT: model_name,
+            },
+        )
+    )
+
+
+def _reasoning_emitter(ledger: SqlEventLedger) -> ReasoningCallback:
+    """Return the callback that records a seat's raw chain of thought.
+
+    Appends a process-only ``MODEL_REASONING_CAPTURED`` event under the same
+    transaction as the rest of the round (the ledger neither commits nor
+    rolls back). The idempotency key is derived from task/seat/phase, so a
+    resumed run cannot duplicate it -- and the projector's allowlist keeps it
+    out of the Evidence Graph no matter what (CLAUDE.md 5.1).
+    """
+
+    async def emit(
+        task_id: UUID,
+        seat: Seat,
+        phase: TaskPhase,
+        reasoning: str,
+    ) -> None:
+        await ledger.append(
+            task_id,
+            MODEL_REASONING_CAPTURED,
+            {
+                "seat": seat.value,
+                "phase": phase.value,
+                "reasoning": reasoning,
+                "char_count": len(reasoning),
+            },
+            f"reasoning:{task_id}:{seat.value}:{phase.value}",
+        )
+
+    return emit
 
 
 def _budget_for(row: ResearchTaskModel) -> BudgetTracker:
@@ -186,6 +258,69 @@ def _pdf_object_ids(task: ResearchTaskModel) -> tuple[UUID, ...]:
     return tuple(UUID(str(value)) for value in raw)
 
 
+def _user_dois(task: ResearchTaskModel) -> tuple[str, ...]:
+    """Resolve the researcher's own DOIs: explicit ones plus BibTeX-extracted.
+
+    ``dois`` are stored as strings and passed through as-is; ``bibtex_entries``
+    are free text whose DOIs only appear once ``packages/papers/bibtex.py``
+    pulls them out. Both were previously persisted and never read -- CLAUDE.md
+    7 treats a stored-but-unused entry as silent data loss, so this is where
+    they finally enter the pipeline. Bad values fail loudly at this boundary
+    (str(value) would otherwise silently accept a non-string leaf), mirroring
+    ``_pdf_object_ids``.
+    """
+    raw_dois = task.user_evidence.get("dois", ())
+    explicit = tuple(str(value) for value in raw_dois)
+    bibtex = "".join(
+        str(value) for value in task.user_evidence.get("bibtex_entries", ())
+    )
+    extracted = extract_dois_from_bibtex(bibtex) if bibtex else ()
+    seen: set[str] = set()
+    result: list[str] = []
+    for doi in (*explicit, *extracted):
+        if doi and doi not in seen:
+            seen.add(doi)
+            result.append(doi)
+    return tuple(result)
+
+
+async def _knowledge_documents(
+    session: AsyncSession,
+    task: ResearchTaskModel,
+) -> tuple[KnowledgeDocumentRef, ...]:
+    """Load the linked knowledge base's documents for the council.
+
+    Runs on the session the deliberation already holds; empty when the task
+    linked no knowledge base. The ids are canonicalised at this boundary
+    (same asyncpg-UUID reasoning as _confirmed_claim_ids).
+    """
+    if task.knowledge_base_id is None:
+        return ()
+    rows = await session.execute(
+        select(KnowledgeDocumentModel).where(
+            KnowledgeDocumentModel.knowledge_base_id == task.knowledge_base_id
+        )
+    )
+    return tuple(
+        KnowledgeDocumentRef(
+            document_id=canonical_uuid(row.id),
+            object_key=row.object_key,
+            title=row.title,
+        )
+        for row in rows.scalars()
+    )
+
+
+def _knowledge_searcher(
+    session: AsyncSession,
+    task: ResearchTaskModel,
+) -> KnowledgeBaseSearch | None:
+    """Keyword search over the linked knowledge base, or None without one."""
+    if task.knowledge_base_id is None:
+        return None
+    return KnowledgeBaseSearch(session, canonical_uuid(task.knowledge_base_id))
+
+
 async def deliberate(
     session: AsyncSession,
     task_id: UUID,
@@ -233,13 +368,47 @@ async def deliberate(
     """
     task = await _claim(session, task_id)
     budget = _budget_for(task)
+    # A task with its own model configuration runs against the researcher's
+    # endpoint, not the process's gateway -- a per-task override, owned and
+    # closed by this run (its httpx client must not leak between tasks).
+    owned_gateway: OpenAICompatibleModelGateway | None = None
+    if task.model_config:
+        owned_gateway = _gateway_for_task_config(task.model_config)
+        gateway = owned_gateway
+    try:
+        return await _deliberate_impl(
+            session, task, task_id, budget, deliberator, gateway, tools,
+            fulltext_fetcher, object_store,
+        )
+    finally:
+        if owned_gateway is not None:
+            await owned_gateway.aclose()
+
+
+async def _deliberate_impl(
+    session: AsyncSession,
+    task: ResearchTaskModel,
+    task_id: UUID,
+    budget: BudgetTracker,
+    deliberator: SeatDeliberator | None,
+    gateway: ModelGateway | None,
+    tools: ToolGateway | None,
+    fulltext_fetcher: FullTextFetcher | None,
+    object_store: PrivateObjectStore | None,
+) -> TaskRunReport:
+    # task_id is the canonicalised argument, not task.task_id: the ORM row's
+    # value is asyncpg's UUID subclass, which the frozen contracts reject
+    # (same reason _confirmed_claim_ids canonicalises at its boundary).
     if deliberator is None and gateway is not None:
         # Every model call goes through the gateway, audited, per CLAUDE.md 8.
         # With no gateway the run still happens and reports every seat as
         # unavailable, which is the truthful outcome rather than a silent
-        # success.
+        # success. A captured chain of thought is recorded as a process-only
+        # ledger event in the same transaction (see _reasoning_emitter).
         deliberator = GatewayDeliberator(
-            AuditedModelGateway(gateway, session), budget
+            AuditedModelGateway(gateway, session),
+            budget,
+            on_reasoning=_reasoning_emitter(SqlEventLedger(session)),
         )
     orchestrator = CouncilOrchestrator(
         ledger=SqlEventLedger(session),
@@ -286,6 +455,9 @@ async def deliberate(
             confirmed_claims=await _confirmed_claim_ids(session, task_id),
             quarantined=await _quarantined_nodes(session, task_id),
             pdf_object_ids=_pdf_object_ids(task),
+            user_dois=_user_dois(task),
+            knowledge_documents=await _knowledge_documents(session, task),
+            knowledge_search=_knowledge_searcher(session, task),
             stop_before=TaskPhase.JOINT_MODELING,
         )
     else:
@@ -295,6 +467,9 @@ async def deliberate(
             confirmed_claims=await _confirmed_claim_ids(session, task_id),
             quarantined=await _quarantined_nodes(session, task_id),
             pdf_object_ids=_pdf_object_ids(task),
+            user_dois=_user_dois(task),
+            knowledge_documents=await _knowledge_documents(session, task),
+            knowledge_search=_knowledge_searcher(session, task),
             resume_from=checkpoint,
             council_guidance=checkpoint.guidance,
         )
@@ -316,6 +491,23 @@ async def project(session: AsyncSession, task_id: UUID) -> ProjectionReport:
     return await SqlGraphProjector(session).project_pending(task_id)
 
 
+async def _mark_failed(
+    app_sessions: async_sessionmaker[AsyncSession], task_id: UUID
+) -> None:
+    """Terminate a task stuck behind an unrecoverable ``EventConflict``.
+
+    Runs in a brand-new session because the one that raised is already
+    rolled back and about to be closed by its own ``async with`` block in
+    :func:`run_task` -- writing through a rolled-back session would silently
+    no-op or reuse a dead transaction.
+    """
+    async with app_sessions() as session:
+        repository = ResearchRepository(session)
+        await repository.set_checkpoint(task_id, None)
+        await repository.set_status(task_id, TaskStatus.FAILED)
+        await session.commit()
+
+
 async def run_task(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
@@ -332,6 +524,25 @@ async def run_task(
     durable and the checkpoint has not moved, so the next pass reprocesses
     exactly the events that were not admitted -- which is the resume behaviour
     CLAUDE.md 10 asks for, rather than a lost round.
+
+    ``EventConflict`` is different from every other failure this function can
+    raise, and is handled separately on purpose. CLAUDE.md 4.1 fixes the only
+    resume point at AWAITING_COUNCIL_INPUT; a checkpoint is written only when
+    a run actually reaches it (see :func:`deliberate`), so a task that fails
+    anywhere between PRECOMMITMENT committing and that checkpoint is left with
+    ``council_checkpoint IS NULL`` and ``status`` unchanged (``_claim`` never
+    sets a "running" status). The worker's poll loop
+    (``apps/worker/main.py::run_worker``) reclaims that still-QUEUED task
+    every ``POLL_INTERVAL_SECONDS`` and reruns every phase from PRECOMMITMENT
+    against the live, non-deterministic model -- which is *guaranteed* to
+    collide with the payload already sealed under the same idempotency key,
+    identically, forever. Left alone, that is an infinite retry loop that
+    burns real model calls with no terminal status ever recorded and nothing
+    surfaced to the researcher, which is what CLAUDE.md 10's "budget exhausted
+    must report incomplete evidence, never fabricate completeness" is really
+    asking to avoid. Since general mid-phase resume is explicitly out of scope
+    (CLAUDE.md 4.1), the only honest response to this specific exception is to
+    stop retrying and record the task as terminally ``FAILED``.
     """
     async with app_sessions() as session:
         try:
@@ -345,6 +556,10 @@ async def run_task(
                 object_store,
             )
             await session.commit()
+        except EventConflict:
+            await session.rollback()
+            await _mark_failed(app_sessions, task_id)
+            raise
         except BaseException:
             await session.rollback()
             raise

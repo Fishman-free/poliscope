@@ -48,8 +48,41 @@ class UserEvidenceInput(ContractModel):
     pdf_object_ids: tuple[UUID, ...] = ()
 
 
+class TaskModelConfig(ContractModel):
+    """Per-task model configuration: a researcher's own endpoint for this run.
+
+    ``base_url`` and ``api_key`` must come as a pair -- a key without an
+    endpoint is as broken as an endpoint without a key. ``model_name`` is
+    optional: it defaults to the deployment's configured model (or
+    ``deepseek-chat`` when the deployment has none), which is the "system
+    default DeepSeek" the web form promises. The API key is stored on the
+    task row and is never returned by any read endpoint (CLAUDE.md 16).
+    """
+
+    base_url: str = Field(min_length=1)
+    api_key: str = Field(min_length=1)
+    model_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_base_url_scheme(self) -> Self:
+        if not self.base_url.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return self
+
+
 class ResearchContract(ContractModel):
     question: str = Field(min_length=1)
     scope: ResearchScope
     budget: ResearchBudget
     user_evidence: UserEvidenceInput
+    # None means "use the deployment's configured model gateway" -- the
+    # ordinary path. A value means this task runs against the researcher's own
+    # endpoint instead, no matter what the worker process was started with.
+    # Named task_model_config rather than model_config because the latter is
+    # a Pydantic-reserved attribute name.
+    task_model_config: TaskModelConfig | None = None
+    # Knowledge base whose documents the council should treat as Level A
+    # user-provided sources. None is the ordinary case; the API layer
+    # validates that the id names a real knowledge base before the task is
+    # created (apps/api/routers/tasks.py).
+    knowledge_base_id: UUID | None = None

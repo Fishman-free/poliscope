@@ -74,6 +74,25 @@ code,
   letter-spacing: 0;
 }
 
+/* Shared "this is new content" entrance: fade + a 4px settle, not a bounce --
+ * tokens.css reserves bounce for the one gesture this product has (panning
+ * the map). Any view that hard-swaps content with no transition of its own
+ * can opt into this rather than each defining its own identical keyframe. */
+.fade-in-up {
+  animation: fade-in-up var(--duration-standard) var(--ease-standard);
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Reduced motion: keep the information the transition carried, drop the travel.
  * Opacity changes stay because they signal "this is new"; movement goes. */
 @media (prefers-reduced-motion: reduce) {

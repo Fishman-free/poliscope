@@ -88,6 +88,72 @@ export interface TaskSummary {
   created_by: string;
 }
 
+/** One claim the council suggested from the raw question, straight off
+ * `POST /api/tasks`'s `suggested_claims`. Nothing here is confirmed yet --
+ * that only happens once the researcher picks which ids to keep and calls
+ * `confirmClaims`. */
+export interface SuggestedClaim {
+  id: string;
+  statement: string;
+  claim_type: string;
+  falsification_condition: string;
+}
+
+/** `POST /api/tasks`'s response shape. The task exists and is sitting at
+ * `AWAITING_CLAIM_CONFIRMATION` -- nothing has been queued yet. */
+export interface CreateTaskResult {
+  task_id: string;
+  status: string;
+  suggested_claims: SuggestedClaim[];
+}
+
+/** `POST /api/tasks/{id}/confirm-claims`'s response shape. `status` is the
+ * queued task's new status; discarded claims are not in `claims` removed --
+ * CLAUDE.md 5.3 forbids that -- they come back with their own status. */
+export interface ConfirmClaimsResult {
+  task_id: string;
+  status: string;
+  claims: { id: string; status: string }[];
+}
+
+/** `POST /api/tasks/{id}/papers/upload`'s response shape. The server patches
+ * the task's stored user_evidence; the client only shows the id back. */
+export interface UploadedPaper {
+  object_id: string;
+  size_bytes: number;
+}
+
+/** Knowledge base list entry (`GET /api/knowledge-bases`). */
+export interface KnowledgeBaseSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  created_at: string;
+  document_count: number;
+}
+
+/** One document inside a knowledge base. `text` is absent in listings; the
+ * preview endpoint returns it, server-side truncated with `truncated` set. */
+export interface KnowledgeDocumentSummary {
+  document_id: string;
+  title: string;
+  size_bytes: number;
+  page_count: number;
+  created_at: string;
+}
+
+/** `GET /api/knowledge-bases/{id}`: the base plus its document listing. */
+export interface KnowledgeBaseDetail extends KnowledgeBaseSummary {
+  documents: KnowledgeDocumentSummary[];
+}
+
+/** `GET /api/knowledge-bases/{id}/documents/{docId}`: preview text included,
+ * truncated at 20k characters with `truncated` flagging the cut. */
+export interface KnowledgeDocumentDetail extends KnowledgeDocumentSummary {
+  text: string;
+  truncated: boolean;
+}
+
 /** One seat's precommitment, straight off ``PRECOMMITMENT_SEALED``. */
 export interface SeatPrecommitment {
   confidence: number | null;

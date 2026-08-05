@@ -27,6 +27,13 @@ router = APIRouter()
 
 TASK_NOT_FOUND = "unknown task"
 EMPTY_FILE = "uploaded file is empty"
+NOT_PDF = "uploaded file is not a PDF"
+TOO_LARGE = "uploaded file exceeds the 20 MB limit"
+
+# Same ceiling as the nginx `client_max_body_size 20m;` in apps/web/nginx.conf:
+# nginx rejects the request before it reaches us, this check is the
+# authoritative layer for deployments without that nginx in front.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 @router.post("/{task_id}/papers/upload", status_code=status.HTTP_201_CREATED)
@@ -55,6 +62,20 @@ async def upload_paper(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=EMPTY_FILE,
+        )
+    # Magic-number check, not a content_type claim: a client-controlled header
+    # is not evidence of what the bytes are, the leading %PDF signature is.
+    # Level A extraction later depends on this file actually parsing as a PDF,
+    # so rejecting non-PDF bytes here beats failing deep in the worker.
+    if not content.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=NOT_PDF,
+        )
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=TOO_LARGE,
         )
 
     stored = object_store.store(task_id, content)

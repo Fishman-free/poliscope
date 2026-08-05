@@ -1,0 +1,243 @@
+.newtask__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.newtask__label {
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.newtask__textarea {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-body);
+  resize: vertical;
+}
+
+.newtask__advanced {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  padding: var(--space-3);
+  background: var(--surface-1);
+}
+
+.newtask__advanced summary {
+  cursor: pointer;
+  font-size: var(--text-small);
+  color: var(--ink-2);
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.newtask__advanced summary:hover {
+  color: var(--ink-1);
+}
+
+.newtask__advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.newtask__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.newtask__field input[type="text"],
+.newtask__field input:not([type]),
+.newtask__field input[type="number"],
+.newtask__field input[type="url"],
+.newtask__field input[type="password"],
+.newtask__field select {
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-1);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-small);
+}
+
+.newtask__model-note {
+  grid-column: 1 / -1;
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+/* 用户提供的证据输入（DOI / BibTeX）占满整行，textarea 与表单其余
+   textarea 共用 .newtask__textarea 基础样式。 */
+.newtask__field--wide {
+  grid-column: 1 / -1;
+}
+
+.newtask__textarea--compact {
+  font-size: var(--text-small);
+}
+
+/* claims 阶段的 PDF 上传区 */
+.newtask__upload {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+}
+
+.newtask__upload h4 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--ink-1);
+}
+
+.newtask__upload-hint {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.newtask__upload input[type="file"] {
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.newtask__upload-list {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.newtask__field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.newtask__field--checkbox input,
+.newtask__priority input {
+  accent-color: var(--accent);
+}
+
+.newtask__priorities {
+  margin-top: var(--space-3);
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.newtask__priorities legend {
+  width: 100%;
+  font-size: var(--text-small);
+  color: var(--ink-2);
+  margin-bottom: var(--space-2);
+  padding: 0;
+}
+
+.newtask__priority {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.newtask__safety {
+  margin-top: var(--space-4);
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.newtask__error {
+  font-size: var(--text-small);
+  color: var(--refuted);
+}
+
+.newtask__claims {
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.newtask__claim {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+}
+
+.newtask__claim-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.newtask__claim-row:hover {
+  background: var(--surface-2);
+}
+
+.newtask__claim-row input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.newtask__claim-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.newtask__claim-statement {
+  font-size: var(--text-body);
+  color: var(--ink-1);
+}
+
+.newtask__claim-meta {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.newtask__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface-0);
+}
+
+.button--primary:hover {
+  background: color-mix(in srgb, var(--accent) 85%, black);
+}
+
+.button--primary:active {
+  background: color-mix(in srgb, var(--accent) 75%, black);
+  transform: scale(0.98);
+}

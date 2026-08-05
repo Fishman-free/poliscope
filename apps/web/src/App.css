@@ -25,12 +25,20 @@
   align-items: baseline;
   gap: var(--space-3);
   min-width: 0;
+  /* 与落地页的品牌 pill 同一视觉语言：半透明毛玻璃胶囊。 */
+  padding: var(--space-1) var(--space-4);
+  background: var(--chrome-bg, color-mix(in srgb, var(--surface-0) 55%, transparent));
+  backdrop-filter: var(--chrome-blur, blur(20px) saturate(180%));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
 }
 
 .app__wordmark {
   font-weight: 650;
   letter-spacing: -0.02em;
   font-size: 1.0625rem;
+  color: inherit;
+  text-decoration: none;
 }
 
 .app__method {
@@ -140,24 +148,30 @@
   min-height: 0;
 }
 
-.app__placeholder {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  align-items: flex-start;
-  max-width: 60ch;
-  padding-top: var(--space-7);
+/* No-task home screen: the new-task form next to the knowledge base. The
+   knowledge-base panel is narrower than the form, so the split hands the
+   form the wider share. */
+.app__main--split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
 }
 
-.app__placeholder code {
-  padding: 0.1em 0.4em;
-  background: var(--surface-2);
-  border-radius: var(--radius-1);
+@media (max-width: 1100px) {
+  .app__main--split {
+    grid-template-columns: 1fr;
+  }
 }
 
-.app__placeholder-note {
-  font-size: var(--text-small);
-  color: var(--ink-3);
+/* Six mutually-exclusive views used to hard-swap with no transition. The key
+ * on the wrapper in App.tsx forces a fresh element per tab, so this plays on
+ * every switch. Shares base.css's .fade-in-up keyframe rather than defining
+ * its own -- same entrance, one definition.
+ * base.css's blanket prefers-reduced-motion rule already collapses the
+ * animation duration to 0.01ms, so no separate override is needed here. */
+.app__panel {
+  animation: fade-in-up var(--duration-standard) var(--ease-standard);
 }
 
 .app__error {

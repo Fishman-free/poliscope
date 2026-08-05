@@ -70,6 +70,15 @@ class SourceModel(Base):
         nullable=True,
         index=True,
     )
+    # Set only for sources acquired from a knowledge-base document (migration
+    # 0010): the parallel of object_id for task uploads, letting a Source be
+    # traced back to the document it came from.
+    knowledge_document_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("knowledge_documents.id"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

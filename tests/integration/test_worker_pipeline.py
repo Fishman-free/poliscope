@@ -19,7 +19,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
-from apps.worker.main import WorkerContext, drain
+from apps.worker.main import WorkerContext, claim_queued_tasks, drain
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
     PHASE_STARTED,
@@ -29,6 +29,7 @@ from packages.council.rounds.registry import (
 )
 from packages.epistemo.contracts import PHASE_SEQUENCE, TaskPhase, TaskStatus
 from packages.evidence.contracts import EvidenceNodeType
+from packages.evidence.ledger import EventConflict
 from packages.evidence.models import (
     GraphNodeModel,
     ScientificEventModel,
@@ -189,6 +190,83 @@ class _ScriptedDeliberator:
                 ]
             }
         return None
+
+
+class _DivergingScriptedDeliberator(_ScriptedDeliberator):
+    """Same shape as ``_ScriptedDeliberator``, but a different PRECOMMITMENT.
+
+    Stands in for a live model's non-determinism: a real retry of a phase that
+    already committed would essentially never reproduce the exact same free
+    text, which is exactly what makes ``EventConflict`` unrecoverable via
+    blind retry (see ``run_task``'s docstring in apps/worker/jobs.py).
+    """
+
+    async def deliberate(
+        self,
+        seat: Seat,
+        phase: TaskPhase,
+        context: PhaseContext,
+    ) -> Mapping[str, object] | None:
+        if phase is TaskPhase.PRECOMMITMENT:
+            return {
+                "initial_judgment": f"{seat.value} now sees strong causal support",
+                "confidence": 0.9,
+                "update_condition": "a different preregistered cohort study",
+            }
+        return await super().deliberate(seat, phase, context)
+
+
+async def test_a_replay_conflict_marks_the_task_failed_instead_of_looping(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Regression test for a real production incident.
+
+    A task that fails anywhere between PRECOMMITMENT committing and the
+    AWAITING_COUNCIL_INPUT checkpoint is left with ``council_checkpoint
+    IS NULL`` and ``status`` unchanged (``_claim`` never writes a "running"
+    status -- see ``apps/worker/jobs.py``). The worker's poll loop
+    (``apps/worker/main.py::run_worker``) reclaims that still-QUEUED task
+    every ``POLL_INTERVAL_SECONDS`` and reruns PRECOMMITMENT against the
+    live, non-deterministic model, which is guaranteed to collide with the
+    payload already sealed under the same idempotency key -- identically,
+    forever. This asserts the fix in ``run_task``: the ``EventConflict`` still
+    propagates (so the failure is diagnosable), but the task ends up
+    ``FAILED``, not ``QUEUED``, so ``claim_queued_tasks`` never reclaims it
+    again and the retry loop cannot happen.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions)
+    blindspot_id = uuid4()
+    first = await run_task(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        deliberator=_ScriptedDeliberator(blindspot_id),
+    )
+    assert first.run.final_status == TaskStatus.AWAITING_COUNCIL_INPUT
+
+    # Simulate a task that failed after PRECOMMITMENT committed but before
+    # reaching the checkpoint: requeued with no stored checkpoint, exactly
+    # the state apps/worker/jobs.py::deliberate treats as "run everything
+    # from scratch".
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(status=TaskStatus.QUEUED, council_checkpoint=None)
+        )
+        await session.commit()
+
+    with pytest.raises(EventConflict):
+        await run_task(
+            app_sessions,
+            projector_sessions,
+            task_id,
+            deliberator=_DivergingScriptedDeliberator(blindspot_id),
+        )
+
+    assert await _status(app_sessions, task_id) == TaskStatus.FAILED
+    assert task_id not in await claim_queued_tasks(app_sessions, limit=10)
 
 
 async def test_a_queued_task_runs_every_phase_of_the_protocol(
@@ -360,6 +438,30 @@ async def test_an_exhausted_budget_skips_phases_and_says_so(
     assert result.run.phases_skipped == PHASE_SEQUENCE
     assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
     assert all(slot.endswith(":not_reached") for slot in result.run.unfilled_slots)
+
+
+async def test_claim_queued_tasks_returns_the_canonical_uuid_type(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Regression test for a real production incident.
+
+    asyncpg hands back its own ``UUID`` subclass, not ``uuid.UUID``. Every
+    phase's ``GatewayDeliberator._request()`` builds a ``ModelRequest``
+    straight from the claimed task id, and ``ContractModel``'s frozen-contract
+    validator (packages/kernel/contracts.py's ``_is_immutable_leaf``) admits a
+    leaf only when its type matches *exactly* -- a subclass is deliberately
+    rejected, on the theory that it could carry mutable state. With no
+    ``canonical_uuid()`` normalisation here, every phase that reached the
+    model gateway failed identically with "unsupported mutable or unknown
+    leaf type: UUID", which looked like a model-provider outage but was
+    actually this claim query. See ``packages.kernel.database.canonical_uuid``
+    and ``apps/worker/jobs.py``'s ``_confirmed_claim_ids``, which already got
+    this right.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions)
+    claimed = await claim_queued_tasks(app_sessions, limit=10)
+    assert task_id in claimed
+    assert all(type(value) is UUID for value in claimed)
 
 
 async def test_the_worker_picks_up_a_queued_task_on_its_own(

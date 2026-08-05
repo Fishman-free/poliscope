@@ -30,6 +30,8 @@ from packages.council.rounds.registry import (
     PHASE_COMPLETED,
     PHASE_STARTED,
     FindingExtractor,
+    KnowledgeDocumentLike,
+    KnowledgeSearcher,
     PhaseContext,
     PhaseOutcome,
     SeatDeliberator,
@@ -216,6 +218,9 @@ class CouncilOrchestrator:
         confirmed_claims: tuple[UUID, ...] = (),
         quarantined: tuple[QuarantinedNode, ...] = (),
         pdf_object_ids: tuple[UUID, ...] = (),
+        user_dois: tuple[str, ...] = (),
+        knowledge_documents: tuple[KnowledgeDocumentLike, ...] = (),
+        knowledge_search: KnowledgeSearcher | None = None,
         stop_before: TaskPhase | None = None,
         resume_from: CouncilCheckpoint | None = None,
         council_guidance: str | None = None,
@@ -318,6 +323,9 @@ class CouncilOrchestrator:
                 confirmed_claims,
                 quarantined,
                 pdf_object_ids,
+                user_dois,
+                knowledge_documents,
+                knowledge_search,
                 state,
                 council_guidance,
             )
@@ -375,6 +383,9 @@ class CouncilOrchestrator:
         confirmed_claims: tuple[UUID, ...],
         quarantined: tuple[QuarantinedNode, ...],
         pdf_object_ids: tuple[UUID, ...],
+        user_dois: tuple[str, ...],
+        knowledge_documents: tuple[KnowledgeDocumentLike, ...],
+        knowledge_search: KnowledgeSearcher | None,
         state: _Accumulator,
         council_guidance: str | None = None,
     ) -> None:
@@ -399,6 +410,9 @@ class CouncilOrchestrator:
             finding_extractor=self._finding_extractor,
             quarantined=quarantined,
             pdf_object_ids=pdf_object_ids,
+            user_dois=user_dois,
+            knowledge_documents=knowledge_documents,
+            knowledge_search=knowledge_search,
             guidance=council_guidance,
         )
         try:

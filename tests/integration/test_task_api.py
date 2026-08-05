@@ -11,9 +11,12 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.api.schemas import ConfirmClaimsRequest, CreateTaskRequest
 from packages.epistemo.contracts import TaskStatus
+from packages.research.models import ResearchTaskModel
 from tests.factories import make_research_contract
 
 
@@ -223,3 +226,154 @@ async def test_a_scope_with_an_inverted_date_range_is_rejected(
     payload["scope"]["date_until"] = "2020-01-01"
     response = await api_client.post("/api/tasks", json=payload)
     assert response.status_code == 422
+
+
+async def test_create_with_model_config_stores_it_and_never_echoes_it(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """A researcher's own endpoint is stored on the task row for the worker,
+    and the api key is never returned by any endpoint (CLAUDE.md 16)."""
+    payload = _contract_payload()
+    payload["task_model_config"] = {
+        "base_url": "https://api.deepseek.com",
+        "api_key": "sk-task-secret",
+        "model_name": "deepseek-chat",
+    }
+    response = await api_client.post("/api/tasks", json=payload)
+    assert response.status_code == 201, response.text
+    task_id = response.json()["task_id"]
+
+    async with app_sessions() as session:
+        row = (
+            await session.execute(
+                select(ResearchTaskModel).where(
+                    ResearchTaskModel.task_id == task_id
+                )
+            )
+        ).scalar_one()
+    assert row.model_config is not None
+    assert row.model_config["base_url"] == "https://api.deepseek.com"
+    assert row.model_config["api_key"] == "sk-task-secret"
+    assert row.model_config["model_name"] == "deepseek-chat"
+
+    # 不回显：任何读端点都不出现密钥
+    response = await api_client.get(f"/api/tasks/{task_id}")
+    assert response.status_code == 200
+    assert "api_key" not in response.text
+    assert "sk-task-secret" not in response.text
+
+
+async def test_model_config_without_a_url_scheme_is_rejected(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """A key without a proper endpoint URL is a broken config, not a gap."""
+    payload = _contract_payload()
+    payload["task_model_config"] = {"base_url": "api.deepseek.com", "api_key": "sk-x"}
+    response = await api_client.post("/api/tasks", json=payload)
+    assert response.status_code == 422
+
+
+async def test_create_with_dois_and_bibtex_stores_them(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """The researcher's own evidence must survive the round trip into the
+    task row -- a stored-but-never-read entry is the silent data loss
+    CLAUDE.md 7 forbids (the worker consumption is pinned in
+    test_user_evidence_consumption.py)."""
+    payload = _contract_payload()
+    payload["user_evidence"] = {
+        "dois": ["10.1000/a", "10.1000/b"],
+        "bibtex_entries": ["@article{x, doi = {10.1000/c}}"],
+        "pdf_object_ids": [],
+    }
+    response = await api_client.post("/api/tasks", json=payload)
+    assert response.status_code == 201, response.text
+    task_id = response.json()["task_id"]
+
+    async with app_sessions() as session:
+        row = (
+            await session.execute(
+                select(ResearchTaskModel).where(
+                    ResearchTaskModel.task_id == task_id
+                )
+            )
+        ).scalar_one()
+    assert row.user_evidence["dois"] == ["10.1000/a", "10.1000/b"]
+    assert row.user_evidence["bibtex_entries"] == [
+        "@article{x, doi = {10.1000/c}}"
+    ]
+
+
+async def _upload_pdf(
+    api_client: httpx.AsyncClient,
+    task_id: str,
+    content: bytes,
+    filename: str = "paper.pdf",
+) -> httpx.Response:
+    return await api_client.post(
+        f"/api/tasks/{task_id}/papers/upload",
+        files={"file": (filename, content, "application/pdf")},
+    )
+
+
+async def test_upload_rejects_empty_file(
+    api_client: httpx.AsyncClient,
+) -> None:
+    body = await _create(api_client)
+    response = await _upload_pdf(api_client, body["task_id"], b"")
+    assert response.status_code == 422
+    assert "empty" in response.text
+
+
+async def test_upload_rejects_non_pdf_bytes(
+    api_client: httpx.AsyncClient,
+) -> None:
+    body = await _create(api_client)
+    response = await _upload_pdf(
+        api_client, body["task_id"], b"PK\x03\x04 not a pdf at all"
+    )
+    assert response.status_code == 422
+    assert "not a PDF" in response.text
+
+
+async def test_upload_rejects_oversized_file(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """Above the 20 MB ceiling the endpoint refuses on sight -- the nginx
+    layer already 413s the same request in the compose stack, this is the
+    authoritative check for deployments without that nginx."""
+    body = await _create(api_client)
+    response = await _upload_pdf(
+        api_client, body["task_id"], b"%PDF" + b"\0" * (21 * 1024 * 1024)
+    )
+    assert response.status_code == 422
+    assert "20 MB" in response.text
+
+
+async def test_upload_accepts_a_valid_pdf_and_attaches_it(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    import fitz  # type: ignore[import-untyped]
+
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "A real, parseable PDF.")
+    content = bytes(document.tobytes())
+
+    body = await _create(api_client)
+    response = await _upload_pdf(api_client, body["task_id"], content)
+    assert response.status_code == 201, response.text
+    object_id = response.json()["object_id"]
+
+    async with app_sessions() as session:
+        row = (
+            await session.execute(
+                select(ResearchTaskModel).where(
+                    ResearchTaskModel.task_id == body["task_id"]
+                )
+            )
+        ).scalar_one()
+    assert row.user_evidence["pdf_object_ids"] == [object_id]

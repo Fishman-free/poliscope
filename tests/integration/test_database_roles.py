@@ -22,6 +22,10 @@ BUSINESS_TABLES = (
     "model_calls",
     "tool_calls",
 )
+# Migration 0010's knowledge tables carry the same FULL_DML grant as the base
+# tables (migration 0002's pattern); the ingestion pipeline writes them under
+# the app role.
+KNOWLEDGE_TABLES = ("knowledge_bases", "knowledge_documents")
 
 
 async def test_app_role_can_use_dml_on_base_tables(
@@ -99,6 +103,55 @@ async def test_app_role_can_use_dml_on_base_tables(
             text(f"DELETE FROM {table_name} WHERE task_id = :id"),  # noqa: S608
             {"id": task_id},
         )
+    await app_session.commit()
+
+
+async def test_app_role_can_dml_knowledge_tables(
+    app_session: AsyncSession,
+) -> None:
+    """The ingestion pipeline writes knowledge bases under the app role, so
+    migration 0010 must have granted it full DML on both new tables."""
+    kb_id = uuid4()
+    await app_session.execute(
+        text(
+            "INSERT INTO knowledge_bases "
+            "(id, name, description, created_by) "
+            "VALUES (:id, :name, NULL, 'integration-test')"
+        ),
+        {"id": kb_id, "name": "integration kb"},
+    )
+    doc_id = uuid4()
+    await app_session.execute(
+        text(
+            "INSERT INTO knowledge_documents "
+            "(id, knowledge_base_id, title, object_key, content_hash, "
+            "content_type, size_bytes, page_count, text_content, created_by) "
+            "VALUES (:id, :kb_id, :title, :object_key, :hash, 'application/pdf', "
+            "1, 1, :text, 'integration-test')"
+        ),
+        {
+            "id": doc_id,
+            "kb_id": kb_id,
+            "title": "doc.pdf",
+            "object_key": f"knowledge/{kb_id}/doc.pdf",
+            "hash": "deadbeef",
+            "text": "some text",
+        },
+    )
+    await app_session.commit()
+
+    # The search path reads through the same role: both the generated
+    # search_vector column and the ILIKE branch must be reachable.
+    hit = await app_session.scalar(
+        text(
+            "SELECT title FROM knowledge_documents "
+            "WHERE search_vector @@ plainto_tsquery('simple', 'text')"
+        )
+    )
+    assert hit == "doc.pdf"
+
+    for table_name in reversed(KNOWLEDGE_TABLES):
+        await app_session.execute(text(f"DELETE FROM {table_name}"))  # noqa: S608
     await app_session.commit()
 
 

@@ -47,6 +47,23 @@ class ResearchTaskModel(Base):
     council_checkpoint: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True
     )
+    # Per-task model configuration: TaskModelConfig.model_dump(mode="json"),
+    # set at creation when the researcher supplies their own endpoint. None
+    # means "use the deployment's configured model gateway". The api_key here
+    # is never returned by any read endpoint (CLAUDE.md 16).
+    model_config: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    # Knowledge base whose documents the council treats as Level A
+    # user-provided sources (migration 0010). None is the ordinary case --
+    # most tasks retrieve from the open web, not from the researcher's own
+    # collection.
+    knowledge_base_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("knowledge_bases.id"),
+        nullable=True,
+        index=True,
+    )
 
 
 class ResearchScopeModel(Base):

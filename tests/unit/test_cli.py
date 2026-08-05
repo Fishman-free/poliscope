@@ -17,7 +17,7 @@ import pytest
 
 from apps.cli import exit_codes
 from apps.cli.client import APIError, APIUnreachable, CLIClient, _is_loopback
-from apps.cli.main import build_parser, main
+from apps.cli.main import _auth_from_env, build_parser, main
 
 SUBCOMMANDS: tuple[tuple[list[str], dict[str, object]], ...] = (
     (["health"], {}),
@@ -320,6 +320,57 @@ def test_loopback_detection_decides_proxy_trust(
     rejected request instead of an unreachable one.
     """
     assert _is_loopback(base_url) is expected
+
+
+def test_auth_from_env_returns_none_when_credentials_are_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset is the default -- an un-gated local API must see no change."""
+    monkeypatch.delenv("POLISCOPE_API_USERNAME", raising=False)
+    monkeypatch.delenv("POLISCOPE_API_PASSWORD", raising=False)
+    assert _auth_from_env() is None
+
+
+def test_auth_from_env_builds_basic_auth_when_credentials_are_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("POLISCOPE_API_USERNAME", "poliscope")
+    monkeypatch.setenv("POLISCOPE_API_PASSWORD", "s3cret")
+    assert isinstance(_auth_from_env(), httpx.BasicAuth)
+
+
+async def test_env_credentials_add_an_authorization_header_and_absence_omits_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Caddy-gated deployment 401s without this header.
+
+    Every request must carry it when ``POLISCOPE_API_USERNAME`` /
+    ``POLISCOPE_API_PASSWORD`` are set, and carry nothing when they are not --
+    the unauthenticated case is today's behaviour and must not regress.
+    """
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"status": "ok", "database": "ok"})
+
+    transport = httpx.MockTransport(handler)
+
+    monkeypatch.setenv("POLISCOPE_API_USERNAME", "poliscope")
+    monkeypatch.setenv("POLISCOPE_API_PASSWORD", "s3cret")
+    async with CLIClient(
+        "http://poliscope.test", transport=transport, auth=_auth_from_env()
+    ) as client:
+        await client.health()
+    assert "authorization" in seen[-1].headers
+
+    monkeypatch.delenv("POLISCOPE_API_USERNAME", raising=False)
+    monkeypatch.delenv("POLISCOPE_API_PASSWORD", raising=False)
+    async with CLIClient(
+        "http://poliscope.test", transport=transport, auth=_auth_from_env()
+    ) as client:
+        await client.health()
+    assert "authorization" not in seen[-1].headers
 
 
 async def test_watch_decodes_server_sent_event_frames() -> None:

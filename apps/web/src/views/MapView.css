@@ -81,8 +81,19 @@
   align-items: center;
   font-size: var(--text-small);
   cursor: pointer;
-  padding-top: var(--space-3);
+  padding: var(--space-3) var(--space-2) var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
   border-top: 1px solid var(--line);
+  border-radius: 0 0 var(--radius-2) var(--radius-2);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.map__toggle:hover {
+  background: var(--surface-2);
+}
+
+.map__toggle input {
+  accent-color: var(--accent);
 }
 
 .map__toggle-note {

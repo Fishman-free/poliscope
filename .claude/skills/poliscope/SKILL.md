@@ -24,6 +24,22 @@ prevent you from calling other tools. Do not use it as an excuse to reach for
 task; the constraint is enforced by your own discipline here, not by the
 platform.
 
+## Getting the `poliscope` CLI without cloning
+
+If `poliscope` is not already on PATH, the fastest path is a zero-install run
+via `uv` (the Python ecosystem's equivalent of `npx`) -- no clone, no venv to
+manage:
+
+```bash
+uvx --from "git+https://github.com/Fishman-free/poliscope.git" poliscope --help
+```
+
+Every `poliscope` subcommand in this file works the same way, e.g.
+`uvx --from "git+https://github.com/Fishman-free/poliscope.git" poliscope health`.
+Prefer a normal `pip install`/local checkout instead if you expect to run many
+commands in one session -- `uvx` resolves the environment on every
+invocation, which is fine for occasional calls but wasteful in a tight loop.
+
 ## Workflow
 
 1. **Understand the question.** From the user's request, extract: the
@@ -128,3 +144,8 @@ platform.
 - Model confidence does not replace statistical uncertainty or expert judgment.
 - Every command needs a reachable Poliscope API (`poliscope health` checks
   this first if you are unsure one is running).
+- If the target is a deployed instance sitting behind a shared password
+  (Caddy's HTTP Basic Auth, see `deploy/caddy/Caddyfile`), set
+  `POLISCOPE_API_USERNAME` and `POLISCOPE_API_PASSWORD` in your environment
+  before calling `poliscope` -- every command reads them automatically, no
+  extra flag needed. Leave them unset for a local, un-gated API.

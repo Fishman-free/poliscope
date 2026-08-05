@@ -10,10 +10,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from apps.cli import exit_codes
 from apps.cli.client import (
@@ -368,8 +371,26 @@ def _print_json(payload: Any) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _auth_from_env() -> httpx.BasicAuth | None:
+    """Credentials for a deployed instance gated by Caddy's shared HTTP Basic
+    Auth (see ``deploy/caddy/Caddyfile``).
+
+    Read from the environment rather than a ``--flag`` so every subcommand's
+    ``--help`` stays uncluttered by a password argument, and so an Agent/Skill
+    invocation only needs these two variables set once in its own environment
+    -- not threaded through every ``poliscope`` call it makes. Unset (the
+    default) reproduces today's behaviour exactly: no ``Authorization``
+    header, unchanged for anyone still talking to a local, un-gated API.
+    """
+    username = os.environ.get("POLISCOPE_API_USERNAME")
+    password = os.environ.get("POLISCOPE_API_PASSWORD")
+    if username is None or password is None:
+        return None
+    return httpx.BasicAuth(username, password)
+
+
 async def _run(args: argparse.Namespace) -> int:
-    async with CLIClient(args.base_url) as client:
+    async with CLIClient(args.base_url, auth=_auth_from_env()) as client:
         handler = args.handler
         result: int = await handler(client, args)
         return result

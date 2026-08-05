@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.council.contracts import Seat
+from packages.council.rounds.registry import KnowledgeDocumentLike
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.papers.candidate_pool import CandidatePool
 from packages.papers.models import SourceModel
@@ -62,6 +63,23 @@ class AcquiredSource:
     # object id to FindingExtractor.extract_uploaded without guessing it back
     # from position in the result list.
     object_id: UUID | None = None
+    # Only set by acquire_knowledge_documents -- the knowledge-document id
+    # this Source was built from, for FindingExtractor.extract_knowledge_document.
+    document_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class KnowledgeDocumentRef:
+    """One knowledge-base document the researcher linked to this task.
+
+    Carries everything acquisition needs to persist a Source row for it
+    (sources.knowledge_document_id) without importing packages.knowledge --
+    the worker assembles these from the knowledge_documents table.
+    """
+
+    document_id: UUID
+    object_key: str
+    title: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +141,21 @@ class SourceAcquisition:
             select(SourceModel).where(
                 SourceModel.task_id == self._task_id,
                 SourceModel.object_id == object_id,
+            )
+        )
+        return row
+
+    async def _existing_by_knowledge_document(
+        self, document_id: UUID
+    ) -> SourceModel | None:
+        """Dedup lookup for knowledge-base documents, parallel to the other
+        two ``_existing`` variants: a document has no DOI, so its id -- unique
+        per stored document -- plays the keying role, and a replayed run or a
+        document reused across two tasks never mints a second Source row."""
+        row: SourceModel | None = await self._session.scalar(
+            select(SourceModel).where(
+                SourceModel.task_id == self._task_id,
+                SourceModel.knowledge_document_id == document_id,
             )
         )
         return row
@@ -302,6 +335,131 @@ class SourceAcquisition:
             unresolvable=tuple(dict.fromkeys(unresolvable)),
         )
 
+    async def acquire_dois(
+        self,
+        dois: tuple[str, ...],
+    ) -> AcquisitionResult:
+        """Resolve the researcher's own DOIs into persisted sources.
+
+        Mirror of ``acquire``'s DOI path minus the planning step: these DOIs
+        were not asked for by any seat (``requesting_seats`` stays empty),
+        they are handed to acquisition already identified, and they
+        deduplicate against the same canonical-DOI ``_existing`` lookup, so a
+        DOI the researcher listed that a seat also requested costs one fetch.
+        Retracted papers are refused here for the same reason as in
+        ``acquire`` -- keep them out of ``sources`` so they cannot inflate
+        the paper count before the gate ever sees them.
+        """
+        acquired: list[AcquiredSource] = []
+        refused: list[RefusedCandidate] = []
+        source_adapter = adapter(PRIMARY_ADAPTER, self._gateway, self._task_id)
+        for doi in sorted(normalize_doi(item) for item in dois):
+            existing = await self._existing(doi)
+            if existing is not None:
+                acquired.append(
+                    AcquiredSource(
+                        source_id=existing.id,
+                        doi=doi,
+                        title=existing.title,
+                        evidence_level=METADATA_EVIDENCE_LEVEL,
+                        requesting_seats=frozenset(),
+                        already_known=True,
+                        authors=tuple(existing.authors),
+                        dataset_id=existing.dataset_id,
+                    )
+                )
+                continue
+            if not self._spend():
+                refused.append(RefusedCandidate(doi, "source budget exhausted"))
+                continue
+            try:
+                normalized = await source_adapter.lookup_doi(doi)
+            except Exception as error:
+                refused.append(RefusedCandidate(doi, f"lookup failed: {error!r}"))
+                continue
+            if normalized.retracted:
+                refused.append(RefusedCandidate(doi, "source is retracted"))
+                continue
+            row = await self._persist(normalized)
+            acquired.append(
+                AcquiredSource(
+                    source_id=row.id,
+                    doi=doi,
+                    title=normalized.title,
+                    evidence_level=METADATA_EVIDENCE_LEVEL,
+                    requesting_seats=frozenset(),
+                    authors=tuple(normalized.authors),
+                    dataset_id=row.dataset_id,
+                )
+            )
+        return AcquisitionResult(
+            planned_queries=len(dois),
+            acquired=tuple(acquired),
+            refused=tuple(refused),
+        )
+
+    async def acquire_knowledge_documents(
+        self,
+        documents: tuple[KnowledgeDocumentLike, ...],
+    ) -> AcquisitionResult:
+        """Turn linked knowledge-base documents into ``sources`` rows.
+
+        Same shape as ``acquire_uploaded`` -- no discovery step, persistence
+        plus dedup only -- keyed by ``sources.knowledge_document_id`` so a
+        document the researcher linked to two tasks yields one Source per
+        task (sources rows are task-scoped) and a replayed run reuses the
+        row. The title comes from the document's stored filename; nothing is
+        guessed about the paper itself (CLAUDE.md 7).
+        """
+        acquired: list[AcquiredSource] = []
+        for document in documents:
+            existing = await self._existing_by_knowledge_document(
+                document.document_id
+            )
+            if existing is not None:
+                acquired.append(
+                    AcquiredSource(
+                        source_id=existing.id,
+                        doi=None,
+                        title=existing.title,
+                        evidence_level=METADATA_EVIDENCE_LEVEL,
+                        requesting_seats=frozenset(),
+                        already_known=True,
+                        authors=tuple(existing.authors),
+                        dataset_id=existing.dataset_id,
+                        document_id=document.document_id,
+                    )
+                )
+                continue
+            row = SourceModel(
+                id=uuid4(),
+                task_id=self._task_id,
+                doi=None,
+                canonical_doi=None,
+                title=document.title,
+                provider_ids={},
+                authors=[],
+                knowledge_document_id=document.document_id,
+            )
+            self._session.add(row)
+            await self._session.flush()
+            acquired.append(
+                AcquiredSource(
+                    source_id=row.id,
+                    doi=None,
+                    title=row.title,
+                    evidence_level=METADATA_EVIDENCE_LEVEL,
+                    requesting_seats=frozenset(),
+                    authors=tuple(row.authors),
+                    dataset_id=row.dataset_id,
+                    document_id=document.document_id,
+                )
+            )
+        return AcquisitionResult(
+            planned_queries=0,
+            acquired=tuple(acquired),
+        )
+
     async def acquire_uploaded(
         self,
         object_ids: tuple[UUID, ...],
@@ -392,6 +550,7 @@ __all__ = [
     "PRIMARY_ADAPTER",
     "AcquiredSource",
     "AcquisitionResult",
+    "KnowledgeDocumentRef",
     "RefusedCandidate",
     "SourceAcquisition",
 ]

@@ -12,7 +12,9 @@
  */
 
 :root {
-  color-scheme: light dark;
+  /* Forced light: this product is meant to read like a paper instrument in
+   * any environment, not to shift with the OS's dark-mode preference. */
+  color-scheme: light;
 
   /* Neutrals: paper, not chrome. */
   --surface-0: #ffffff;
@@ -41,8 +43,11 @@
   --unknown: #5c5c68;
   --unknown-soft: #ececef;
 
-  /* Type. Tracking is size-specific: large text tightens, body sits near 0. */
-  --font: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+  /* Type. Tracking is size-specific: large text tightens, body sits near 0.
+   * Readex Pro leads the stack for latin/digits (landing page and wordmarks);
+   * CJK glyphs fall back to the system CJK faces, and an offline deployment
+   * without the Google Fonts CDN degrades to the full system stack. */
+  --font: "Readex Pro", system-ui, -apple-system, "Segoe UI", "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 
@@ -64,6 +69,7 @@
   --radius-1: 4px;
   --radius-2: 8px;
   --radius-3: 12px;
+  --radius-pill: 999px;
 
   --shadow-1: 0 1px 2px rgba(16, 16, 24, 0.06);
   --shadow-2: 0 4px 16px rgba(16, 16, 24, 0.10);
@@ -74,37 +80,6 @@
   --ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-fast: 120ms;
   --duration-standard: 200ms;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --surface-0: #131317;
-    --surface-1: #1a1a1f;
-    --surface-2: #212128;
-    --surface-3: #2a2a33;
-    --line: #33333d;
-    --line-strong: #4a4a56;
-
-    --ink-1: #f2f2f5;
-    --ink-2: #c3c3cc;
-    --ink-3: #9a9aa6;
-    --ink-4: #74747f;
-
-    --accent: #7d9cf5;
-    --accent-soft: #1e2740;
-
-    --admitted: #5cc38b;
-    --admitted-soft: #16281f;
-    --provisional: #d9ac52;
-    --provisional-soft: #2a2418;
-    --refuted: #e08585;
-    --refuted-soft: #2c1b1b;
-    --unknown: #9a9aa6;
-    --unknown-soft: #24242b;
-
-    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.5);
-  }
 }
 
 /* Reduced transparency: frost becomes solid rather than merely lighter. */

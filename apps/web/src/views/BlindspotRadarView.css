@@ -30,7 +30,15 @@
 
 .radar__point {
   cursor: pointer;
-  transition: opacity var(--duration-fast) var(--ease-standard);
+  transition: stroke-width var(--duration-fast) var(--ease-standard);
+}
+
+/* Evidence points must stay fully legible by default (CLAUDE.md 11/7: data
+ * the user reads should not dim for style), so hover cannot fade the point
+ * -- instead it widens the stroke, echoing the existing selected-state
+ * treatment below rather than inventing a new visual language. */
+.radar__point:hover {
+  stroke-width: 2.5;
 }
 
 .radar__point:focus-visible {
@@ -133,7 +141,15 @@
   display: flex;
   align-items: baseline;
   gap: var(--space-2);
+  padding: var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  border-radius: var(--radius-2);
   font-size: var(--text-small);
   color: var(--ink-2);
   cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.radar__unscored-row:hover {
+  background: var(--surface-2);
 }

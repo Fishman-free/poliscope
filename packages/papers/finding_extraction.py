@@ -41,6 +41,7 @@ from packages.papers.contracts import (
     EvidenceLevel,
     PaperEvidencePacket,
 )
+from packages.knowledge.models import KnowledgeDocumentModel
 from packages.papers.models import (
     CitationAnchorModel,
     FindingModel,
@@ -424,6 +425,68 @@ class FindingExtractor:
         content = await self._retrieve_uploaded(stored_object_id)
         if content is None:
             return _gap("uploaded object not found in private object store")
+
+        try:
+            pages = extract_pages(content)
+        except PdfExtractionError as error:
+            return _gap(f"pdf parsing failed: {error}")
+        if not pages:
+            return _gap("pdf produced no extractable text")
+
+        dataset_id = detect_dataset_identifier(pages)
+        if dataset_id is not None:
+            await self._session.execute(
+                update(SourceModel)
+                .where(SourceModel.id == source_id)
+                .values(dataset_id=dataset_id)
+            )
+
+        first = await self._attempt_extraction(source_id, None, pages)
+        if not first.ok:
+            return _gap(first.reason)
+
+        return await self._persist_finding(None, source_id, first, dataset_id)
+
+    async def extract_knowledge_document(
+        self,
+        source_id: UUID,
+        document_id: UUID,
+    ) -> FindingExtractionResult:
+        """Try to turn a knowledge-base document's stored bytes into a
+        StudyFinding.
+
+        Identical to ``extract_uploaded`` from the point bytes exist onward;
+        the only difference is where the object key comes from: the
+        knowledge_documents row the Source's ``knowledge_document_id`` points
+        at, instead of the ``objects`` row an upload's ``object_id`` points
+        at. The document was parsed to text at ingest, so it is Level A
+        material by construction.
+        """
+
+        dataset_id: str | None = None
+
+        def _gap(reason: str) -> FindingExtractionResult:
+            return FindingExtractionResult(
+                doi=None,
+                source_id=source_id,
+                ok=False,
+                reason=reason,
+                dataset_id=dataset_id,
+            )
+
+        key_row = await self._session.execute(
+            select(KnowledgeDocumentModel.object_key).where(
+                KnowledgeDocumentModel.id == document_id
+            )
+        )
+        object_key = key_row.scalar_one_or_none()
+        if object_key is None:
+            return _gap("source has no knowledge document to extract from")
+
+        try:
+            content = self._object_store.retrieve(object_key)
+        except ObjectNotFound:
+            return _gap("knowledge document not found in private object store")
 
         try:
             pages = extract_pages(content)

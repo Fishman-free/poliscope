@@ -59,14 +59,16 @@ export function Panel({
   subtitle,
   actions,
   children,
+  className,
 }: {
   title: string;
   subtitle?: string;
   actions?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="panel">
+    <section className={className ? `panel ${className}` : "panel"}>
       <header className="panel__head">
         <div>
           <h2>{title}</h2>
