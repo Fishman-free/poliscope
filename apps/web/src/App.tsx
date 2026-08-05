@@ -29,6 +29,7 @@ import { CheckpointGate } from "./views/CheckpointGate";
 import { CouncilView } from "./views/CouncilView";
 import { EvolutionView } from "./views/EvolutionView";
 import { KnowledgeBaseView } from "./views/KnowledgeBaseView";
+import { LiveView } from "./views/LiveView";
 import { MapView } from "./views/MapView";
 import { ModelSettingsPanel } from "./views/ModelSettingsPanel";
 import { NewTaskView } from "./views/NewTaskView";
@@ -38,6 +39,7 @@ import { SkillsPanel } from "./views/SkillsPanel";
 import "./App.css";
 
 type Tab =
+  | "live"
   | "brief"
   | "map"
   | "council"
@@ -50,6 +52,7 @@ type Tab =
 type HomeView = "newtask" | "knowledge";
 
 const TABS: { id: Tab; label: string; hint: string }[] = [
+  { id: "live", label: "实时进展", hint: "思考链路与检索" },
   { id: "brief", label: "Research Brief", hint: "结论与局限并排" },
   { id: "map", label: "Controversy Map", hint: "证据图与争议结构" },
   { id: "council", label: "Council", hint: "7 人议会状态" },
@@ -67,18 +70,19 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
  * showing the gate the instant the researcher's own submission succeeds. */
 const CHECKPOINT_POLL_MS = 3000;
 
-/** Phase -> the tab that shows that phase's product. The council panel is
- * where the protocol runs; blindspot bounty is the one phase whose product
- * has a tab of its own (Blindspot Radar). Values match TaskPhase StrEnum
- * values in PHASE_STARTED payloads. */
+/** Phase -> the tab that shows that phase's product. While a run is live,
+ * every phase drives the Live view (thinking path, real time); a finished
+ * task lands on the brief. Values match TaskPhase StrEnum values in
+ * PHASE_STARTED payloads. */
 const PHASE_TAB: Record<string, Tab> = {
-  PRECOMMITMENT: "council",
-  ACQUISITION: "council",
-  EVIDENCE_EXCHANGE: "council",
-  CROSS_EXAMINATION: "council",
-  BLINDSPOT_BOUNTY: "radar",
-  JOINT_MODELING: "council",
-  FINAL_REJUDGMENT: "council",
+  PRECOMMITMENT: "live",
+  ACQUISITION: "live",
+  EVIDENCE_EXCHANGE: "live",
+  CROSS_EXAMINATION: "live",
+  BLINDSPOT_BOUNTY: "live",
+  JOINT_MODELING: "live",
+  FINAL_REJUDGMENT: "live",
+  REPORTING: "live",
 };
 
 /** Terminal ledger events -> the brief is what a finished task has to offer. */
@@ -126,7 +130,8 @@ export function App() {
   // yank the screen away from what they chose to look at. Opening a different
   // task re-arms it.
   const [follow, setFollow] = useState(true);
-  const { snapshot, load, stream, error, events, refresh } = useWorkspace(taskId);
+  const { snapshot, load, stream, error, events, processEvents, refresh } =
+    useWorkspace(taskId);
 
   // Sliding tab indicator: measure the active tab so the bar glides from
   // wherever it was to the new position (App.css transitions the transform).
@@ -267,6 +272,7 @@ export function App() {
         </div>
         <div className="app__account">
           <span className="app__account-name">{username}</span>
+          <SessionHistory currentTaskId={taskId} onOpen={open} />
           <button type="button" className="button button--small" onClick={signOut}>
             退出登录
           </button>
@@ -293,17 +299,32 @@ export function App() {
                   </button>
                 ))}
               </div>
-              {/* key={homeView} forces a fresh mount per switch, so the
-                  entrance animation replays -- same pattern as .app__panel. */}
-              <div className="app__panel" key={homeView}>
-                {homeView === "newtask" ? (
+              {/* 两个主页视图同时挂载、以 CSS 显隐切换，而不是 key={homeView}
+                  重挂载：切到知识库再切回时，新建任务已填的内容（问题、高级
+                  选项、勾选）与滚动位置都原样保留。切换动画由 View Transitions
+                  提供（withTransition 的快照交叉淡化）；无该 API 的浏览器直接
+                  切换。隐藏面板不参与视图过渡捕获（view-transition-name: none）。 */}
+              <div className="app__home">
+                <div
+                  className={
+                    "app__panel" + (homeView === "newtask" ? "" : " app__panel--hidden")
+                  }
+                  aria-hidden={homeView !== "newtask"}
+                >
                   <NewTaskView
                     onCreated={open}
                     onManageKnowledge={() => switchHome("knowledge")}
+                    active={homeView === "newtask"}
                   />
-                ) : (
-                  <KnowledgeBaseView />
-                )}
+                </div>
+                <div
+                  className={
+                    "app__panel" + (homeView === "newtask" ? " app__panel--hidden" : "")
+                  }
+                  aria-hidden={homeView === "newtask"}
+                >
+                  <KnowledgeBaseView active={homeView === "knowledge"} />
+                </div>
               </div>
             </>
           ) : (
@@ -388,6 +409,9 @@ export function App() {
                       entrance animation in App.css replays every time instead
                       of only on first load -- see .app__panel there. */}
                   <div className="app__panel" key={tab}>
+                    {tab === "live" ? (
+                      <LiveView events={events} processEvents={processEvents} />
+                    ) : null}
                     {tab === "brief" ? (
                       <BriefView
                         brief={brief}
@@ -419,7 +443,6 @@ export function App() {
         <aside className="app__sidebar">
           <ModelSettingsPanel />
           <SkillsPanel />
-          <SessionHistory currentTaskId={taskId} onOpen={open} />
         </aside>
       </div>
     </div>

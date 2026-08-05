@@ -1,0 +1,179 @@
+/* Live view: the running council's thinking path, real time.
+   The dark-field surfaces are the same tokens as everywhere else; only the
+   seat text wells go slightly deeper so a stream of mono text reads as a
+   live instrument readout, not a chat window. */
+
+.live {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Eight-phase progress rail. Done = quiet check; current = accent fill;
+   pending = dim. No animation: the researcher reads state, not pulses. */
+.live__phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.live__phase {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.live__phase--done {
+  color: var(--admitted);
+  border-color: color-mix(in srgb, var(--admitted) 40%, transparent);
+  background: var(--admitted-soft);
+}
+
+.live__phase--current {
+  color: var(--surface-0);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.live__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .live__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.live__seats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.live__seat {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  background: var(--surface-0);
+  overflow: hidden;
+}
+
+.live__seat-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+}
+
+.live__seat-name {
+  font-size: var(--text-small);
+  font-weight: 550;
+  color: var(--ink-1);
+}
+
+.live__seat-phase {
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+}
+
+.live__seat-running {
+  margin-left: auto;
+  font-size: var(--text-micro);
+  color: var(--accent);
+}
+
+.live__seat-text {
+  height: 140px;
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--surface-1);
+  font-size: var(--text-micro);
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Tool / literature log: every lookup the council performs, hits clickable. */
+.live__tools {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  background: var(--surface-0);
+  padding: var(--space-4);
+}
+
+.live__tools h3 {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.live__tool-log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.live__tool-call,
+.live__tool-result {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  font-size: var(--text-small);
+}
+
+.live__tool-call {
+  color: var(--ink-3);
+}
+
+.live__tool-result {
+  color: var(--ink-1);
+  background: var(--surface-1);
+}
+
+.live__tool-result--miss {
+  color: var(--ink-3);
+  border-style: dashed;
+}
+
+.live__tool-kind {
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+  padding-top: 1px;
+}
+
+.live__tool-query {
+  color: var(--ink-2);
+  word-break: break-word;
+}
+
+.live__tool-title {
+  color: var(--ink-1);
+  word-break: break-word;
+}
+
+.live__tool-link {
+  grid-column: 2;
+  justify-self: start;
+  font-size: var(--text-micro);
+}
+
+.live__tool-seats {
+  grid-column: 2;
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+}

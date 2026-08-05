@@ -67,7 +67,7 @@
 .audit__row--refusal {
   border-left: 3px solid var(--refuted);
   padding-left: calc(var(--space-2) - 3px);
-  background: color-mix(in srgb, var(--refuted-soft) 55%, transparent);
+  background: var(--refuted-soft);
 }
 
 .audit__seq {

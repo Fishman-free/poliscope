@@ -1,47 +1,51 @@
 /* Design tokens.
  *
  * CLAUDE.md 11 asks for the look of a scientific instrument and an evidence
- * review tool -- not a cockpit. So: one neutral surface ramp, one restrained
- * accent, and semantic colours reserved for evidential state (admitted,
- * provisional, refuted, unknown). Nothing glows.
+ * review tool -- not a cockpit. The instrument is a dark one: near-black
+ * blue-grey surfaces (the palette used to be white paper; the flat white
+ * field drowned the evidential colours and read as generic SaaS). On a dark
+ * field the hierarchy comes from surface steps, hairlines and one restrained
+ * accent, and the semantic colours (admitted, provisional, refuted, unknown)
+ * stay the only saturated ones in the system -- colour still means "how much
+ * can I trust this", never decoration.
  *
- * The semantic colours are the only saturated ones in the system. That is
- * deliberate: if decoration were also coloured, colour would stop carrying
- * information, and in this product colour has to mean "how much can I trust
- * this".
+ * Contrast targets (all on --surface-0): --ink-3 ~4.6:1 (AA), --ink-2 ~9:1,
+ * semantic colours 5-7:1. The light palette was removed, not shifted -- there
+ * is no light theme to fall back to (this product reads as a dark instrument
+ * in any environment, same rationale as the old "forced light" comment).
  */
 
 :root {
-  /* Forced light: this product is meant to read like a paper instrument in
-   * any environment, not to shift with the OS's dark-mode preference. */
-  color-scheme: light;
+  color-scheme: dark;
 
-  /* Neutrals: paper, not chrome. */
-  --surface-0: #ffffff;
-  --surface-1: #f7f7f8;
-  --surface-2: #eeeef1;
-  --surface-3: #e3e3e8;
-  --line: #d8d8de;
-  --line-strong: #b9b9c2;
+  /* Surfaces: stepped near-black blue-greys, darkest at the bottom. */
+  --surface-0: #181b22;
+  --surface-1: #1e222b;
+  --surface-2: #252a35;
+  --surface-3: #2e3442;
+  --line: #313849;
+  --line-strong: #48516a;
 
-  --ink-1: #16161a;
-  --ink-2: #46464f;
-  --ink-3: #6e6e7a;
-  --ink-4: #92929e;
+  /* Ink: light-on-dark, stepped by importance. */
+  --ink-1: #e8eaf0;
+  --ink-2: #b3b9c7;
+  --ink-3: #858da0;
+  --ink-4: #5e6678;
 
   /* One accent, used for selection and focus only. */
-  --accent: #2b5bd7;
-  --accent-soft: #e8edfb;
+  --accent: #6f9bff;
+  --accent-soft: rgba(111, 155, 255, 0.16);
 
-  /* Evidential state. These are the load-bearing colours. */
-  --admitted: #1f7a4d;
-  --admitted-soft: #e4f3ea;
-  --provisional: #8a6212;
-  --provisional-soft: #faf0d9;
-  --refuted: #a33232;
-  --refuted-soft: #fbe9e9;
-  --unknown: #5c5c68;
-  --unknown-soft: #ececef;
+  /* Evidential state. Hues carried over from the light palette, lifted for
+   * dark-field readability. These are the load-bearing colours. */
+  --admitted: #4cb386;
+  --admitted-soft: rgba(76, 179, 134, 0.16);
+  --provisional: #d9ae54;
+  --provisional-soft: rgba(217, 174, 84, 0.16);
+  --refuted: #e26961;
+  --refuted-soft: rgba(226, 105, 97, 0.16);
+  --unknown: #7e8698;
+  --unknown-soft: rgba(126, 134, 152, 0.16);
 
   /* Type. Tracking is size-specific: large text tightens, body sits near 0.
    * Readex Pro leads the stack for latin/digits (landing page and wordmarks);
@@ -73,11 +77,13 @@
   --radius-5: 20px;
   --radius-pill: 999px;
 
-  --shadow-1: 0 1px 2px rgba(16, 16, 24, 0.06);
-  --shadow-2: 0 4px 16px rgba(16, 16, 24, 0.10);
-  /* Floating: the elevated card / active segment / hovered row. Apple-style
-   * lift -- wide, soft, almost shadow-less at the contact edge. */
-  --shadow-3: 0 12px 40px rgba(16, 16, 24, 0.12), 0 2px 8px rgba(16, 16, 24, 0.06);
+  /* Shadows go blacker and deeper on a dark field -- the elevation reads
+   * against the dark chrome, not against white. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.38);
+  /* Floating: the elevated card / active segment / hovered row. Wide, soft,
+   * almost shadow-less at the contact edge. */
+  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.32);
 
   /* Springs. Critically damped by default; bounce is reserved for motion the
    * user's own gesture started, and this product has exactly one such gesture

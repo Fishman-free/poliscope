@@ -18,14 +18,14 @@ body {
   font-size: var(--text-body);
   line-height: 1.55;
   color: var(--ink-1);
-  /* Paper base with a whisper of atmosphere: a top-center blue halo, the
-   * same restraint as Apple's product pages -- present, but far too soft to
-   * compete with the evidential colours. The halo is part of the backdrop,
+  /* Dark-field base with a whisper of atmosphere: a top-center blue halo,
+   * the same restraint as Apple's product pages -- present, but far too soft
+   * to compete with the evidential colours. The halo is part of the backdrop,
    * not a decoration layer that could swallow a scroll container. */
   background:
     radial-gradient(
       1200px 420px at 50% -140px,
-      color-mix(in srgb, var(--accent) 6%, transparent),
+      color-mix(in srgb, var(--accent) 12%, transparent),
       transparent 70%
     ),
     var(--surface-1);
@@ -70,12 +70,61 @@ button {
   color: inherit;
 }
 
+/* Disabled controls are dimmed and inert (shadcn/ui pattern):
+   pointer-events:none stops the hover/active surfaces from firing on a button
+   that is waiting on network work, opacity signals "not actionable yet". */
+button:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* Focus is never removed, only replaced. A researcher auditing a long trail
  * navigates by keyboard, and an invisible focus ring makes that impossible. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-1);
+}
+
+/* Text fields get a shadcn-style ring instead of the generic outline: the
+ * border warms to the accent and a soft halo wraps it. Checkboxes/radios
+ * keep the global outline (they carry their own accent-color). */
+input:not([type="checkbox"]):not([type="radio"]):focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Dark scrollbars: the default light scrollbar against dark chrome is
+ * glaring. Firefox via scrollbar-color, Chromium via -webkit-scrollbar. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 code,

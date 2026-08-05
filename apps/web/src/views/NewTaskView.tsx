@@ -11,6 +11,7 @@ import { type FormEvent, useEffect, useState } from "react";
 
 import {
   confirmClaims,
+  createKnowledgeBase,
   createTask,
   DEFAULT_NEW_TASK_OPTIONS,
   fetchKnowledgeBases,
@@ -46,11 +47,15 @@ function splitList(value: string): string[] {
 export function NewTaskView({
   onCreated,
   onManageKnowledge,
+  active = true,
 }: {
   onCreated: (taskId: string) => void;
   /** Jump to the knowledge-base management view (pasting text, uploading
    * files). Passed up so the home screen can switch views. */
   onManageKnowledge: () => void;
+  /** True while this view is the visible home view. The two home views stay
+   * mounted side by side, so lists refresh on re-entry, not on mount. */
+  active?: boolean;
 }) {
   const [question, setQuestion] = useState("");
   const [populations, setPopulations] = useState(
@@ -73,12 +78,20 @@ export function NewTaskView({
   // 已移至右侧栏永久设置（保存于服务器，创建任务时自动生效），表单不再收集。
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseSummary[]>([]);
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string>("");
+  // 内联新建知识库：研究者在建任务时顺手建库，不必切到知识库页再回来
+  // （省跳转，KnowledgeBaseView 的创建表单保留完整字段，这里是轻量版）。
+  const [newKbName, setNewKbName] = useState("");
+  const [creatingKb, setCreatingKb] = useState(false);
+  const [kbCreateError, setKbCreateError] = useState<string | null>(null);
   // Skills：账号已下载的技能，默认勾选启用的；提交时携带勾选结果，
   // worker 会将其注入议会 prompt（非正式证据）。
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    // 可见时刷新：知识库页可能已增删（两个主页视图同时挂载、各自持列表
+    // 状态），回到本视图时下拉要跟上最新集合。
+    if (!active) return;
     let cancelled = false;
     fetchKnowledgeBases()
       .then((bases) => {
@@ -91,7 +104,7 @@ export function NewTaskView({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [active]);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,6 +176,23 @@ export function NewTaskView({
       else next.add(id);
       return next;
     });
+  }
+
+  /** 内联建库并自动关联到当前任务（创建成功后刷新下拉并选中新库）。 */
+  async function createKbInline() {
+    if (!newKbName.trim() || creatingKb) return;
+    setCreatingKb(true);
+    setKbCreateError(null);
+    try {
+      const created = await createKnowledgeBase(newKbName.trim());
+      setKnowledgeBases((prev) => [...prev, created]);
+      setKnowledgeBaseId(created.id);
+      setNewKbName("");
+    } catch (cause) {
+      setKbCreateError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCreatingKb(false);
+    }
   }
 
   async function submitQuestion(event: FormEvent) {
@@ -432,6 +462,30 @@ export function NewTaskView({
             >
               管理知识库 →
             </button>
+            <details className="newtask__inline-create">
+              <summary>没有合适的知识库？在这里新建一个</summary>
+              <div className="newtask__inline-create-row">
+                <input
+                  value={newKbName}
+                  onChange={(event) => setNewKbName(event.target.value)}
+                  placeholder="知识库名称"
+                  disabled={submitting || creatingKb}
+                />
+                <button
+                  type="button"
+                  className="button"
+                  onClick={createKbInline}
+                  disabled={submitting || creatingKb || !newKbName.trim()}
+                >
+                  {creatingKb ? "创建中…" : "创建并关联"}
+                </button>
+              </div>
+              {kbCreateError ? (
+                <p className="newtask__error" role="alert">
+                  {kbCreateError}
+                </p>
+              ) : null}
+            </details>
           </div>
 
           {skills.length > 0 ? (

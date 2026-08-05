@@ -1,6 +1,86 @@
-/* Session history: every past session, newest first, one click to open.
-   Rows are quiet buttons; the current session is marked, not hidden. */
+/* Header 会话历史：图标触发器 + 弹出列表。
+   Popover 交互按组件菜单标准做：触发器激活态着色，浮层毛玻璃 + 抬升阴影，
+   出场 200ms 淡入并轻微上移（全局 prefers-reduced-motion 兜底会剥掉位移）。 */
 
+.session {
+  position: relative;
+}
+
+.session__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-0);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-smooth),
+    background-color var(--duration-fast) var(--ease-smooth),
+    border-color var(--duration-fast) var(--ease-smooth);
+}
+
+.session__trigger:hover {
+  color: var(--ink-1);
+  border-color: var(--line-strong);
+}
+
+.session__trigger[aria-expanded="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.session__trigger svg {
+  flex: none;
+}
+
+.session__popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 30;
+  width: min(380px, calc(100vw - 2 * var(--space-5)));
+  max-height: min(420px, 70vh);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  overflow-y: auto;
+  background: var(--chrome-bg, color-mix(in srgb, var(--surface-0) 92%, transparent));
+  backdrop-filter: var(--chrome-blur, blur(24px) saturate(180%));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-3);
+  animation: popover-in var(--duration-standard) var(--ease-smooth);
+}
+
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.session__popover-head {
+  flex: none;
+  padding: 0 var(--space-1);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* 会话行：安静的按钮；当前会话标记出来而不是藏起来。 */
 .session__list {
   margin: 0;
   padding: 0;

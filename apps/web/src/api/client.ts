@@ -16,6 +16,7 @@ import type {
   KnowledgeDocumentSummary,
   LedgerEvent,
   MeInfo,
+  ProcessEvent,
   ModelSettings,
   ModelSettingsUpdate,
   SkillSummary,
@@ -113,7 +114,7 @@ async function sendJson<T>(
 }
 
 /** A researcher's own OpenAI-compatible endpoint for one task. `modelName`
- * is optional -- the deployment's configured model (or `deepseek-chat`) is
+ * is optional -- the deployment's configured model (or `deepseek-v4-flash`) is
  * used when omitted. The api key is stored with the task and never echoed
  * back by any endpoint. */
 export interface TaskModelConfig {
@@ -340,6 +341,7 @@ export async function uploadKnowledgeDocument(
   try {
     response = await fetch(`${BASE}/api/knowledge-bases/${kbId}/documents/upload`, {
       method: "POST",
+      headers: authHeaders(),
       body: form,
     });
   } catch (cause) {
@@ -367,6 +369,7 @@ export async function deleteKnowledgeDocument(
 ): Promise<void> {
   const response = await fetch(`${BASE}/api/knowledge-bases/${kbId}/documents/${docId}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -377,6 +380,7 @@ export async function deleteKnowledgeDocument(
 export async function deleteKnowledgeBase(kbId: string): Promise<void> {
   const response = await fetch(`${BASE}/api/knowledge-bases/${kbId}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -519,5 +523,30 @@ export function subscribe(
       // snapshot refresh is authoritative anyway.
     }
   };
+  return () => source.close();
+}
+
+/** Process trace stream (live view). Frames carry an explicit `event: process`
+ * line, so this uses addEventListener rather than onmessage; deduplication by
+ * `seq` belongs to the caller (the server replays from the start on reconnect,
+ * see packages/evidence/process_stream.py). */
+export function subscribeProcess(
+  taskId: string,
+  onEvent: (event: ProcessEvent) => void,
+  onStateChange?: (state: "open" | "reconnecting") => void,
+): () => void {
+  const token = getToken();
+  const source = new EventSource(
+    `${BASE}/api/stream/${taskId}/process?token=${encodeURIComponent(token ?? "")}`,
+  );
+  source.onopen = () => onStateChange?.("open");
+  source.onerror = () => onStateChange?.("reconnecting");
+  source.addEventListener("process", (raw) => {
+    try {
+      onEvent(JSON.parse((raw as MessageEvent).data) as ProcessEvent);
+    } catch {
+      // Skip a malformed frame; the next snapshot refresh is authoritative.
+    }
+  });
   return () => source.close();
 }

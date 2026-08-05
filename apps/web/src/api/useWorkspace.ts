@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, fetchWorkspace, subscribe } from "./client";
-import type { LedgerEvent, WorkspaceSnapshot } from "./types";
+import { ApiError, fetchWorkspace, subscribe, subscribeProcess } from "./client";
+import type { LedgerEvent, ProcessEvent, WorkspaceSnapshot } from "./types";
 
 export type LoadState = "idle" | "loading" | "ready" | "error";
 export type StreamState = "open" | "reconnecting" | "closed";
@@ -22,6 +22,9 @@ export interface WorkspaceState {
    * this; it is never used to mutate the snapshot, because the projector -- not
    * the browser -- decides what an event means. */
   events: LedgerEvent[];
+  /** Process trace (live view): token/reasoning deltas, tool calls, seat
+   * turns, ordered by server seq. Not replay-guaranteed; deduplicated here. */
+  processEvents: ProcessEvent[];
   refresh: () => void;
 }
 
@@ -31,6 +34,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   const [stream, setStream] = useState<StreamState>("closed");
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<LedgerEvent[]>([]);
+  const [processEvents, setProcessEvents] = useState<ProcessEvent[]>([]);
   const [nonce, setNonce] = useState(0);
   const timer = useRef<number | undefined>(undefined);
 
@@ -79,5 +83,21 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
     };
   }, [taskId, refresh]);
 
-  return { snapshot, load, stream, error, events, refresh };
+  // Process trace: reconnect replays from the start (deliberately not
+  // Last-Event-ID resume), so deduplicate by server seq.
+  useEffect(() => {
+    if (!taskId) {
+      setProcessEvents([]);
+      return;
+    }
+    const seen = new Set<number>();
+    const close = subscribeProcess(taskId, (event) => {
+      if (seen.has(event.seq)) return;
+      seen.add(event.seq);
+      setProcessEvents((current) => [...current, event]);
+    });
+    return () => close();
+  }, [taskId]);
+
+  return { snapshot, load, stream, error, events, processEvents, refresh };
 }

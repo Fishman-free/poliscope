@@ -237,6 +237,14 @@
   view-transition-name: app-panel;
 }
 
+/* Home 视图（新建任务 / 知识库）保持挂载、只做显隐切换，已填内容不丢。
+ * display:none 同时让它退出 tab 焦点序列；view-transition-name 重置避免
+ * 与激活面板的同名过渡快照冲突。 */
+.app__panel--hidden {
+  display: none;
+  view-transition-name: none;
+}
+
 @keyframes panel-in {
   from {
     opacity: 0;

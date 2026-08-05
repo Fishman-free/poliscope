@@ -49,19 +49,19 @@
 .badge--admitted {
   color: var(--admitted);
   background: var(--admitted-soft);
-  border-color: color-mix(in srgb, var(--admitted) 25%, transparent);
+  border-color: color-mix(in srgb, var(--admitted) 40%, transparent);
 }
 
 .badge--provisional {
   color: var(--provisional);
   background: var(--provisional-soft);
-  border-color: color-mix(in srgb, var(--provisional) 25%, transparent);
+  border-color: color-mix(in srgb, var(--provisional) 40%, transparent);
 }
 
 .badge--refuted {
   color: var(--refuted);
   background: var(--refuted-soft);
-  border-color: color-mix(in srgb, var(--refuted) 25%, transparent);
+  border-color: color-mix(in srgb, var(--refuted) 40%, transparent);
 }
 
 .badge--unknown {

@@ -14,6 +14,7 @@ because ``Last-Event-ID`` has to be comparable with ``>`` for resume to work.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -23,6 +24,8 @@ from fastapi.responses import StreamingResponse
 from apps.api.dependencies import AppState, get_state
 from apps.api.schemas import SSEEvent
 from packages.accounts.service import AuthService
+from packages.epistemo.contracts import TaskStatus
+from packages.evidence.process_stream import ProcessStreamRepository
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
 from packages.research.repository import ResearchRepository, TaskNotFound
@@ -142,6 +145,102 @@ async def stream_events(
             "Cache-Control": "no-cache",
             # Without this a buffering reverse proxy holds the whole response
             # and the stream never reaches the browser.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+PROCESS_TERMINAL_STATUSES = frozenset(
+    {
+        TaskStatus.COMPLETED.value,
+        TaskStatus.COMPLETED_WITH_GAPS.value,
+        TaskStatus.FAILED.value,
+    }
+)
+
+
+async def _process_events(
+    state: AppState,
+    task_id: UUID,
+    request: Request,
+) -> AsyncIterator[str]:
+    """Stream the process trace for one task.
+
+    Deliberately *not* replay-guaranteed, unlike the ledger stream above: the
+    trace is live noise (token deltas, tool calls), written to
+    ``process_stream`` by the worker and read here. A reconnecting client
+    re-reads from the start and deduplicates by ``seq``; the ledger's
+    ``Last-Event-ID`` resume semantics deliberately do not apply. The stream
+    ends when the task reaches a terminal status and everything already
+    flushed has been sent -- the client is expected to close this connection
+    itself on TASK_COMPLETED from the ledger stream.
+    """
+    # seq starts at 0 and list_since means "> after_seq", so "from the
+    # beginning" is -1, not 0 -- a cursor of 0 would silently drop the very
+    # first event of every task.
+    cursor = -1
+    while True:
+        if await request.is_disconnected():
+            return
+        async with state.session_factory() as session:
+            rows = await ProcessStreamRepository(session).list_since(
+                task_id, cursor
+            )
+            status = None
+            try:
+                task = await ResearchRepository(session).get_task(task_id)
+                status = task.status
+            except TaskNotFound:
+                status = TaskStatus.FAILED.value
+        for row in rows:
+            cursor = row.seq
+            body = json.dumps(
+                {"seq": row.seq, "kind": row.kind, "payload": row.payload},
+                ensure_ascii=False,
+            )
+            yield f"event: process\nid: p{row.seq}\ndata: {body}\n\n"
+        if status in PROCESS_TERMINAL_STATUSES:
+            return
+        yield KEEPALIVE_FRAME
+        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+
+@router.get("/{task_id}/process")
+async def stream_process(
+    task_id: str,
+    request: Request,
+    token: str = "",
+) -> StreamingResponse:
+    """Stream this task's process trace (live view), same auth as the ledger
+    stream: bearer token in the query string (EventSource cannot set headers),
+    scoped to the caller, 404 for someone else's task."""
+    state = get_state(request)
+    try:
+        parsed_task_id = UUID(task_id)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"malformed task id {task_id}",
+        ) from error
+    async with state.session_factory() as session:
+        user = await AuthService(session).user_for_token(token)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="authentication required",
+            )
+        try:
+            await ResearchRepository(session).get_task(parsed_task_id, user.id)
+        except TaskNotFound as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown task {task_id}",
+            ) from error
+    return StreamingResponse(
+        _process_events(state, parsed_task_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
     )

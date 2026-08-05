@@ -194,3 +194,9 @@
   color: var(--ink-2);
   fill: currentColor;
 }
+
+/* The default React Flow background dots are a light grey tuned for white
+ * canvases; on the dark field they need the hairline colour instead. */
+.react-flow__background {
+  fill: var(--line);
+}

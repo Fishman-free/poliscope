@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -48,6 +48,7 @@ from packages.models.contracts import (
     ModelRequest,
     ModelResult,
     SchemaStatus,
+    StreamEvent,
 )
 from packages.models.phase_schemas import PHASE_OUTPUT_JSON_SCHEMAS
 
@@ -247,6 +248,121 @@ class OpenAICompatibleModelGateway:
             retries=retries,
             schema_status=schema_status,
             reasoning="\n\n".join(reasoning_parts) or None,
+        )
+
+    async def stream_invoke(
+        self,
+        request: ModelRequest,
+        on_event: Callable[[StreamEvent], Awaitable[None]],
+    ) -> ModelResult:
+        """Stream one thinking-mode call, relaying every delta live.
+
+        This is the live-view path (CLAUDE.md 11's thinking-path
+        visualisation): the vendor's ``reasoning_content`` and the structured
+        answer arrive as deltas and are relayed to the process stream while
+        they happen. It is deliberately a *single attempt with no schema
+        repair* -- any transport, parse or schema failure raises so the caller
+        falls back to a plain :meth:`invoke`, which owns retries and repair.
+        The deltas already emitted stay on the wire as an honest trace of
+        what we saw; the returned ``ModelResult`` is the source of truth.
+        """
+        schema = PHASE_OUTPUT_JSON_SCHEMAS.get(request.output_schema)
+        if schema is None:
+            raise ModelGatewayConfigError(
+                f"no JSON schema registered for output_schema "
+                f"{request.output_schema!r}"
+            )
+        model_name = self._config.model_names[request.model_class]
+        messages: list[dict[str, str]] = [
+            {"role": message.role, "content": message.content}
+            for message in request.messages
+        ]
+        body = _build_body(
+            model_name, messages, request.output_schema, schema, force_tool=False
+        )
+        body["stream"] = True
+        body["thinking"] = {"type": "enabled"}
+
+        started = time.monotonic()
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tool_call_parts: dict[int, dict[str, Any]] = {}
+        usage: dict[str, Any] = {}
+
+        async with self._client.stream(
+            "POST", "/chat/completions", json=body
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if raw == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(raw)
+                except ValueError:
+                    continue
+                choices = chunk.get("choices") or []
+                if choices:
+                    delta = choices[0].get("delta") or {}
+                    text = delta.get("content")
+                    if text:
+                        content_parts.append(text)
+                        await on_event(StreamEvent(kind="token", text=text))
+                    reasoning = delta.get("reasoning_content") or delta.get(
+                        "reasoning"
+                    )
+                    if reasoning:
+                        reasoning_parts.append(reasoning)
+                        await on_event(StreamEvent(kind="reasoning", text=reasoning))
+                    for call in delta.get("tool_calls") or []:
+                        index = int(call.get("index", 0))
+                        slot = tool_call_parts.setdefault(
+                            index, {"id": "", "function": {"name": "", "arguments": ""}}
+                        )
+                        function = call.get("function") or {}
+                        if call.get("id"):
+                            slot["id"] += call["id"]
+                        if function.get("name"):
+                            slot["function"]["name"] += function["name"]
+                        if function.get("arguments"):
+                            slot["function"]["arguments"] += function["arguments"]
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+
+        message: dict[str, Any] = {
+            "content": "".join(content_parts),
+            "tool_calls": list(tool_call_parts.values()),
+        }
+        reasoning = _extract_reasoning(
+            {
+                "reasoning_content": "".join(reasoning_parts),
+                "reasoning": None,
+            }
+        )
+        if reasoning:
+            message["reasoning_content"] = reasoning
+        content = _extract_structured_content(message, request.output_schema)
+        payload, errors = _parse_and_validate(content, schema)
+        if errors:
+            raise ValueError(
+                f"streamed schema errors: {'; '.join(errors)}"
+            )
+        latency_ms = int((time.monotonic() - started) * 1000)
+        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        output_tokens = int(usage.get("completion_tokens", 0) or 0)
+        await on_event(StreamEvent(kind="done", text=""))
+        return ModelResult(
+            call_id=uuid4(),
+            payload=FrozenDict(payload),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=self._cost(input_tokens, output_tokens),
+            latency_ms=latency_ms,
+            retries=0,
+            schema_status=SchemaStatus.OK,
+            reasoning=reasoning,
         )
 
     def _cost(self, input_tokens: int, output_tokens: int) -> Decimal:

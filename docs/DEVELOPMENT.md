@@ -72,6 +72,16 @@ Poliscope 把这三件事当成要用架构解决的问题，而不是补一行�
 
 这一节说的是「为什么这样设计」，不是「跑到哪一步了」——运行状态请看下一节和文末的[已知缺口](#已知缺口)。
 
+### 一句话设计理念
+
+Poliscope 的架构源自一个判断：**记忆不是每个智能体的私有缓存，而是科研共同体的公共认知层。**它由三层组成，各回答一个问题：
+
+- **私人记忆（Private Memory）**——每位科学家自己的探索轨迹、工具记录、未验证的猜想，只服务自己、不被他人直接读取。回答「这位科学家是怎么走到这一步的」。
+- **集体执行记忆（Collective MemoBrain）**——整个共同体发生的**结构化认知事件**：谁提出过什么主张、谁攻击过谁、哪些争议还悬着、哪些盲点没有人碰过。回答「我们研究到哪一步了、下一步该查什么」——它不是只存档的笔记本，而是主动调度下一轮调查的执行控制层。
+- **争议证据地图（Evidence Map）**——面对用户的正式知识：只存放经过审计的原子主张、研究发现、构念、情境和盲点。回答「我们现在对这个问题知道什么」。
+
+三层之间不是堆叠，而是闭环：**过程产生证据，证据暴露盲点，盲点驱动下一轮调查。**MemoBrain 的原生操作（`Flush` / `Fold` / `Recall`）被重新定义为科研语义（`Quarantine` / `Dialectical Fold` / `Perspective Recall`），就是为了让这个闭环在长程协作中不丢异议、不造虚假共识——下面各节依次展开这条主线。
+
 ### 起点：一个单智能体的记忆压缩器，管不了一个科学共同体
 
 Poliscope 的执行记忆基座是 [MemoBrain](https://github.com/qhjqhj00/MemoBrain)。它的原始设定是给**一个** Agent 用的：这个 Agent 自己检索、自己推理、自己在 token 预算见底之前把已经走过的路压缩掉，留下还有用的部分。`Flush` 隔离走不通的分支，`Fold` 压缩已完成的子任务，`Recall` 在预算内重建工作上下文——三个动作服务同一个目的：让一个大脑在有限记忆里跑得更远。
@@ -125,7 +135,7 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 | 事件账本幂等与断线续传（SSE 按 `Last-Event-ID` 续传） | 集成测试 + 浏览器实测 53/53 事件 |
 | 证据门六阶段审核、A–D 分级、因果越级隔离 | 集成测试，关键项经变异测试自证 |
 | 十三个 CLI 子命令（含 `pause`/`resume`/`health`/`council-preview`/`council-guidance`/`login`/`register`/`logout`） | 逐条对真实 API 手工验证 |
-| 六个前端视图（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View）+ 议会检查点模态框 + 建任务/确认主张首屏 | 真实数据 + 浏览器截图核对，无控制台错误 |
+| 七个前端视图（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View / 知识库）+ 议会检查点模态框 + 建任务/确认主张首屏 + 注册登录/账号隔离 + 模型设置 / Skills / 会话历史面板 | 真实数据 + 浏览器实测，无控制台错误 |
 | 全文获取 → 解析 → StudyFinding 抽取 → 引用锚点核验 | 单元测试（程序化生成 PDF fixture，无需网络）+ 集成测试断言 `DERIVED_FROM` 边真正出现在证据图上 |
 | 联合建模 → Dialectical Fold → `DebateCapsule`；最终复判 → 异议 → `DissentCertificate` | 单元测试覆盖两条产出路径与「无边界/无冲突则不折叠」「无异议目标则记未填槽位」两条弃权路径；集成测试断言完整任务运行后证据图上真的出现对应节点 |
 | Docker Compose 一键部署（postgres / migrate / api / worker / web / caddy） | `docker compose up --build` 后真实提交一个任务，走完整 CLI → API → Worker → 图投影路径，再经 Caddy → web 容器 nginx 反代验证 |
@@ -214,7 +224,7 @@ Worker 用 `SELECT ... FOR UPDATE SKIP LOCKED` 从 `research_tasks` 认领任务
 cd apps/web && npm install && npm run dev
 ```
 
-打开 `http://localhost:5173/`。开发服务器把 `/api` 代理到 8000 端口，浏览器看到同源，SSE 不需要 CORS 配置。`/` 是公开落地页，研究证据工作台在 `http://localhost:5173/workspace`（开发模式无账号；部署时首次访问需注册/登录账号）——首屏是建任务表单，也可以在页头粘贴一个已有的 `task_id` 直接打开。
+打开 `http://localhost:5173/`。开发服务器把 `/api` 代理到 8000 端口，浏览器看到同源，SSE 不需要 CORS 配置。`/` 是公开落地页，研究证据工作台在 `http://localhost:5173/workspace`——首次访问需注册/登录账号（token 30 天有效，浏览器记住后免登录）。登录后的首屏是建任务表单；已创建的研究会话在页头右侧「会话历史」图标按钮里，点击任意一条即可回到那次会话（取代早期的「页头粘贴 task_id」入口，列表里当前会话会高亮标记）。
 
 ### 5. 看一个跑完的任务
 
@@ -272,7 +282,8 @@ HTTPS 证书——这是 Caddy 的原生行为，栈里其余任何一处配置�
 ```bash
 docker compose ps                              # 确认 6 个服务都在跑（migrate 会 exit 0，这是正常的）
 curl -I http://localhost/                      # 落地页公开：200
-curl -u poliscope:<你的密码> http://localhost/workspace   # 工作台要口令：带凭据 200，不带 401
+curl -I http://localhost/workspace             # 未登录：302 到登录页（网页端注册/登录后进入）
+curl http://localhost/api/auth/me              # 无 token：401 —— 访问控制由 API 层账号系统承担
 ```
 
 `.env.example` 里的模型/工具网关变量留空时，Worker 会诚实降级为 `COMPLETED_WITH_GAPS`（7 个席位全部
@@ -286,7 +297,7 @@ Code 会话自己的 `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`——那是 Cla
 网页端建任务时可以在"模型设置"里填自己的 OpenAI 兼容端点（Base URL + API Key + 可选模型名），
 本次任务就运行在研究者自己的接口上，与部署方的 `POLISCOPE_MODEL_*` 配置无关（worker 按任务读取
 `research_tasks.model_config`，迁移 0009）。模型名留空时按序回退：任务自带的模型名 →
-部署环境 `POLISCOPE_MODEL_NAME` → `deepseek-chat`。API Key 只存任务行，**任何读端点都不回显**（单元
+部署环境 `POLISCOPE_MODEL_NAME` → `deepseek-v4-flash`。API Key 只存任务行，**任何读端点都不回显**（单元
 测试 `test_create_with_model_config_stores_it_and_never_echoes_it` 钉死这条）；密钥的明文存储是
 自部署工具下的务实选择，请按你部署环境的数据库访问权限来评估风险。
 
@@ -296,8 +307,8 @@ Code 会话自己的 `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`——那是 Cla
 
 ### 网页端
 
-打开落地页点"进入工作台"（或直接访问 `/workspace`，设了口令时这里才弹登录框），看到问题输入框
-（不需要先懂 CLI）。展开"高级选项"可以调整人群/地区/语言/日期范围/证据优先级/预算，留空则使用
+打开落地页点"进入工作台"（或直接访问 `/workspace`），未登录先看到登录/注册页，登录后进入问题
+输入框（不需要先懂 CLI）。展开"高级选项"可以调整人群/地区/语言/日期范围/证据优先级/预算，留空则使用
 已验证过的默认值；"模型设置"可填研究者自己的模型接口（留空用部署方默认模型）。提交后原地展示
 API 返回的 `suggested_claims`（默认全选，可取消勾选），点"确认并开始研究"后跳转到既有的六视图
 工作台，`?task=<id>` 驱动当前打开的任务，可以直接复制这个链接分享。研究过程中工作台会随轮次自动
@@ -494,6 +505,17 @@ SSE 帧只有 `id:` 和 `data:`，没有 `event:` 行。原因是 SSE 的类型�
 
 **为什么队列在 PostgreSQL 而不是 arq？** 认领任务和更新状态在同一个事务里，Worker 崩溃时锁自动释放。用 Redis 会多出一个可能与数据库不一致的「谁在跑」的真相来源。Redis 仍然适合做缓存与广播，只是不做工作队列。这条偏离已按 CLAUDE.md 第 17 条记录在 `apps/worker/main.py` 的模块文档中。
 
+### 思考链路可视化：两条流，一份契约
+
+网页版要让研究者实时看到模型在干什么（CLAUDE.md 第 11 条），而**正式账本绝不能被 token 噪声污染**。因此实时视图是两条独立流：
+
+1. **账本流**（`GET /api/stream/{task_id}`，SSE，Last-Event-ID 续传）：`PHASE_STARTED` / `PHASE_COMPLETED` 等正式事件，驱动 Live View 顶部的八阶段时间线（独立预承诺 → 报告生成，当前阶段高亮、完成打勾，运行中自动定位）。
+2. **过程流**（`GET /api/stream/{task_id}/process`，SSE，从头重放 + 前端按 `seq` 去重）：worker 实时写入的易逝过程数据——席位开始思考、模型推理片段（DeepSeek thinking 的 `reasoning_content`）、输出 token、DOI 解析与文献检索调用及其命中结果（含可点击的 `https://doi.org/…` 链接）。重连的客户端重读全量并按 `seq` 去重，不承诺断点精确续传。
+
+**过程流数据层**：`packages/evidence/process_stream.py`——`ProcessStreamWriter` 在 worker 侧缓冲批写（`flush_at=40` 阈值），flush 失败只降级为 warning、绝不破坏正在跑的 run；`ProcessStreamRepository.list_since(after_seq)` 语义是 `seq > after_seq`，初始游标是 `-1`（seq 从 0 开始）。`process_stream` 表无外键（迁移 0016），这不是疏漏：worker 认领任务时对任务行持有 `SELECT ... FOR UPDATE` 直到整轮议会事务提交，而 Postgres 外键检查会对父行取 KEY SHARE 锁——两边互相等待就是死锁（曾把整个 worker 冻结、所有任务卡在 QUEUED）。过程流是 best-effort 的，孤儿行无害、可被保留期清理；`(task_id, seq)` 唯一约束保留，`task_id` 的索引支撑 API 的按任务重放。
+
+**模型层**：`StreamingModelGateway`（`packages/models/contracts.py`）与 `OpenAICompatibleModelGateway.stream_invoke` 解析 SSE 块，`reasoning_content` 与 `content` 分开成 `StreamEvent{kind, text}`；`GatewayDeliberator` 流式失败时回退到非流式 `invoke`，任务不因流断了而失败。SSE 鉴权用 query 参数 `?token=`（EventSource 无法带自定义请求头），泄露面已在 README「安全」节注明。
+
 ---
 
 ## 七名科学家与议会协议
@@ -573,7 +595,7 @@ packages/
 apps/
   api/         FastAPI：tasks / workspace / reports / stream（含 Dockerfile）
   worker/      任务认领、议会执行、图投影（含 Dockerfile）
-  cli/         十个子命令，纯 HTTP 客户端，不直连 packages
+  cli/         十三个子命令（含 login/register/logout），纯 HTTP 客户端，不直连 packages
   web/         React + TypeScript + React Flow 建任务表单 + 六视图工作台（含 Dockerfile、nginx.conf）
 
 poliscope/       CLI 入口点
@@ -606,6 +628,8 @@ CLI 是纯 HTTP 客户端，不 import `packages`。第二条进入研究服务�
 - **缺口计数常驻在每个标签页的页头。** 不可能在看不见「多少协议没跑完」的情况下读到结论。
 - 无卡通 Agent、无霓虹、无脉冲指示灯。唯一的动效是按压反馈和地图自身的平移缩放。
 - 完整支持 `prefers-reduced-motion`、`prefers-reduced-transparency`、`prefers-contrast`。
+- **会话历史住在页头，不占工作区。** 右侧栏只留模型设置与 Skills 两个永久面板；「会话历史」是页头退出登录旁的一个图标按钮，点开是弹出式列表（点击外部 / Escape 关闭，含 200ms 淡入动画），任意一条会话点击即回到那次研究，当前会话在列表里高亮。新建任务表单在切到知识库再切回时内容原样保留——视图切换不丢输入，是工作台的基本纪律（两个主页视图保持挂载、CSS 显隐切换，不重挂载）。
+- **提交中的控件是"不可见地不可点"。** 按钮在 `disabled` 时变淡且不响应 hover/点击（`pointer-events: none`），网络请求未完成前界面不假装自己还能继续操作。
 
 ---
 

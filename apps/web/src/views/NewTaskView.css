@@ -39,6 +39,46 @@
   color: var(--ink-1);
 }
 
+/* 内联新建知识库：轻量折叠表单，与高级选项同一视觉语言。 */
+.newtask__inline-create {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+}
+
+.newtask__inline-create summary {
+  cursor: pointer;
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.newtask__inline-create summary:hover {
+  color: var(--ink-1);
+}
+
+.newtask__inline-create-row {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.newtask__inline-create-row input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-small);
+}
+
+.newtask__inline-create .newtask__error {
+  margin-top: var(--space-2);
+}
+
 .newtask__advanced-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

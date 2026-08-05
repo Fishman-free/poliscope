@@ -54,7 +54,7 @@ class TaskModelConfig(ContractModel):
     ``base_url`` and ``api_key`` must come as a pair -- a key without an
     endpoint is as broken as an endpoint without a key. ``model_name`` is
     optional: it defaults to the deployment's configured model (or
-    ``deepseek-chat`` when the deployment has none), which is the "system
+    ``deepseek-v4-flash`` when the deployment has none), which is the "system
     default DeepSeek" the web form promises. The API key is stored on the
     task row and is never returned by any read endpoint (CLAUDE.md 16).
     """

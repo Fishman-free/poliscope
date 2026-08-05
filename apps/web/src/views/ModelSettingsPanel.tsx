@@ -114,9 +114,9 @@ export function ModelSettingsPanel() {
             </span>
           </label>
           <label className="settings__field">
-            模型名（可留空，默认 deepseek-chat）
+            模型名（可留空，默认 deepseek-v4-flash）
             <input
-              placeholder="deepseek-chat"
+              placeholder="deepseek-v4-flash"
               value={modelName}
               onChange={(event) => setModelName(event.target.value)}
               disabled={saving}

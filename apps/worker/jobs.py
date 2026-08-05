@@ -39,6 +39,7 @@ from packages.epistemo.orchestrator import CouncilOrchestrator, TaskRunReport
 from packages.evidence.ledger import EventConflict
 from packages.evidence.lifecycle import QuarantinedNode
 from packages.evidence.models import EventAuditModel, ScientificEventModel
+from packages.evidence.process_stream import ProcessStreamWriter
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.evidence.sql_projector import (
     STATUS_QUARANTINED,
@@ -113,7 +114,7 @@ def _gateway_for_task_config(
 
     All three model tiers use the task's single model name: a researcher who
     brings their own endpoint brings one model, not a tier ladder. The name
-    defaults to the deployment's configured model, or ``deepseek-chat`` when
+    defaults to the deployment's configured model, or ``deepseek-v4-flash`` when
     the deployment has none -- the "system default DeepSeek" the web form
     promises (TaskModelConfig's docstring).
     """
@@ -121,7 +122,7 @@ def _gateway_for_task_config(
     model_name = (
         parsed.model_name
         or os.environ.get("POLISCOPE_MODEL_NAME")
-        or "deepseek-chat"
+        or "deepseek-v4-flash"
     )
     return OpenAICompatibleModelGateway(
         OpenAICompatibleConfig(
@@ -368,6 +369,7 @@ async def deliberate(
     tools: ToolGateway | None = None,
     fulltext_fetcher: FullTextFetcher | None = None,
     object_store: PrivateObjectStore | None = None,
+    process: ProcessStreamWriter | None = None,
 ) -> TaskRunReport:
     """Run the seven rounds and persist the resulting events and status.
 
@@ -417,7 +419,7 @@ async def deliberate(
     try:
         return await _deliberate_impl(
             session, task, task_id, budget, deliberator, gateway, tools,
-            fulltext_fetcher, object_store,
+            fulltext_fetcher, object_store, process,
         )
     finally:
         if owned_gateway is not None:
@@ -434,6 +436,7 @@ async def _deliberate_impl(
     tools: ToolGateway | None,
     fulltext_fetcher: FullTextFetcher | None,
     object_store: PrivateObjectStore | None,
+    process: ProcessStreamWriter | None = None,
 ) -> TaskRunReport:
     # task_id is the canonicalised argument, not task.task_id: the ORM row's
     # value is asyncpg's UUID subclass, which the frozen contracts reject
@@ -448,6 +451,8 @@ async def _deliberate_impl(
             AuditedModelGateway(gateway, session),
             budget,
             on_reasoning=_reasoning_emitter(SqlEventLedger(session)),
+            on_process=None if process is None else process.emit,
+            on_flush=None if process is None else process.flush,
         )
     orchestrator = CouncilOrchestrator(
         ledger=SqlEventLedger(session),
@@ -462,7 +467,11 @@ async def _deliberate_impl(
             None
             if tools is None
             else SourceAcquisition(
-                session, AuditedToolGateway(tools, session), task_id, budget
+                session,
+                AuditedToolGateway(tools, session),
+                task_id,
+                budget,
+                on_process=None if process is None else process.emit,
             )
         ),
         # Needs both a tool provider (open access lookup) and a model provider
@@ -586,25 +595,37 @@ async def run_task(
     (CLAUDE.md 4.1), the only honest response to this specific exception is to
     stop retrying and record the task as terminally ``FAILED``.
     """
-    async with app_sessions() as session:
-        try:
-            report = await deliberate(
-                session,
-                task_id,
-                deliberator,
-                gateway,
-                tools,
-                fulltext_fetcher,
-                object_store,
-            )
-            await session.commit()
-        except EventConflict:
-            await session.rollback()
-            await _mark_failed(app_sessions, task_id)
-            raise
-        except BaseException:
-            await session.rollback()
-            raise
+    # The live-view trace (model deltas, tool calls) rides a separate,
+    # self-owned session chain: it must never tangle with the deliberation
+    # transaction, and a broken trace must never break the run. It is created
+    # here because this function owns app_sessions; everything downstream only
+    # sees the synchronous emit callback.
+    process = ProcessStreamWriter(app_sessions, task_id)
+    try:
+        async with app_sessions() as session:
+            try:
+                report = await deliberate(
+                    session,
+                    task_id,
+                    deliberator,
+                    gateway,
+                    tools,
+                    fulltext_fetcher,
+                    object_store,
+                    process=process,
+                )
+                await session.commit()
+            except EventConflict:
+                await session.rollback()
+                await _mark_failed(app_sessions, task_id)
+                raise
+            except BaseException:
+                await session.rollback()
+                raise
+    finally:
+        # Flush whatever the trace still holds, even on failure -- the live
+        # view should show how far the run got before it stopped.
+        await process.close()
 
     async with projector_sessions() as session:
         try:

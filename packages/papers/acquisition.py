@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import KnowledgeDocumentLike
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
+from packages.evidence.process_stream import ProcessCallback
 from packages.papers.candidate_pool import CandidatePool
 from packages.papers.models import SourceModel
 from packages.papers.query_planner import QueryPlanner
@@ -116,11 +117,17 @@ class SourceAcquisition:
         gateway: ToolGateway,
         task_id: UUID,
         budget: BudgetTracker | None = None,
+        *,
+        on_process: ProcessCallback | None = None,
     ) -> None:
         self._session = session
         self._gateway = gateway
         self._task_id = task_id
         self._budget = budget
+        # Live-view trace: every lookup/search the council performs becomes a
+        # clickable row in the workbench, so the researcher sees *where the
+        # papers came from*, not just that papers appeared (CLAUDE.md 7.4).
+        self._on_process = on_process
 
     async def _existing(self, doi: str) -> SourceModel | None:
         row: SourceModel | None = await self._session.scalar(
@@ -245,6 +252,15 @@ class SourceAcquisition:
             if not self._spend():
                 refused.append(RefusedCandidate(doi, "source budget exhausted"))
                 continue
+            if self._on_process is not None:
+                self._on_process(
+                    "tool_call",
+                    {
+                        "kind": "doi_lookup",
+                        "query": doi,
+                        "seats": sorted(seat.value for seat in seats),
+                    },
+                )
             try:
                 normalized = await source_adapter.lookup_doi(doi)
             except Exception as error:
@@ -256,6 +272,16 @@ class SourceAcquisition:
                 # would otherwise inflate the paper count.
                 refused.append(RefusedCandidate(doi, "source is retracted"))
                 continue
+            if self._on_process is not None:
+                self._on_process(
+                    "tool_result",
+                    {
+                        "query": doi,
+                        "doi": normalized.doi or doi,
+                        "title": normalized.title,
+                        "url": f"https://doi.org/{doi}",
+                    },
+                )
             row = await self._persist(normalized)
             acquired.append(
                 AcquiredSource(
@@ -290,12 +316,36 @@ class SourceAcquisition:
             if not self._spend():
                 refused.append(RefusedCandidate(text, "source budget exhausted"))
                 continue
+            if self._on_process is not None:
+                self._on_process(
+                    "tool_call",
+                    {
+                        "kind": "search",
+                        "query": text,
+                        "seats": sorted(seat.value for seat in seats),
+                    },
+                )
             resolved = await self._search_first_hit(text)
             if resolved is None:
                 # Every free, keyless provider missed (or errored). Recorded
                 # honestly rather than faked as a hit -- CLAUDE.md 7.
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {"query": text, "miss": True},
+                    )
                 unresolvable.append(text)
                 continue
+            if self._on_process is not None:
+                self._on_process(
+                    "tool_result",
+                    {
+                        "query": text,
+                        "doi": resolved.doi,
+                        "title": resolved.title,
+                        "url": f"https://doi.org/{resolved.doi}",
+                    },
+                )
             doi = normalize_doi(resolved.doi)
             existing = await self._existing(doi)
             if existing is not None:

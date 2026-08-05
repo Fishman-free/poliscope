@@ -671,13 +671,13 @@ def test_per_task_gateway_resolves_the_model_name_in_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The task's own model_name wins; then the deployment's configured model;
-    then the honest default of ``deepseek-chat``."""
+    then the honest default of ``deepseek-v4-flash``."""
     monkeypatch.delenv("POLISCOPE_MODEL_NAME", raising=False)
 
     gateway = _gateway_for_task_config(
         {"base_url": "https://api.example", "api_key": "k"}
     )
-    assert gateway._config.model_names[ModelClass.MEDIUM] == "deepseek-chat"
+    assert gateway._config.model_names[ModelClass.MEDIUM] == "deepseek-v4-flash"
 
     monkeypatch.setenv("POLISCOPE_MODEL_NAME", "env-configured-model")
     gateway = _gateway_for_task_config(

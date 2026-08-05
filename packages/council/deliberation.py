@@ -26,12 +26,14 @@ from packages.council.roles import ROLE_SPECS
 from packages.council.rounds.registry import PhaseContext
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.epistemo.contracts import TaskPhase
+from packages.evidence.process_stream import ProcessCallback
 from packages.models.contracts import (
     ModelClass,
     ModelGateway,
     ModelMessage,
     ModelRequest,
     SchemaStatus,
+    StreamEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -240,12 +242,19 @@ class GatewayDeliberator:
         system_prompt: SystemPromptBuilder = _system_prompt,
         user_prompt: UserPromptBuilder = _user_prompt,
         on_reasoning: ReasoningCallback | None = None,
+        on_process: ProcessCallback | None = None,
+        on_flush: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._gateway = gateway
         self._budget = budget
         self._system_prompt = system_prompt
         self._user_prompt = user_prompt
         self._on_reasoning = on_reasoning
+        self._on_process = on_process
+        self._on_flush = on_flush
+        # Tokens since the last flush of the process stream: the relay batches
+        # so the live view does not pay a database write per token.
+        self._since_flush = 0
 
     def _request(self, seat: Seat, phase: TaskPhase, ctx: PhaseContext) -> ModelRequest:
         return ModelRequest(
@@ -261,6 +270,36 @@ class GatewayDeliberator:
             evidence_refs=ctx.confirmed_claims,
         )
 
+    async def _relay(self, event: StreamEvent) -> None:
+        """Relay one streamed delta to the process writer, batched.
+
+        ``kind`` maps onto the live view's vocabulary: reasoning deltas are
+        the vendor's chain of thought, token deltas the structured answer
+        taking shape. Every ~40 deltas the writer is flushed so the browser
+        sees progress roughly as it happens, not all at the end.
+        """
+        if self._on_process is None:
+            return
+        if event.kind == "done":
+            self._on_process("model_done", {})
+            return
+        if not event.text:
+            return
+        self._on_process(
+            "model_reasoning" if event.kind == "reasoning" else "model_token",
+            {"text": event.text},
+        )
+        self._since_flush += 1
+        if self._since_flush >= 40 and self._on_flush is not None:
+            self._since_flush = 0
+            try:
+                await self._on_flush()
+            except Exception:
+                logger.warning(
+                    "process stream flush failed mid-stream",
+                    exc_info=True,
+                )
+
     async def deliberate(
         self,
         seat: Seat,
@@ -273,8 +312,39 @@ class GatewayDeliberator:
         # provider outage, and letting it surface as an absent seat would hide a
         # defect behind the same "no answer" the honest-gap path uses.
         request = self._request(seat, phase, context)
+        if self._on_process is not None:
+            # The live view anchors on stage transitions, so a seat's turn is
+            # announced before the model starts, not after it answers.
+            self._on_process(
+                "seat_deliberation",
+                {"seat": seat.value, "phase": phase.value},
+            )
         try:
-            result = await self._gateway.invoke(request)
+            if self._on_process is not None:
+                # Streaming is an optimisation over invoke, never a
+                # replacement: a streamed attempt that fails anywhere (vendor
+                # hiccup, schema rejection) falls back to the non-streaming
+                # call, which owns retries and repair. The deltas already
+                # relayed remain on the wire as an honest partial trace.
+                streaming = getattr(self._gateway, "stream_invoke", None)
+                if streaming is not None:
+                    try:
+                        result = await streaming(request, self._relay)
+                    except Exception:
+                        logger.warning(
+                            "streaming call failed for %s/%s, falling back "
+                            "to non-streaming invoke",
+                            seat.value,
+                            phase.value,
+                            exc_info=True,
+                        )
+                        result = await self._gateway.invoke(request)
+                    finally:
+                        self._since_flush = 0
+                else:
+                    result = await self._gateway.invoke(request)
+            else:
+                result = await self._gateway.invoke(request)
         except Exception:
             # A seat that cannot be reached is an absent seat, not a failed task.
             # CLAUDE.md 10 requires the run to degrade rather than abort, and the

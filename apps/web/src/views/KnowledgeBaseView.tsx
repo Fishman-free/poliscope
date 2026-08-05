@@ -44,7 +44,7 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Excel",
 };
 
-export function KnowledgeBaseView() {
+export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
   const [bases, setBases] = useState<KnowledgeBaseSummary[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<KnowledgeBaseDetail | null>(null);
@@ -74,6 +74,12 @@ export function KnowledgeBaseView() {
   useEffect(() => {
     void refreshList();
   }, [refreshList]);
+
+  // 从「新建任务」切回来时刷新：两个主页视图同时挂载、各自持有列表状态，
+  // 另一边的内联建库/删除不会通知这里，可见时才拉最新（首次进入也会拉到）。
+  useEffect(() => {
+    if (active) void refreshList();
+  }, [active, refreshList]);
 
   useEffect(() => {
     if (selectedId === null) {

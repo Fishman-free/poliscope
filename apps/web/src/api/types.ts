@@ -301,6 +301,16 @@ export interface LedgerEvent {
   payload: Record<string, unknown>;
 }
 
+/** One row of the process trace (live view): model token/reasoning deltas,
+ * tool calls, seat turns. Served by /api/stream/{task}/process, separate
+ * from the ledger stream, and NOT replay-guaranteed -- reconnects re-read
+ * from the start and the client deduplicates by `seq`. */
+export interface ProcessEvent {
+  seq: number;
+  kind: string;
+  payload: Record<string, unknown>;
+}
+
 export const SEATS = [
   "theory_builder",
   "causal_scientist",
