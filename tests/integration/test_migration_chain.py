@@ -29,6 +29,9 @@ EVIDENCE_TABLES = frozenset(
 )
 COUNCIL_TABLES = frozenset({"council_rounds", "scientist_runs", "round_outputs"})
 KNOWLEDGE_TABLES = frozenset({"knowledge_bases", "knowledge_documents"})
+SETTINGS_TABLES = frozenset({"app_settings"})
+ACCOUNT_TABLES = frozenset({"users", "auth_tokens"})
+SKILL_TABLES = frozenset({"skills"})
 
 
 def _list_tables(connection: Connection) -> set[str]:
@@ -63,6 +66,9 @@ def test_full_chain_upgrade_downgrade_upgrade_is_reversible(
         assert at_head >= EVIDENCE_TABLES
         assert at_head >= COUNCIL_TABLES
         assert at_head >= KNOWLEDGE_TABLES
+        assert at_head >= SETTINGS_TABLES
+        assert at_head >= ACCOUNT_TABLES
+        assert at_head >= SKILL_TABLES
 
         command.downgrade(config, "base")
         assert _tables_sync(isolated_postgres_admin_url) == set()
@@ -91,6 +97,10 @@ def test_each_revision_can_be_applied_one_step_at_a_time(
         "0002_papers_and_objects",
         "0003_evidence_ledger_and_graph",
         "0005_council_runtime",
+        "0010_knowledge_bases",
+        "0011_app_settings",
+        "0012_accounts",
+        "0013_skills",
     )
     try:
         previous: set[str] = set()

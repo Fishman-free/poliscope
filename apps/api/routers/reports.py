@@ -17,18 +17,22 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.dependencies import SessionDep
+from apps.api.dependencies import CurrentUserDep, SessionDep
+from packages.accounts.repository import StoredUser
 from packages.reports.json_export import to_dict
 from packages.reports.markdown import render_markdown
 from packages.reports.service import ReportService, ResearchBrief
-from packages.research.repository import TaskNotFound
+from packages.research.repository import ResearchRepository, TaskNotFound
 
 router = APIRouter()
 
 
-async def build_brief(task_id: UUID, session: AsyncSession) -> ResearchBrief:
+async def build_brief(
+    task_id: UUID, session: AsyncSession, user: StoredUser
+) -> ResearchBrief:
     """Build the brief, answering 404 rather than 500 for an unknown task."""
     try:
+        await ResearchRepository(session).get_task(task_id, user.id)
         return await ReportService(session).build(task_id)
     except TaskNotFound as error:
         raise HTTPException(
@@ -43,10 +47,11 @@ async def build_brief(task_id: UUID, session: AsyncSession) -> ResearchBrief:
 async def get_report(
     task_id: UUID,
     session: SessionDep,
+    current_user: CurrentUserDep,
     format: str = Query("json", pattern="^(json|markdown)$"),
 ) -> Response | dict[str, object]:
     """Return the brief. ``format=markdown`` returns text, otherwise JSON."""
-    brief = await build_brief(task_id, session)
+    brief = await build_brief(task_id, session, current_user)
     if format == "markdown":
         return PlainTextResponse(
             render_markdown(brief),

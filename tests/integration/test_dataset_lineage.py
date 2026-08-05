@@ -124,7 +124,10 @@ def _fetcher_with_shared_accession() -> FullTextFetcher:
     return FullTextFetcher(client=client)
 
 
-async def _seed(sessions: async_sessionmaker[AsyncSession]) -> UUID:
+async def _seed(
+    sessions: async_sessionmaker[AsyncSession],
+    user_id: UUID,
+) -> UUID:
     task_id = uuid4()
     async with sessions() as session:
         session.add(
@@ -134,6 +137,7 @@ async def _seed(sessions: async_sessionmaker[AsyncSession]) -> UUID:
                 question=QUESTION,
                 status=TaskStatus.QUEUED,
                 created_by="dataset_lineage_test",
+                user_id=user_id,
                 wall_clock_minutes=60,
                 model_cost_usd=Decimal("10.0000"),
                 tool_call_limit=100,
@@ -159,10 +163,11 @@ async def _sources(
 async def test_shared_dataset_identifier_is_detected_on_both_sources(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """The regression this plan phase fixes: dataset_id must stop being
     always-None once full text carries a real Data Availability declaration."""
-    task_id = await _seed(app_sessions)
+    task_id = await _seed(app_sessions, UUID(account["id"]))
 
     await run_task(
         app_sessions,
@@ -182,11 +187,12 @@ async def test_shared_dataset_identifier_merges_the_two_papers_into_one_cluster(
     api_client: Any,
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """CLAUDE.md 7.4: the interface must show paper count and independent
     cluster count separately, and two papers sharing a dataset must collapse
     into a single independent-evidence cluster instead of reporting two."""
-    task_id = await _seed(app_sessions)
+    task_id = await _seed(app_sessions, UUID(account["id"]))
 
     await run_task(
         app_sessions,

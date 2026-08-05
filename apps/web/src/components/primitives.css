@@ -1,8 +1,8 @@
 .panel {
   background: var(--surface-0);
   border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-4);
+  box-shadow: var(--shadow-2);
   overflow: hidden;
 }
 

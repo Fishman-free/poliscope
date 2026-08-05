@@ -38,6 +38,23 @@ export const STATUS_LABELS: Record<string, string> = {
   quarantined: "已隔离",
 };
 
+/** Task lifecycle status -> tone, the counterpart of `toneForStatus` (which
+ * maps node statuses). Task statuses describe where the research run is
+ * (QUEUED, COMPLETED, ...), not how much a finding is trusted, so the two
+ * mappings stay separate. */
+export const TASK_STATUS_TONE: Record<string, Tone> = {
+  COMPLETED: "admitted",
+  COMPLETED_WITH_GAPS: "provisional",
+  FAILED: "refuted",
+  DEGRADED_RUNNING: "provisional",
+  QUEUED: "unknown",
+  AWAITING_CLAIM_CONFIRMATION: "unknown",
+  AWAITING_COUNCIL_INPUT: "unknown",
+  DRAFT: "unknown",
+  PAUSED: "unknown",
+  REPORTING: "unknown",
+};
+
 export function Badge({
   tone = "unknown",
   children,

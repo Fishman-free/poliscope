@@ -1,0 +1,111 @@
+/* Register / login screen: a centred card on the paper backdrop, with the
+   same segmented control language as the home screen's view switch. */
+
+.auth {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--space-5);
+}
+
+.auth__card {
+  width: min(100%, 26rem);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-5);
+  box-shadow: var(--shadow-3);
+}
+
+.auth__brand h1 {
+  font-size: 1.5rem;
+  letter-spacing: -0.03em;
+  margin: 0;
+}
+
+.auth__tagline {
+  margin-top: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
+.auth__switch {
+  display: inline-flex;
+  gap: 2px;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--ink-1) 6%, transparent);
+  border: 1px solid var(--line);
+}
+
+.auth__tab {
+  padding: var(--space-1) var(--space-4);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--ink-3);
+  transition: color var(--duration-standard) var(--ease-smooth),
+    background-color var(--duration-standard) var(--ease-smooth),
+    box-shadow var(--duration-standard) var(--ease-smooth);
+}
+
+.auth__tab--on {
+  color: var(--ink-1);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-2);
+}
+
+.auth__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.auth__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.auth__field input {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.auth__error {
+  font-size: var(--text-small);
+  color: var(--refuted);
+}
+
+.auth__submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: var(--space-1);
+}
+
+.auth__note {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.auth__safety {
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+}

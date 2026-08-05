@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, UploadFile, status
 
-from apps.api.dependencies import ObjectStoreDep, SessionDep
+from apps.api.dependencies import CurrentUserDep, ObjectStoreDep, SessionDep
 from packages.papers.models import ObjectModel
 from packages.research.repository import ResearchRepository, TaskNotFound
 from packages.research.service import ResearchService
@@ -41,6 +41,7 @@ async def upload_paper(
     task_id: UUID,
     session: SessionDep,
     object_store: ObjectStoreDep,
+    current_user: CurrentUserDep,
     file: UploadFile,
 ) -> dict[str, Any]:
     """Store an uploaded PDF and attach it to a task's user evidence.
@@ -48,9 +49,9 @@ async def upload_paper(
     Never persists the raw bytes anywhere but the private object store, and
     never logs or returns them (CLAUDE.md 16).
     """
-    service = ResearchService(ResearchRepository(session))
+    repository = ResearchRepository(session)
     try:
-        await service.get_task(task_id)
+        await repository.get_task(task_id, current_user.id)
     except TaskNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -92,6 +93,8 @@ async def upload_paper(
         )
     )
     await session.flush()
-    await service.add_pdf_object_id(task_id, object_id)
+    await ResearchService(ResearchRepository(session)).add_pdf_object_id(
+        task_id, object_id
+    )
 
     return {"object_id": str(object_id), **object_store.public_dto(stored)}

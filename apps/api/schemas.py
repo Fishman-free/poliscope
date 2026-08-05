@@ -91,6 +91,9 @@ class CreateTaskRequest(ContractModel):
     # Optional knowledge base whose documents the council should treat as
     # Level A user-provided sources; the router validates the id exists.
     knowledge_base_id: UUID | None = None
+    # Skills the researcher enabled for this task (migration 0013); the
+    # router validates every id belongs to the calling account.
+    skill_ids: tuple[UUID, ...] = ()
 
 
 class ConfirmClaimsRequest(ContractModel):
@@ -114,3 +117,39 @@ class TaskResponse(ContractModel):
     status: str
     created_by: str
     created_at: datetime | None = None
+
+
+class SkillAddRequest(ContractModel):
+    """Body for adding a GitHub skill repository."""
+
+    github_url: str
+
+
+class SkillToggleRequest(ContractModel):
+    """Body for checking/unchecking a skill."""
+
+    enabled: bool
+
+
+class AuthCredentials(ContractModel):
+    """Register/login body. Passwords never leave this request in any
+    response, log, or stored form (only a PBKDF2 hash is persisted)."""
+
+    username: str
+    password: str
+
+
+class ModelSettingsUpdate(ContractModel):
+    """The researcher's permanent model endpoint.
+
+    ``api_key`` semantics are keep-vs-replace: an absent or blank value leaves
+    the stored key untouched, a non-blank value replaces it, and
+    ``clear_api_key`` (a deliberate act, not a default) removes it. The key
+    itself is never returned by any endpoint -- only ``has_api_key`` is
+    (CLAUDE.md 16).
+    """
+
+    base_url: str | None = None
+    api_key: str | None = None
+    model_name: str | None = None
+    clear_api_key: bool = False

@@ -14,6 +14,7 @@ graph state through the wrong door.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -60,6 +61,11 @@ class StoredTask:
     # retrieves from the open web only. The worker reads this to feed the
     # council the researcher's own documents.
     knowledge_base_id: UUID | None = None
+    # Creation timestamp, filled by get_task and list_tasks -- the web
+    # session-history panel sorts by it.
+    created_at: datetime | None = None
+    # Owning account (migration 0012); isolation queries filter on it.
+    user_id: UUID | None = None
 
 
 class TaskNotFound(Exception):
@@ -80,6 +86,7 @@ class ResearchRepository:
         contract: ResearchContract,
         candidates: tuple[AtomicClaimCandidate, ...],
         created_by: str,
+        user_id: UUID | None = None,
     ) -> UUID:
         """Persist a contract and its suggested claims in one transaction.
 
@@ -95,6 +102,8 @@ class ResearchRepository:
                 question=contract.question,
                 status=TaskStatus.AWAITING_CLAIM_CONFIRMATION,
                 created_by=created_by,
+                user_id=user_id,
+                skill_ids=list(contract.skill_ids),
                 wall_clock_minutes=contract.budget.wall_clock_minutes,
                 model_cost_usd=contract.budget.model_cost_usd,
                 tool_call_limit=contract.budget.tool_call_limit,
@@ -145,10 +154,21 @@ class ResearchRepository:
         await self._session.flush()
         return task_id
 
-    async def get_task(self, task_id: UUID) -> StoredTask:
-        row = await self._session.scalar(
-            select(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
+    async def get_task(
+        self, task_id: UUID, user_id: UUID | None = None
+    ) -> StoredTask:
+        """Fetch one task, optionally scoped to an owning account.
+
+        With ``user_id`` given, a task owned by someone else (or by no one --
+        pre-account rows) reads as TaskNotFound: the existence of another
+        account's task must not leak through a 404-vs-403 distinction.
+        """
+        query = select(ResearchTaskModel).where(
+            ResearchTaskModel.task_id == task_id
         )
+        if user_id is not None:
+            query = query.where(ResearchTaskModel.user_id == user_id)
+        row = await self._session.scalar(query)
         if row is None:
             raise TaskNotFound(str(task_id))
         return StoredTask(
@@ -158,6 +178,42 @@ class ResearchRepository:
             created_by=row.created_by,
             council_checkpoint=row.council_checkpoint,
             knowledge_base_id=row.knowledge_base_id,
+            created_at=row.created_at,
+            user_id=row.user_id,
+        )
+
+    async def list_tasks(
+        self, user_id: UUID, limit: int = 50
+    ) -> tuple[StoredTask, ...]:
+        """Most-recent-first task summaries for one account's session history.
+
+        Newest on top (``created_at`` has an index; ``task_id`` breaks ties
+        deterministically). The list intentionally stays lightweight -- no
+        claims, no evidence -- because the panel only needs enough to label
+        and jump to a session. Pre-account rows (``user_id`` NULL) belong to
+        no one and appear in no one's history.
+        """
+        result = await self._session.execute(
+            select(ResearchTaskModel)
+            .where(ResearchTaskModel.user_id == user_id)
+            .order_by(
+                ResearchTaskModel.created_at.desc(),
+                ResearchTaskModel.task_id.desc(),
+            )
+            .limit(limit)
+        )
+        return tuple(
+            StoredTask(
+                task_id=row.task_id,
+                question=row.question,
+                status=row.status,
+                created_by=row.created_by,
+                council_checkpoint=row.council_checkpoint,
+                knowledge_base_id=row.knowledge_base_id,
+                created_at=row.created_at,
+                user_id=row.user_id,
+            )
+            for row in result.scalars()
         )
 
     async def list_claims(self, task_id: UUID) -> tuple[StoredClaim, ...]:

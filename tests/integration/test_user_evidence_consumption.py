@@ -14,25 +14,26 @@ from collections.abc import Mapping
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import run_task
+from apps.worker.jobs import JobResult
 from packages.epistemo.contracts import TaskStatus
 from packages.evidence.contracts import EvidenceNodeType
 from packages.evidence.models import ScientificEventModel
+from packages.models.contracts import ModelGateway
 from packages.papers.models import SourceModel
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
 from packages.tools.adapters.normalization import normalize_doi
-
+from packages.tools.contracts import ToolGateway
+from packages.tools.fulltext_fetcher import FullTextFetcher
 from tests.integration.test_seat_deliberation import (
     QUESTION,
     SHARED_COHORT_DOI,
+    _fake_fulltext_fetcher,
     _ScriptedGateway,
     _StubProvider,
-    _fake_fulltext_fetcher,
 )
 
 USER_DOI = "10.9876/user-supplied"
@@ -81,10 +82,10 @@ async def _run_to_terminal(
     projector_sessions: async_sessionmaker[AsyncSession],
     task_id: UUID,
     *,
-    gateway: object,
-    tools: object,
-    fulltext_fetcher: object = None,
-) -> object:
+    gateway: ModelGateway | None = None,
+    tools: ToolGateway | None = None,
+    fulltext_fetcher: FullTextFetcher | None = None,
+) -> JobResult:
     from tests.integration.test_seat_deliberation import _run_to_completion
 
     return await _run_to_completion(
@@ -143,7 +144,11 @@ async def test_user_dois_become_sources(
     gateway = _ScriptedGateway(claim_id, uuid4())
 
     result = await _run_to_terminal(
-        app_sessions, projector_sessions, task_id, gateway=gateway, tools=_StubProvider()
+        app_sessions,
+        projector_sessions,
+        task_id,
+        gateway=gateway,
+        tools=_StubProvider(),
     )
 
     assert result.run.failures == ()
@@ -165,7 +170,11 @@ async def test_bibtex_dois_are_consumed_as_user_dois(
     gateway = _ScriptedGateway(claim_id, uuid4())
 
     result = await _run_to_terminal(
-        app_sessions, projector_sessions, task_id, gateway=gateway, tools=_StubProvider()
+        app_sessions,
+        projector_sessions,
+        task_id,
+        gateway=gateway,
+        tools=_StubProvider(),
     )
 
     assert result.run.failures == ()

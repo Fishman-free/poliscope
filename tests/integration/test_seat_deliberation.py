@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
+from typing import cast
 from uuid import UUID, uuid4
 
 import fitz  # type: ignore[import-untyped]
@@ -523,7 +524,8 @@ async def test_captured_reasoning_becomes_a_process_only_ledger_event(
     assert first.payload["seat"] in {seat.value for seat in Seat}
     assert first.payload["phase"] in {phase.value for phase in TaskPhase}
     assert "self-report" in str(first.payload["reasoning"])
-    assert first.payload["char_count"] == len(first.payload["reasoning"])
+    reasoning = str(first.payload["reasoning"])
+    assert first.payload["char_count"] == len(reasoning)
 
     # The projector saw the event and refused to turn it into a graph node --
     # there is no node whose payload is this reasoning text.
@@ -586,8 +588,9 @@ async def test_task_model_config_builds_a_per_task_gateway(
     # gateway carried every seat call.
     assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
     assert result.run.failures == ()
-    assert captured["config"]["api_key"] == "sk-researcher-secret"
-    assert captured["config"]["base_url"] == "https://api.researcher.example"
+    config = cast(dict[str, str], captured["config"])
+    assert config["api_key"] == "sk-researcher-secret"
+    assert config["base_url"] == "https://api.researcher.example"
     # Every seat call went through the per-task gateway (which forwards to the
     # scripted answerer) -- the worker really did run on the task's endpoint.
     assert len(scripted.calls) == 7 * 7
@@ -680,7 +683,10 @@ def test_per_task_gateway_resolves_the_model_name_in_order(
     gateway = _gateway_for_task_config(
         {"base_url": "https://api.example", "api_key": "k"}
     )
-    assert gateway._config.model_names[ModelClass.STRONG_REASONING] == "env-configured-model"
+    assert (
+        gateway._config.model_names[ModelClass.STRONG_REASONING]
+        == "env-configured-model"
+    )
 
     gateway = _gateway_for_task_config(
         {

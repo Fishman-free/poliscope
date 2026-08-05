@@ -20,13 +20,16 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 # Every ORM module must be imported for Base.metadata to be complete. This
 # mirrors migrations/env.py; if the two lists diverge, this test fails, which is
 # the point.
+from packages.accounts import models as account_models  # noqa: F401
 from packages.council import models as council_models  # noqa: F401
 from packages.evidence import models as evidence_models  # noqa: F401
 from packages.kernel.database import Base
 from packages.knowledge import models as knowledge_models  # noqa: F401
 from packages.models import models as model_models  # noqa: F401
+from packages.models import settings as model_settings  # noqa: F401
 from packages.papers import models as paper_models  # noqa: F401
 from packages.research import models as research_models  # noqa: F401
+from packages.skills import models as skill_models  # noqa: F401
 from packages.tools import models as tool_models  # noqa: F401
 
 

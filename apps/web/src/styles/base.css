@@ -18,7 +18,18 @@ body {
   font-size: var(--text-body);
   line-height: 1.55;
   color: var(--ink-1);
-  background: var(--surface-1);
+  /* Paper base with a whisper of atmosphere: a top-center blue halo, the
+   * same restraint as Apple's product pages -- present, but far too soft to
+   * compete with the evidential colours. The halo is part of the backdrop,
+   * not a decoration layer that could swallow a scroll container. */
+  background:
+    radial-gradient(
+      1200px 420px at 50% -140px,
+      color-mix(in srgb, var(--accent) 6%, transparent),
+      transparent 70%
+    ),
+    var(--surface-1);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
 

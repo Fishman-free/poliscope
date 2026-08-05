@@ -86,6 +86,9 @@ export interface TaskSummary {
   question: string;
   status: string;
   created_by: string;
+  /** Present on `GET /api/tasks` (session history), absent on workspace
+   * snapshot tasks -- the history panel sorts by it. */
+  created_at?: string | null;
 }
 
 /** One claim the council suggested from the raw question, straight off
@@ -133,12 +136,15 @@ export interface KnowledgeBaseSummary {
 }
 
 /** One document inside a knowledge base. `text` is absent in listings; the
- * preview endpoint returns it, server-side truncated with `truncated` set. */
+ * preview endpoint returns it, server-side truncated with `truncated` set.
+ * `content_type` distinguishes PDFs (page-counted, Level A extraction) from
+ * pasted text and other uploads. */
 export interface KnowledgeDocumentSummary {
   document_id: string;
   title: string;
   size_bytes: number;
   page_count: number;
+  content_type: string;
   created_at: string;
 }
 
@@ -152,6 +158,48 @@ export interface KnowledgeBaseDetail extends KnowledgeBaseSummary {
 export interface KnowledgeDocumentDetail extends KnowledgeDocumentSummary {
   text: string;
   truncated: boolean;
+}
+
+/** `GET /api/settings/model` -- the permanent model endpoint. The API key is
+ * never sent to the browser; only its presence is (`has_api_key`). */
+export interface ModelSettings {
+  base_url: string | null;
+  model_name: string | null;
+  has_api_key: boolean;
+}
+
+/** `POST /api/auth/register` / `login` -- the bearer token is handed to the
+ * client exactly once; every later request sends it as Authorization. */
+export interface AuthSession {
+  id: string;
+  username: string;
+  token: string;
+}
+
+/** `GET /api/auth/me` -- who the remembered token belongs to. */
+export interface MeInfo {
+  username: string;
+  created_at: string;
+}
+
+/** One downloaded skill, scoped to the account. `enabled` is the checkbox
+ * state: enabled skills join new tasks by default and are injected into
+ * their council prompts. */
+export interface SkillSummary {
+  id: string;
+  name: string;
+  github_url: string;
+  enabled: boolean;
+  downloaded_at: string;
+}
+
+/** Body for `PUT /api/settings/model`. A blank/absent `api_key` keeps the
+ * stored key; `clear_api_key` is the deliberate way to remove it. */
+export interface ModelSettingsUpdate {
+  base_url?: string | null;
+  api_key?: string | null;
+  model_name?: string | null;
+  clear_api_key?: boolean;
 }
 
 /** One seat's precommitment, straight off ``PRECOMMITMENT_SEALED``. */

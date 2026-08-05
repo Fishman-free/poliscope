@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  addTextDocument,
   createKnowledgeBase,
   deleteKnowledgeBase,
   deleteKnowledgeDocument,
@@ -33,6 +34,16 @@ function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const CONTENT_TYPE_LABELS: Record<string, string> = {
+  "application/pdf": "PDF",
+  "text/plain": "文本",
+  "text/markdown": "Markdown",
+  "text/csv": "CSV",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "Word",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "PPT",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "Excel",
+};
+
 export function KnowledgeBaseView() {
   const [bases, setBases] = useState<KnowledgeBaseSummary[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -44,6 +55,11 @@ export function KnowledgeBaseView() {
   const [newDescription, setNewDescription] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // 粘贴文本：不用文件，直接入库成为知识库文档（与上传同等检索与 Level A 待遇）。
+  const [pastedTitle, setPastedTitle] = useState("");
+  const [pastedContent, setPastedContent] = useState("");
+  const [pasting, setPasting] = useState(false);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<Record<string, KnowledgeDocumentDetail>>({});
   const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({});
 
@@ -98,15 +114,17 @@ export function KnowledgeBaseView() {
     }
   }
 
+  const ACCEPTED_EXTENSIONS = [".pdf", ".txt", ".md", ".csv", ".docx", ".pptx", ".xlsx"];
+
   async function handleFiles(files: FileList | null) {
     if (!selectedId || !files || uploading) return;
     setUploading(true);
     setUploadError(null);
     for (const file of Array.from(files)) {
-      const looksPdf =
-        file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-      if (!looksPdf) {
-        setUploadError(`「${file.name}」不是 PDF 文件，已跳过`);
+      const lower = file.name.toLowerCase();
+      const looksSupported = ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+      if (!looksSupported) {
+        setUploadError(`「${file.name}」格式不支持，已跳过（支持 PDF/TXT/MD/CSV/DOCX/PPTX/XLSX）`);
         continue;
       }
       try {
@@ -120,6 +138,24 @@ export function KnowledgeBaseView() {
     const fresh = await fetchKnowledgeBase(selectedId);
     setDetail(fresh);
     setUploading(false);
+  }
+
+  async function pasteDocument() {
+    if (!selectedId || pasting || !pastedTitle.trim() || !pastedContent.trim()) {
+      return;
+    }
+    setPasting(true);
+    setPasteError(null);
+    try {
+      await addTextDocument(selectedId, pastedTitle.trim(), pastedContent);
+      setPastedTitle("");
+      setPastedContent("");
+      setDetail(await fetchKnowledgeBase(selectedId));
+    } catch (cause) {
+      setPasteError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPasting(false);
+    }
   }
 
   async function removeDocument(docId: string) {
@@ -262,9 +298,13 @@ export function KnowledgeBaseView() {
             </header>
 
             <div className="knowledge__upload">
+              <p className="knowledge__upload-hint">
+                上传文件（PDF / TXT / MD / CSV / DOCX / PPTX / XLSX，单个不超过 20 MB；
+                老版 .doc/.ppt/.xls 请先另存为新格式）
+              </p>
               <input
                 type="file"
-                accept="application/pdf"
+                accept=".pdf,.txt,.md,.csv,.docx,.pptx,.xlsx"
                 multiple
                 disabled={uploading}
                 onChange={(event) => handleFiles(event.target.files)}
@@ -276,8 +316,40 @@ export function KnowledgeBaseView() {
               ) : null}
             </div>
 
+            <div className="knowledge__paste">
+              <p className="knowledge__upload-hint">
+                或者直接粘贴文本作为知识库文档（笔记、网页摘录、报告片段均可）
+              </p>
+              <input
+                placeholder="文档标题"
+                value={pastedTitle}
+                onChange={(event) => setPastedTitle(event.target.value)}
+                disabled={pasting}
+              />
+              <textarea
+                placeholder="把内容粘贴到这里…"
+                rows={4}
+                value={pastedContent}
+                onChange={(event) => setPastedContent(event.target.value)}
+                disabled={pasting}
+              />
+              <button
+                type="button"
+                className="button"
+                onClick={pasteDocument}
+                disabled={pasting || !pastedTitle.trim() || !pastedContent.trim()}
+              >
+                {pasting ? "保存中…" : "加入知识库"}
+              </button>
+              {pasteError ? (
+                <p className="knowledge__error" role="alert">
+                  {pasteError}
+                </p>
+              ) : null}
+            </div>
+
             {detail.documents.length === 0 ? (
-              <Empty>这个知识库还没有文档，上传 PDF 后即可在任务中使用。</Empty>
+              <Empty>这个知识库还没有文档，上传文件或粘贴文本后即可在任务中使用。</Empty>
             ) : (
               <ul className="knowledge__documents">
                 {detail.documents.map((doc) => (
@@ -286,7 +358,8 @@ export function KnowledgeBaseView() {
                       <div className="knowledge__document-info">
                         <span className="knowledge__document-title">{doc.title}</span>
                         <span className="knowledge__document-meta">
-                          {doc.page_count} 页 · {formatBytes(doc.size_bytes)}
+                          {CONTENT_TYPE_LABELS[doc.content_type] ?? doc.content_type} ·{" "}
+                          {doc.page_count} 页/块 · {formatBytes(doc.size_bytes)}
                         </span>
                       </div>
                       <div className="knowledge__document-actions">

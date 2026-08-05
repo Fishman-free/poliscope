@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 
 from apps.api.dependencies import AppState, get_state
 from apps.api.schemas import SSEEvent
+from packages.accounts.service import AuthService
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
 from packages.research.repository import ResearchRepository, TaskNotFound
@@ -93,9 +94,17 @@ async def _events(
 async def stream_events(
     task_id: str,
     request: Request,
+    token: str = "",
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
-    """Stream this task's events, resuming after ``Last-Event-ID`` if given."""
+    """Stream this task's events, resuming after ``Last-Event-ID`` if given.
+
+    Authentication comes from the ``token`` query parameter, because
+    EventSource cannot attach Authorization headers. That puts the bearer
+    token in server logs' query strings -- a known, documented trade-off
+    (README security section) -- and it is scoped to the caller: someone
+    else's task reads as 404 either way.
+    """
     state = get_state(request)
     try:
         parsed_task_id = UUID(task_id)
@@ -105,10 +114,17 @@ async def stream_events(
             detail=f"malformed task id {task_id}",
         ) from error
     # Checked before the response starts, because once a 200 and the
-    # text/event-stream header are on the wire there is no way to report 404.
+    # text/event-stream header are on the wire there is no way to report 401
+    # or 404.
     async with state.session_factory() as session:
+        user = await AuthService(session).user_for_token(token)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="authentication required",
+            )
         try:
-            await ResearchRepository(session).get_task(parsed_task_id)
+            await ResearchRepository(session).get_task(parsed_task_id, user.id)
         except TaskNotFound as error:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

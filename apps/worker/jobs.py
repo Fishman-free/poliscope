@@ -19,9 +19,9 @@ nothing but this file's good intentions.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Mapping
 from uuid import UUID
 
 from sqlalchemy import select
@@ -47,6 +47,8 @@ from packages.evidence.sql_projector import (
     node_id_for,
 )
 from packages.kernel.database import canonical_uuid
+from packages.knowledge.models import KnowledgeDocumentModel
+from packages.knowledge.search import KnowledgeBaseSearch
 from packages.memory.adapter import create_memory_adapter
 from packages.memory.council_memory import CouncilMemory
 from packages.models.contracts import ModelClass, ModelGateway
@@ -55,15 +57,16 @@ from packages.models.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleModelGateway,
 )
-from packages.research.contracts import TaskModelConfig
-from packages.knowledge.models import KnowledgeDocumentModel
-from packages.knowledge.search import KnowledgeBaseSearch
 from packages.papers.acquisition import KnowledgeDocumentRef, SourceAcquisition
 from packages.papers.bibtex import extract_dois_from_bibtex
 from packages.papers.finding_extraction import FindingExtractor
 from packages.papers.object_store import PrivateObjectStore
+from packages.research.contracts import TaskModelConfig
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
+from packages.skills.models import SkillModel
+from packages.skills.repository import to_stored
+from packages.skills.service import SkillsService
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher
 from packages.tools.gateway import AuditedToolGateway
@@ -115,7 +118,11 @@ def _gateway_for_task_config(
     promises (TaskModelConfig's docstring).
     """
     parsed = TaskModelConfig.model_validate(dict(config))
-    model_name = parsed.model_name or os.environ.get("POLISCOPE_MODEL_NAME") or "deepseek-chat"
+    model_name = (
+        parsed.model_name
+        or os.environ.get("POLISCOPE_MODEL_NAME")
+        or "deepseek-chat"
+    )
     return OpenAICompatibleModelGateway(
         OpenAICompatibleConfig(
             api_key=parsed.api_key,
@@ -321,6 +328,38 @@ def _knowledge_searcher(
     return KnowledgeBaseSearch(session, canonical_uuid(task.knowledge_base_id))
 
 
+async def _skills_context(
+    session: AsyncSession,
+    task: ResearchTaskModel,
+) -> tuple[tuple[str, str], ...]:
+    """Resolve the task's enabled skills to ``(name, markdown)`` pairs.
+
+    Only skills that are both listed on the task and still enabled join the
+    council's prompts; a skill the researcher disabled after creating the
+    task no longer instructs the scientists. A missing file on disk is
+    re-downloaded rather than silently dropped (SkillsService.
+    ensure_downloaded), so a disk hiccup cannot quietly remove a skill the
+    researcher chose.
+    """
+    if not task.skill_ids:
+        return ()
+    rows = (
+        await session.scalars(
+            select(SkillModel).where(
+                SkillModel.id.in_(task.skill_ids),
+                SkillModel.enabled.is_(True),
+            )
+        )
+    ).all()
+    if not rows:
+        return ()
+    service = SkillsService(session)
+    result: list[tuple[str, str]] = []
+    for row in rows:
+        result.append((row.name, await service.ensure_downloaded(to_stored(row))))
+    return tuple(result)
+
+
 async def deliberate(
     session: AsyncSession,
     task_id: UUID,
@@ -448,6 +487,7 @@ async def _deliberate_impl(
         if task.council_checkpoint is None
         else CouncilCheckpoint.model_validate(task.council_checkpoint)
     )
+    skills = await _skills_context(session, task)
     if checkpoint is None:
         report = await orchestrator.run(
             task_id=task_id,
@@ -458,6 +498,7 @@ async def _deliberate_impl(
             user_dois=_user_dois(task),
             knowledge_documents=await _knowledge_documents(session, task),
             knowledge_search=_knowledge_searcher(session, task),
+            researcher_skills=skills,
             stop_before=TaskPhase.JOINT_MODELING,
         )
     else:
@@ -470,6 +511,7 @@ async def _deliberate_impl(
             user_dois=_user_dois(task),
             knowledge_documents=await _knowledge_documents(session, task),
             knowledge_search=_knowledge_searcher(session, task),
+            researcher_skills=skills,
             resume_from=checkpoint,
             council_guidance=checkpoint.guidance,
         )

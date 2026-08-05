@@ -64,6 +64,20 @@ class ResearchTaskModel(Base):
         nullable=True,
         index=True,
     )
+    # Owning account (migration 0012). None only for tasks created before
+    # accounts existed; those are visible to no one (honest "no owner yet").
+    user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    # Skill ids the researcher enabled for this task (migration 0013). The
+    # worker reads them to inject the downloaded SKILL.md texts into the
+    # council's prompts as explicitly non-evidence process context.
+    skill_ids: Mapped[list[UUID]] = mapped_column(
+        ARRAY(PGUUID(as_uuid=True)), nullable=False, default=list
+    )
 
 
 class ResearchScopeModel(Base):

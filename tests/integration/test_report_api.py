@@ -34,6 +34,7 @@ CLAIM = "Heavy use predicts higher depressive symptom scores."
 
 async def _seed(
     sessions: async_sessionmaker[AsyncSession],
+    user_id: UUID,
     question: str = MENTAL_HEALTH_QUESTION,
 ) -> tuple[UUID, UUID]:
     task_id, claim_id = uuid4(), uuid4()
@@ -45,6 +46,7 @@ async def _seed(
                 question=question,
                 status=TaskStatus.QUEUED,
                 created_by="report_test",
+                user_id=user_id,
                 wall_clock_minutes=60,
                 model_cost_usd=Decimal("10.0000"),
                 tool_call_limit=100,
@@ -79,9 +81,10 @@ def test_a_mental_health_question_is_recognised() -> None:
 async def test_the_brief_states_its_gaps_rather_than_omitting_them(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """A run with no model provider must not read as a completed study."""
-    task_id, _ = await _seed(app_sessions)
+    task_id, _ = await _seed(app_sessions, UUID(account["id"]))
     await run_task(app_sessions, projector_sessions, task_id)
 
     async with app_sessions() as session:
@@ -97,13 +100,14 @@ async def test_the_brief_states_its_gaps_rather_than_omitting_them(
 async def test_limitations_are_rendered_beside_the_conclusions(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """CLAUDE.md 11: conclusions and limitations appear side by side.
 
     Asserted by position, not by presence: a limitations section pushed below the
     blindspots and the appendix is a section most readers never reach.
     """
-    task_id, _ = await _seed(app_sessions)
+    task_id, _ = await _seed(app_sessions, UUID(account["id"]))
     await run_task(app_sessions, projector_sessions, task_id)
 
     async with app_sessions() as session:
@@ -116,9 +120,10 @@ async def test_limitations_are_rendered_beside_the_conclusions(
 async def test_a_mental_health_brief_carries_the_safety_notice(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """CLAUDE.md 16 forbids the output reading as clinical advice."""
-    task_id, _ = await _seed(app_sessions)
+    task_id, _ = await _seed(app_sessions, UUID(account["id"]))
     await run_task(app_sessions, projector_sessions, task_id)
 
     async with app_sessions() as session:
@@ -130,9 +135,12 @@ async def test_a_mental_health_brief_carries_the_safety_notice(
 async def test_a_neutral_question_does_not_get_the_clinical_notice(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """Attaching it everywhere would train readers to skip it."""
-    task_id, _ = await _seed(app_sessions, question=NEUTRAL_QUESTION)
+    task_id, _ = await _seed(
+        app_sessions, UUID(account["id"]), question=NEUTRAL_QUESTION
+    )
     await run_task(app_sessions, projector_sessions, task_id)
 
     async with app_sessions() as session:
@@ -145,9 +153,10 @@ async def test_the_report_endpoint_serves_both_formats(
     api_client: Any,
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """Over HTTP, because a handler that works when called directly can still 404."""
-    task_id, claim_id = await _seed(app_sessions)
+    task_id, claim_id = await _seed(app_sessions, UUID(account["id"]))
     await run_task(app_sessions, projector_sessions, task_id)
 
     json_response = await api_client.get(f"/api/reports/{task_id}")
@@ -176,9 +185,10 @@ async def test_the_workspace_brief_and_the_report_agree(
     api_client: Any,
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
     """Two panels showing different conclusions is worse than one showing none."""
-    task_id, _ = await _seed(app_sessions)
+    task_id, _ = await _seed(app_sessions, UUID(account["id"]))
     await run_task(app_sessions, projector_sessions, task_id)
 
     workspace = await api_client.get(f"/api/workspace/{task_id}")

@@ -221,6 +221,7 @@ class CouncilOrchestrator:
         user_dois: tuple[str, ...] = (),
         knowledge_documents: tuple[KnowledgeDocumentLike, ...] = (),
         knowledge_search: KnowledgeSearcher | None = None,
+        researcher_skills: tuple[tuple[str, str], ...] = (),
         stop_before: TaskPhase | None = None,
         resume_from: CouncilCheckpoint | None = None,
         council_guidance: str | None = None,
@@ -326,6 +327,7 @@ class CouncilOrchestrator:
                 user_dois,
                 knowledge_documents,
                 knowledge_search,
+                researcher_skills,
                 state,
                 council_guidance,
             )
@@ -386,6 +388,7 @@ class CouncilOrchestrator:
         user_dois: tuple[str, ...],
         knowledge_documents: tuple[KnowledgeDocumentLike, ...],
         knowledge_search: KnowledgeSearcher | None,
+        researcher_skills: tuple[tuple[str, str], ...],
         state: _Accumulator,
         council_guidance: str | None = None,
     ) -> None:
@@ -413,6 +416,7 @@ class CouncilOrchestrator:
             user_dois=user_dois,
             knowledge_documents=knowledge_documents,
             knowledge_search=knowledge_search,
+            researcher_skills=researcher_skills,
             guidance=council_guidance,
         )
         try:

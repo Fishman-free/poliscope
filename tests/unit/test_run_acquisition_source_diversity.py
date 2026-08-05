@@ -31,6 +31,7 @@ class _Acquired:
     authors: tuple[str, ...] = ()
     dataset_id: str | None = None
     object_id: UUID | None = None
+    document_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,16 @@ class _FakeAcquirer:
     ) -> _AcquisitionResult:
         # Not exercised by this file's scenarios -- none pass pdf_object_ids --
         # but required to satisfy SourceAcquirer.
+        return _AcquisitionResult()
+
+    async def acquire_dois(self, dois: tuple[str, ...]) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none pass user DOIs.
+        return _AcquisitionResult()
+
+    async def acquire_knowledge_documents(
+        self, documents: tuple[object, ...]
+    ) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none link a knowledge base.
         return _AcquisitionResult()
 
 

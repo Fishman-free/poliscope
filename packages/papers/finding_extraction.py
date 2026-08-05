@@ -30,6 +30,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
+from packages.knowledge.models import KnowledgeDocumentModel
 from packages.models.contracts import (
     ModelClass,
     ModelGateway,
@@ -41,7 +42,6 @@ from packages.papers.contracts import (
     EvidenceLevel,
     PaperEvidencePacket,
 )
-from packages.knowledge.models import KnowledgeDocumentModel
 from packages.papers.models import (
     CitationAnchorModel,
     FindingModel,
@@ -452,15 +452,20 @@ class FindingExtractor:
         source_id: UUID,
         document_id: UUID,
     ) -> FindingExtractionResult:
-        """Try to turn a knowledge-base document's stored bytes into a
-        StudyFinding.
+        """Try to turn a knowledge-base document into a StudyFinding.
 
-        Identical to ``extract_uploaded`` from the point bytes exist onward;
-        the only difference is where the object key comes from: the
-        knowledge_documents row the Source's ``knowledge_document_id`` points
-        at, instead of the ``objects`` row an upload's ``object_id`` points
-        at. The document was parsed to text at ingest, so it is Level A
-        material by construction.
+        Identical to ``extract_uploaded`` from the point pages exist onward;
+        the only difference is where they come from: the knowledge_documents
+        row the Source's ``knowledge_document_id`` points at, instead of the
+        ``objects`` row an upload's ``object_id`` points at. The document was
+        parsed to text at ingest, so it is Level A material by construction.
+
+        Two page sources, chosen by the stored ``content_type``: an uploaded
+        PDF is re-read from the object store so page numbers stay truthful
+        for quote location; a pasted-text document has no file (its
+        ``text_content`` is all there is) and is turned into one page here --
+        a document that has no PDF form must never be parsed as one
+        (CLAUDE.md 7).
         """
 
         dataset_id: str | None = None
@@ -475,25 +480,37 @@ class FindingExtractor:
             )
 
         key_row = await self._session.execute(
-            select(KnowledgeDocumentModel.object_key).where(
-                KnowledgeDocumentModel.id == document_id
-            )
+            select(
+                KnowledgeDocumentModel.object_key,
+                KnowledgeDocumentModel.content_type,
+                KnowledgeDocumentModel.text_content,
+            ).where(KnowledgeDocumentModel.id == document_id)
         )
-        object_key = key_row.scalar_one_or_none()
-        if object_key is None:
+        row = key_row.one_or_none()
+        if row is None:
             return _gap("source has no knowledge document to extract from")
+        object_key, content_type, text_content = row
 
-        try:
-            content = self._object_store.retrieve(object_key)
-        except ObjectNotFound:
-            return _gap("knowledge document not found in private object store")
+        if content_type != "application/pdf":
+            pages = [
+                PageText(page_number=1, text=text_content or "")
+            ]
+            if not text_content or not text_content.strip():
+                return _gap("knowledge document has no extractable text")
+        else:
+            try:
+                content = self._object_store.retrieve(object_key)
+            except ObjectNotFound:
+                return _gap(
+                    "knowledge document not found in private object store"
+                )
 
-        try:
-            pages = extract_pages(content)
-        except PdfExtractionError as error:
-            return _gap(f"pdf parsing failed: {error}")
-        if not pages:
-            return _gap("pdf produced no extractable text")
+            try:
+                pages = extract_pages(content)
+            except PdfExtractionError as error:
+                return _gap(f"pdf parsing failed: {error}")
+            if not pages:
+                return _gap("pdf produced no extractable text")
 
         dataset_id = detect_dataset_identifier(pages)
         if dataset_id is not None:

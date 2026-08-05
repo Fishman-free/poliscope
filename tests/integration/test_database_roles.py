@@ -150,8 +150,59 @@ async def test_app_role_can_dml_knowledge_tables(
     )
     assert hit == "doc.pdf"
 
-    for table_name in reversed(KNOWLEDGE_TABLES):
-        await app_session.execute(text(f"DELETE FROM {table_name}"))  # noqa: S608
+    # Clean up only this test's own rows. Other tests on the shared session
+    # database may have created tasks referencing their own knowledge bases,
+    # and a blanket DELETE would trip the research_tasks foreign key -- this
+    # test exists to prove DML works, not to erase the neighbours.
+    await app_session.execute(
+        text("DELETE FROM knowledge_documents WHERE knowledge_base_id = :kb_id"),
+        {"kb_id": kb_id},
+    )
+    await app_session.execute(
+        text("DELETE FROM knowledge_bases WHERE id = :kb_id"),
+        {"kb_id": kb_id},
+    )
+    await app_session.commit()
+
+
+async def test_app_role_can_dml_settings_table(
+    app_session: AsyncSession,
+) -> None:
+    """The web/CLI read and write model settings under the app role, so
+    migration 0011/0014 must have granted it full DML on app_settings.
+
+    The row's primary key is its user_id (migration 0014), so the test first
+    inserts a user to reference -- proving the FK chain works too."""
+    settings_user = uuid4()
+    await app_session.execute(
+        text(
+            "INSERT INTO users (id, username, password_hash) "
+            "VALUES (:id, :username, 'pbkdf2$1$aa$bb')"
+        ),
+        {"id": settings_user, "username": f"roles-settings-{settings_user.hex[:8]}"},
+    )
+    await app_session.execute(
+        text(
+            "INSERT INTO app_settings (user_id, id, model_base_url, "
+            "model_api_key, model_name) VALUES (:user_id, 1, "
+            "'https://example.com', 'sk-test', 'm')"
+        ),
+        {"user_id": settings_user},
+    )
+    await app_session.execute(
+        text("UPDATE app_settings SET model_base_url = 'https://updated.example'")
+    )
+    hit = await app_session.scalar(text("SELECT model_base_url FROM app_settings"))
+    assert hit == "https://updated.example"
+    # Clean up only this test's own rows -- other tests leave settings behind.
+    await app_session.execute(
+        text("DELETE FROM app_settings WHERE user_id = :user_id"),
+        {"user_id": settings_user},
+    )
+    await app_session.execute(
+        text("DELETE FROM users WHERE id = :user_id"),
+        {"user_id": settings_user},
+    )
     await app_session.commit()
 
 

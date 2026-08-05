@@ -7,6 +7,7 @@
  */
 
 import type {
+  AuthSession,
   ConfirmClaimsResult,
   CreateTaskResult,
   KnowledgeBaseDetail,
@@ -14,11 +15,38 @@ import type {
   KnowledgeDocumentDetail,
   KnowledgeDocumentSummary,
   LedgerEvent,
+  MeInfo,
+  ModelSettings,
+  ModelSettingsUpdate,
+  SkillSummary,
+  TaskSummary,
   UploadedPaper,
   WorkspaceSnapshot,
 } from "./types";
 
 const BASE = import.meta.env.VITE_API_BASE ?? "";
+
+/** Remember-me: the bearer token lives in localStorage so a logged-in machine
+ * stays logged in for the token's 30-day lifetime (本机免登录). It is sent
+ * on every request; a 401 means "re-login", never a silent retry. */
+const TOKEN_KEY = "poliscope_token";
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
 
 export class ApiError extends Error {
   constructor(
@@ -35,7 +63,7 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   try {
     response = await fetch(`${BASE}${path}`, {
       signal,
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...authHeaders() },
     });
   } catch (cause) {
     throw new ApiError(0, `无法连接 API：${String(cause)}`);
@@ -50,11 +78,28 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 /** Shared with `getJson`'s error handling on purpose -- a failed POST is as
  * renderable a fact as a failed GET, not a thrown string (see file header). */
 async function postJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>("POST", path, body);
+}
+
+/** PUT sibling of `postJson`, for idempotent saves (settings, skill toggles). */
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  return sendJson<T>("PUT", path, body);
+}
+
+async function sendJson<T>(
+  method: "POST" | "PUT",
+  path: string,
+  body: unknown,
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      method,
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+        ...authHeaders(),
+      },
       body: JSON.stringify(body),
     });
   } catch (cause) {
@@ -93,12 +138,16 @@ export interface NewTaskOptions {
   modelCostUsd?: string;
   toolCallLimit?: number;
   sourceLimit?: number;
-  dois?: string[];
-  bibtexEntries?: string[];
+  /** Explicit per-task model endpoint. Leave null (default) to inherit the
+   * permanent model settings saved via the right-side settings panel -- the
+   * server applies them when this is absent. */
   modelConfig?: TaskModelConfig | null;
   /** Knowledge base whose documents the council should treat as Level A
    * user-provided sources for this task. Null (default) links none. */
   knowledgeBaseId?: string | null;
+  /** Skill ids to enable for this task; their downloaded SKILL.md texts are
+   * injected into the council's prompts as non-evidence instructions. */
+  skillIds?: string[];
 }
 
 export const DEFAULT_NEW_TASK_OPTIONS: Required<
@@ -113,12 +162,11 @@ export const DEFAULT_NEW_TASK_OPTIONS: Required<
   modelCostUsd: "10.00",
   toolCallLimit: 50,
   sourceLimit: 20,
-  dois: [],
-  bibtexEntries: [],
-  // Default: use the deployment's configured model gateway, not a per-task
-  // endpoint. A researcher opting into their own endpoint overrides this.
+  // Default: use the permanent settings (or the deployment's gateway when
+  // none are saved). A researcher opting into a per-task endpoint overrides.
   modelConfig: null,
   knowledgeBaseId: null,
+  skillIds: [],
 };
 
 /** Create a task from a plain question. The task does not start research --
@@ -149,11 +197,15 @@ export function createTask(
       source_limit: merged.sourceLimit,
     },
     user_evidence: {
-      dois: merged.dois,
-      bibtex_entries: merged.bibtexEntries,
+      // The web form no longer collects DOIs/BibTeX (the knowledge base
+      // covers the researcher's own evidence); these stay empty so the
+      // backend contract shape is unchanged. The CLI still fills them.
+      dois: [],
+      bibtex_entries: [],
       pdf_object_ids: [],
     },
     knowledge_base_id: merged.knowledgeBaseId ?? null,
+    skill_ids: merged.skillIds ?? [],
     task_model_config: model
       ? {
           base_url: model.baseUrl,
@@ -202,6 +254,7 @@ export async function uploadPaper(
   try {
     response = await fetch(`${BASE}/api/tasks/${taskId}/papers/upload`, {
       method: "POST",
+      headers: authHeaders(),
       body: form,
     });
   } catch (cause) {
@@ -215,7 +268,9 @@ export async function uploadPaper(
 }
 
 export async function fetchReportMarkdown(taskId: string): Promise<string> {
-  const response = await fetch(`${BASE}/api/reports/${taskId}?format=markdown`);
+  const response = await fetch(`${BASE}/api/reports/${taskId}?format=markdown`, {
+    headers: authHeaders(),
+  });
   if (!response.ok) {
     throw new ApiError(response.status, response.statusText);
   }
@@ -329,19 +384,127 @@ export async function deleteKnowledgeBase(kbId: string): Promise<void> {
   }
 }
 
+/** Session history: every task, newest first, for the right-side panel.
+ * Replaces the old "paste a task id" box -- the researcher's whole history
+ * is one click away. */
+export function fetchTasks(): Promise<TaskSummary[]> {
+  return getJson<TaskSummary[]>("/api/tasks");
+}
+
+/** The permanent model endpoint. `has_api_key` is all the server ever tells
+ * the browser about the key -- the key itself never leaves the server
+ * (CLAUDE.md 16). */
+export function fetchModelSettings(): Promise<ModelSettings> {
+  return getJson<ModelSettings>("/api/settings/model");
+}
+
+export function saveModelSettings(
+  update: ModelSettingsUpdate,
+): Promise<ModelSettings> {
+  return putJson<ModelSettings>("/api/settings/model", update);
+}
+
+/** Paste a researcher's own text into a knowledge base as a document. The
+ * content becomes searchable and the council treats it as a Level A
+ * user-provided source exactly like an uploaded file. */
+export async function addTextDocument(
+  kbId: string,
+  title: string,
+  content: string,
+): Promise<KnowledgeDocumentSummary> {
+  return postJson<KnowledgeDocumentSummary>(
+    `/api/knowledge-bases/${kbId}/documents/text`,
+    { title, content },
+  );
+}
+
+/** Account sessions: register and login, storing the bearer token for
+ * remember-me. The token is handed out exactly once -- these are the only
+ * calls that write it. */
+export async function register(
+  username: string,
+  password: string,
+): Promise<AuthSession> {
+  const session = await postJson<AuthSession>("/api/auth/register", {
+    username,
+    password,
+  });
+  setToken(session.token);
+  return session;
+}
+
+export async function login(
+  username: string,
+  password: string,
+): Promise<AuthSession> {
+  const session = await postJson<AuthSession>("/api/auth/login", {
+    username,
+    password,
+  });
+  setToken(session.token);
+  return session;
+}
+
+export async function logout(): Promise<void> {
+  const token = getToken();
+  try {
+    if (token) await postJson<{ ok: boolean }>("/api/auth/logout", {});
+  } finally {
+    clearToken();
+  }
+}
+
+/** Verify the remembered token at startup; throws 401 when it expired. */
+export function fetchMe(): Promise<MeInfo> {
+  return getJson<MeInfo>("/api/auth/me");
+}
+
+/** The account's skills: download, list, toggle, forget. */
+export function fetchSkills(): Promise<SkillSummary[]> {
+  return getJson<SkillSummary[]>("/api/skills");
+}
+
+export function addSkill(githubUrl: string): Promise<SkillSummary> {
+  return postJson<SkillSummary>("/api/skills", { github_url: githubUrl });
+}
+
+export function setSkillEnabled(
+  skillId: string,
+  enabled: boolean,
+): Promise<SkillSummary> {
+  return putJson<SkillSummary>(`/api/skills/${skillId}`, { enabled });
+}
+
+export async function deleteSkill(skillId: string): Promise<void> {
+  const response = await fetch(`${BASE}/api/skills/${skillId}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+}
+
 /** Subscribe to the task's event stream.
  *
  * The browser's EventSource resends `Last-Event-ID` on reconnect by itself, and
  * the server replays from the ledger sequence, so a dropped connection loses
  * nothing. That is the whole reason the stream is backed by the ledger rather
  * than by an in-process queue -- see apps/api/routers/stream.py.
+ *
+ * EventSource cannot attach Authorization headers, so the bearer token rides
+ * in the query string -- a documented trade-off (README security section).
  */
 export function subscribe(
   taskId: string,
   onEvent: (event: LedgerEvent) => void,
   onStateChange?: (state: "open" | "reconnecting") => void,
 ): () => void {
-  const source = new EventSource(`${BASE}/api/stream/${taskId}`);
+  const token = getToken();
+  const source = new EventSource(
+    `${BASE}/api/stream/${taskId}?token=${encodeURIComponent(token ?? "")}`,
+  );
   source.onopen = () => onStateChange?.("open");
   source.onerror = () => onStateChange?.("reconnecting");
   // One handler for every frame. The server sends no `event:` line precisely so

@@ -5,27 +5,17 @@
 # see apps/web/nginx.conf. So Caddy does not need to know that split exists;
 # it only has to forward everything to `web:80`.
 #
-# Access control:
-#   - `/` (the landing page) is deliberately public -- it has no task data
-#     and no model-call spending of its own.
-#   - `/workspace*` (the research evidence workbench) keeps the shared
-#     password gate, because every research run spends real model-call money.
+# Access control lives in the application now: the account system (register /
+# login, per-account isolation) replaced the shared-password gate. The API
+# answers 401 to any request without a valid bearer token, and the frontend
+# shows the login screen when none is remembered. Caddy's job is purely
+# transport: forward everything, let the API decide who gets in.
 #
 # {$POLISCOPE_SITE_ADDRESS} is a bare port (":80") until a real domain is set
 # in .env, at which point Caddy's automatic HTTPS takes over with no other
 # change here -- that is the whole point of fronting with Caddy instead of
 # nginx directly.
 {$POLISCOPE_SITE_ADDRESS} {
-	@workspace path /workspace*
-
-	handle @workspace {
-		basic_auth {
-			{$POLISCOPE_SITE_USERNAME} {$POLISCOPE_SITE_PASSWORD_HASH}
-		}
-
-		reverse_proxy web:80
-	}
-
 	handle {
 		reverse_proxy web:80
 	}

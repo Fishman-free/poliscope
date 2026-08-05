@@ -16,6 +16,7 @@ import fitz  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.worker.jobs import JobResult
 from packages.epistemo.contracts import TaskPhase, TaskStatus
 from packages.evidence.contracts import EvidenceNodeType
 from packages.evidence.models import GraphNodeModel, ScientificEventModel
@@ -27,15 +28,14 @@ from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher
-
 from tests.integration.test_seat_deliberation import (
     QUESTION,
     SHARED_COHORT_DOI,
     SHARED_COHORT_QUOTE,
-    _ScriptedGateway,
-    _StubProvider,
     _fake_fulltext_fetcher,
     _run_to_completion,
+    _ScriptedGateway,
+    _StubProvider,
 )
 
 # The seat requests "doi 10.1234/shared-cohort" (see _ScriptedGateway's
@@ -140,15 +140,15 @@ async def _run_with_kb(
     task_id: UUID,
     gateway: _ScriptedGateway,
     *,
-    tools: ToolGateway = _StubProvider(),
+    tools: ToolGateway | None = None,
     fulltext_fetcher: FullTextFetcher | None = None,
-) -> object:
+) -> JobResult:
     return await _run_to_completion(
         app_sessions,
         projector_sessions,
         task_id,
         gateway=gateway,
-        tools=tools,
+        tools=tools or _StubProvider(),
         fulltext_fetcher=fulltext_fetcher,
     )
 
@@ -263,6 +263,86 @@ async def test_knowledge_document_acquisition_is_idempotent_on_replay(
         replay = await acquisition.acquire_knowledge_documents(refs)
         assert len(replay.acquired) == 1
         assert replay.acquired[0].already_known is True
+
+
+async def _seed_knowledge_base_with_text_document(
+    sessions: async_sessionmaker[AsyncSession],
+    text_content: str = DOCUMENT_TEXT,
+) -> UUID:
+    """Seed a knowledge base whose document is pasted text.
+
+    Deliberately no object-store file behind the (virtual) object key: the
+    extractor's text-content branch must read ``text_content`` directly, or
+    this becomes a gap.
+    """
+    kb_id = uuid4()
+    async with sessions() as session:
+        session.add(
+            KnowledgeBaseModel(
+                id=kb_id,
+                name="text kb",
+                created_by="acquisition_test",
+            )
+        )
+        await session.flush()
+        session.add(
+            KnowledgeDocumentModel(
+                id=uuid4(),
+                knowledge_base_id=kb_id,
+                title="pasted-notes.txt",
+                object_key=f"knowledge/{kb_id}/text/{uuid4().hex}.txt",
+                content_hash=uuid4().hex,
+                content_type="text/plain",
+                size_bytes=len(text_content.encode("utf-8")),
+                page_count=1,
+                text_content=text_content,
+                created_by="acquisition_test",
+            )
+        )
+        await session.commit()
+    return kb_id
+
+
+async def test_pasted_text_document_becomes_level_a_source(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """A pasted-text document (no PDF, no object-store bytes) must still reach
+    Level A -- the extractor reads text_content instead of parsing a PDF."""
+    kb_id = await _seed_knowledge_base_with_text_document(app_sessions)
+    task_id, claim_id = await _seed_queued_task_with_kb(app_sessions, kb_id)
+    gateway = _ScriptedGateway(claim_id, uuid4())
+
+    result = await _run_with_kb(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        gateway,
+        fulltext_fetcher=_fake_fulltext_fetcher(),
+    )
+    assert result.run.failures == ()
+
+    sources = await _knowledge_sources(app_sessions, task_id)
+    assert len(sources) == 1
+    assert sources[0].title == "pasted-notes.txt"
+
+    async with app_sessions() as session:
+        findings = (
+            await session.execute(
+                select(ScientificEventModel).where(
+                    ScientificEventModel.task_id == task_id,
+                    ScientificEventModel.event_type
+                    == EvidenceNodeType.STUDY_FINDING.value,
+                )
+            )
+        ).scalars().all()
+    kb_findings = [
+        event
+        for event in findings
+        if event.payload.get("knowledge_document_id") is not None
+    ]
+    assert len(kb_findings) == 1
+    assert kb_findings[0].status == "admitted"
 
 
 async def test_knowledge_search_hits_reach_later_phase_prompts(

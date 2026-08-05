@@ -398,6 +398,12 @@ class PhaseContext:
     # each seat's requests against it and carries the hits into later
     # phases' prompts as process context (never as evidence).
     knowledge_search: KnowledgeSearcher | None = None
+    # The researcher's enabled skills, resolved to (name, markdown) by the
+    # worker from the task's skill_ids (see apps\worker\jobs.py::
+    # _skills_context). Rendered into every phase's prompt as explicitly
+    # non-evidence process context, exactly like knowledge-base search hits --
+    # a skill instructs the scientists, it never supports or refutes a claim.
+    researcher_skills: tuple[tuple[str, str], ...] = ()
     # Plan phase 8.3: the human's advisory directional steer collected at the
     # BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint, or None outside that one
     # phase. Deliberately a dedicated field rather than another `carried`

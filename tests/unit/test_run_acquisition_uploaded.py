@@ -31,6 +31,7 @@ class _Acquired:
     authors: tuple[str, ...] = ()
     dataset_id: str | None = None
     object_id: UUID | None = None
+    document_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,16 @@ class _UploadAcquirer:
         self.seen_object_ids = object_ids
         return self._result
 
+    async def acquire_dois(self, dois: tuple[str, ...]) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none pass user DOIs.
+        return _AcquisitionResult()
+
+    async def acquire_knowledge_documents(
+        self, documents: tuple[object, ...]
+    ) -> _AcquisitionResult:
+        # Not exercised by this file's scenarios -- none link a knowledge base.
+        return _AcquisitionResult()
+
 
 class _UploadFindingExtractor:
     def __init__(self, by_object_id: dict[UUID, _Extraction]) -> None:
@@ -90,6 +101,12 @@ class _UploadFindingExtractor:
     ) -> _Extraction:
         self.calls.append((source_id, object_id))
         return self._by_object_id[object_id]
+
+    async def extract_knowledge_document(
+        self, source_id: UUID, document_id: UUID
+    ) -> _Extraction:
+        # Not exercised by this file's scenarios -- none link a knowledge base.
+        return _Extraction(ok=False, reason="not exercised")
 
 
 class _SilentDeliberator:

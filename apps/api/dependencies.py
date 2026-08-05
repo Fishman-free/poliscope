@@ -16,9 +16,11 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from packages.accounts.repository import StoredUser
+from packages.accounts.service import AuthService
 from packages.kernel.config import DatabaseConfig
 from packages.kernel.database import create_database_engine, create_session_factory
 from packages.papers.object_store import PrivateObjectStore
@@ -74,6 +76,45 @@ def get_object_store(
     return state.object_store
 
 
+def _bearer_token(request: Request) -> str | None:
+    """Extract the bearer token from Authorization, or None.
+
+    The stream endpoint cannot carry headers (EventSource), so it resolves a
+    token from its query string instead -- see
+    ``apps/api/routers/stream.py``; the query exposure is documented in the
+    README security section.
+    """
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        return header[7:].strip() or None
+    return None
+
+
+async def get_current_user(
+    request: Request,
+    session: SessionDep,
+) -> StoredUser:
+    """Resolve the request's bearer token to its owning account.
+
+    Every protected endpoint depends on this; a missing, unknown, or expired
+    token is a 401 -- the client must re-login, never a 500.
+    """
+    token = _bearer_token(request)
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="authentication required",
+        )
+    user = await AuthService(session).user_for_token(token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid or expired session",
+        )
+    return user
+
+
+CurrentUserDep = Annotated[StoredUser, Depends(get_current_user)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 StateDep = Annotated[AppState, Depends(get_state)]
 ObjectStoreDep = Annotated[PrivateObjectStore, Depends(get_object_store)]

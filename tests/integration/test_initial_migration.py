@@ -38,6 +38,9 @@ EXPECTED_COLUMNS = {
         # Linked knowledge base (migration 0010): whose documents the council
         # treats as Level A user-provided sources, or NULL for web-only.
         "knowledge_base_id",
+        # Owning account (migration 0012) and enabled skills (0013).
+        "user_id",
+        "skill_ids",
     },
     "research_scopes": {
         "id",
@@ -107,7 +110,13 @@ EXPECTED_COLUMNS = {
     },
 }
 NULLABLE_COLUMNS = {
-    "research_tasks": {"council_checkpoint", "model_config", "knowledge_base_id"},
+    "research_tasks": {
+        "council_checkpoint",
+        "model_config",
+        "knowledge_base_id",
+        # Pre-account rows only; every task created after 0012 owns one.
+        "user_id",
+    },
     "research_scopes": {"date_from"},
     "atomic_claims": set(),
     "model_calls": {"output_hash", "error_code"},

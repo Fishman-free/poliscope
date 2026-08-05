@@ -76,12 +76,14 @@ class KnowledgeRepository:
         name: str,
         description: str | None,
         created_by: str,
+        user_id: UUID | None = None,
     ) -> StoredKnowledgeBase:
         row = KnowledgeBaseModel(
             id=uuid4(),
             name=name,
             description=description,
             created_by=created_by,
+            user_id=user_id,
         )
         self._session.add(row)
         await self._session.flush()
@@ -93,22 +95,25 @@ class KnowledgeRepository:
             created_at=row.created_at,
         )
 
-    async def list_knowledge_bases(self) -> tuple[StoredKnowledgeBase, ...]:
-        rows = (
-            await self._session.execute(
-                select(
-                    KnowledgeBaseModel,
-                    func.count(KnowledgeDocumentModel.id),
-                )
-                .outerjoin(
-                    KnowledgeDocumentModel,
-                    KnowledgeDocumentModel.knowledge_base_id
-                    == KnowledgeBaseModel.id,
-                )
-                .group_by(KnowledgeBaseModel.id)
-                .order_by(KnowledgeBaseModel.created_at.desc(), KnowledgeBaseModel.id)
+    async def list_knowledge_bases(
+        self, user_id: UUID | None = None
+    ) -> tuple[StoredKnowledgeBase, ...]:
+        query = (
+            select(
+                KnowledgeBaseModel,
+                func.count(KnowledgeDocumentModel.id),
             )
-        ).all()
+            .outerjoin(
+                KnowledgeDocumentModel,
+                KnowledgeDocumentModel.knowledge_base_id
+                == KnowledgeBaseModel.id,
+            )
+            .group_by(KnowledgeBaseModel.id)
+            .order_by(KnowledgeBaseModel.created_at.desc(), KnowledgeBaseModel.id)
+        )
+        if user_id is not None:
+            query = query.where(KnowledgeBaseModel.user_id == user_id)
+        rows = (await self._session.execute(query)).all()
         return tuple(
             StoredKnowledgeBase(
                 id=row.id,
@@ -121,10 +126,19 @@ class KnowledgeRepository:
             for row, count in rows
         )
 
-    async def get_knowledge_base(self, kb_id: UUID) -> StoredKnowledgeBase:
-        row: KnowledgeBaseModel | None = await self._session.scalar(
-            select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
-        )
+    async def get_knowledge_base(
+        self, kb_id: UUID, user_id: UUID | None = None
+    ) -> StoredKnowledgeBase:
+        """Fetch a base, optionally scoped to an owning account.
+
+        With ``user_id`` given, another account's base (or a pre-account one)
+        reads as KnowledgeBaseNotFound -- existence must not leak through a
+        distinct error.
+        """
+        query = select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
+        if user_id is not None:
+            query = query.where(KnowledgeBaseModel.user_id == user_id)
+        row: KnowledgeBaseModel | None = await self._session.scalar(query)
         if row is None:
             raise KnowledgeBaseNotFound(kb_id)
         count = await self._session.scalar(
@@ -245,10 +259,13 @@ class KnowledgeRepository:
             raise DocumentInUse(doc_id)
         await self._session.delete(row)
 
-    async def delete_knowledge_base(self, kb_id: UUID) -> None:
-        row: KnowledgeBaseModel | None = await self._session.scalar(
-            select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
-        )
+    async def delete_knowledge_base(
+        self, kb_id: UUID, user_id: UUID | None = None
+    ) -> None:
+        query = select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == kb_id)
+        if user_id is not None:
+            query = query.where(KnowledgeBaseModel.user_id == user_id)
+        row: KnowledgeBaseModel | None = await self._session.scalar(query)
         if row is None:
             raise KnowledgeBaseNotFound(kb_id)
         referenced = await self._session.scalar(

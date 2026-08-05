@@ -175,6 +175,7 @@ async def _run_to_completion(
 
 async def _seed_queued_task(
     sessions: async_sessionmaker[AsyncSession],
+    user_id: UUID,
 ) -> tuple[UUID, UUID]:
     task_id = uuid4()
     claim_id = uuid4()
@@ -186,6 +187,7 @@ async def _seed_queued_task(
                 question=QUESTION,
                 status=TaskStatus.QUEUED,
                 created_by="workspace_panel_test",
+                user_id=user_id,
                 wall_clock_minutes=60,
                 model_cost_usd=Decimal("10.0000"),
                 tool_call_limit=100,
@@ -214,8 +216,9 @@ async def test_seats_panel_carries_real_precommitment_challenge_and_judgment(
     api_client: Any,
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
-    task_id, claim_id = await _seed_queued_task(app_sessions)
+    task_id, claim_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
     gateway = _WorkspacePanelGateway(claim_id)
     await _run_to_completion(app_sessions, projector_sessions, task_id, gateway=gateway)
 
@@ -255,8 +258,9 @@ async def test_evolution_feed_carries_the_fork_challenge_and_dissent(
     api_client: Any,
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
 ) -> None:
-    task_id, claim_id = await _seed_queued_task(app_sessions)
+    task_id, claim_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
     gateway = _WorkspacePanelGateway(claim_id)
     await _run_to_completion(app_sessions, projector_sessions, task_id, gateway=gateway)
 

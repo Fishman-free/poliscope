@@ -272,7 +272,13 @@ async def test_unrelated_400_still_raises() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            400, json={"error": {"message": "model not found", "type": "invalid_request_error"}}
+            400,
+            json={
+                "error": {
+                    "message": "model not found",
+                    "type": "invalid_request_error",
+                }
+            },
         )
 
     gateway = _gateway(handler)

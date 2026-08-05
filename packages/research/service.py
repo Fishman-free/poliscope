@@ -53,10 +53,11 @@ class ResearchService:
         self,
         contract: ResearchContract,
         created_by: str = "api",
+        user_id: UUID | None = None,
     ) -> CreatedTask:
         candidates = suggest_atomic_claims(contract)
         task_id = await self._repository.create_task(
-            contract, candidates, created_by
+            contract, candidates, created_by, user_id=user_id
         )
         return CreatedTask(
             task_id=task_id,

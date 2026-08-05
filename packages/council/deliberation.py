@@ -166,6 +166,17 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
                     f"【研究者知识库检索命中（非正式证据，来源文档：{title}）】"
                     f"{snippet}"
                 )
+    # The researcher's enabled skills, resolved by the worker from the task's
+    # skill_ids. A skill is an instruction, not a citation: it tells the
+    # scientists what methods or lenses the researcher wants applied, so it is
+    # labelled explicitly as non-evidence process context -- it never supports
+    # or refutes a claim, and the Evidence Gate never reads it (it lives on
+    # the PhaseContext, not in any event payload).
+    for name, markdown in context.researcher_skills:
+        if markdown.strip():
+            lines.append(
+                f"【研究者提供的技能指令（非正式证据，来源：{name}）】{markdown}"
+            )
     # Plan phase 8.3: the human's advisory steer from the BLINDSPOT_BOUNTY ->
     # JOINT_MODELING checkpoint, rendered only in this one phase and clearly
     # labelled as non-scientific. CLAUDE.md 4/8 forbid a human vote from

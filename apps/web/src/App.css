@@ -48,31 +48,95 @@
   white-space: nowrap;
 }
 
-.app__open {
+.app__account {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+  gap: var(--space-3);
 }
 
-.app__open-label {
-  font-size: var(--text-micro);
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-
-.app__open-input {
-  width: min(30ch, 40vw);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-2);
-  background: var(--surface-0);
-  color: var(--ink-1);
+.app__account-name {
   font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+/* Main column + fixed right sidebar. The sidebar holds the researcher's
+ * permanent model settings and session history; it exists in both states
+ * (no task and task workspace). */
+.app__layout {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+  width: 100%;
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: var(--space-5);
+}
+
+.app__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.app__sidebar {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+@media (max-width: 1100px) {
+  .app__layout {
+    flex-direction: column;
+  }
+
+  .app__sidebar {
+    width: 100%;
+  }
+}
+
+/* No-task home: a small segmented control above the view, Apple settings-app
+ * style -- a translucent track with the selected segment lifted in white. */
+.app__home-switch {
+  display: inline-flex;
+  gap: 2px;
+  align-self: flex-start;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--ink-1) 6%, transparent);
+  border: 1px solid var(--line);
+}
+
+.app__home-tab {
+  padding: var(--space-1) var(--space-4);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--ink-3);
+  transition: color var(--duration-standard) var(--ease-smooth),
+    background-color var(--duration-standard) var(--ease-smooth),
+    box-shadow var(--duration-standard) var(--ease-smooth);
+}
+
+.app__home-tab:hover {
+  color: var(--ink-1);
+}
+
+.app__home-tab--on {
+  color: var(--ink-1);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-2);
 }
 
 .app__task {
-  padding: var(--space-5) var(--space-5) 0;
+  padding-bottom: 0;
 }
 
 .app__task-head {
@@ -85,6 +149,7 @@
 
 .app__task-head h1 {
   max-width: 62ch;
+  font-weight: 650;
 }
 
 .app__task-meta {
@@ -97,9 +162,15 @@
 .app__task-id {
   font-size: var(--text-micro);
   color: var(--ink-4);
+  user-select: all;
 }
 
+/* Tab rail with a sliding indicator. The indicator is a positioned bar whose
+ * transform is transitioned with the Apple ease-out, so moving between tabs
+ * reads as one continuous glide rather than a jump (App.tsx measures the
+ * active tab and updates --left/--width). */
 .app__tabs {
+  position: relative;
   display: flex;
   gap: var(--space-1);
   margin-top: var(--space-4);
@@ -114,12 +185,10 @@
   padding: var(--space-2) var(--space-4);
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
   margin-bottom: -1px;
   cursor: pointer;
   color: var(--ink-3);
-  transition: color var(--duration-fast) var(--ease-standard),
-    border-color var(--duration-fast) var(--ease-standard);
+  transition: color var(--duration-standard) var(--ease-smooth);
 }
 
 .app__tab:hover {
@@ -128,13 +197,17 @@
 
 .app__tab--on {
   color: var(--ink-1);
-  border-bottom-color: var(--accent);
 }
 
 .app__tab span:first-child {
   font-size: var(--text-body);
   font-weight: 550;
   letter-spacing: -0.01em;
+  transition: transform var(--duration-standard) var(--ease-smooth);
+}
+
+.app__tab:hover span:first-child {
+  transform: translateY(-1px);
 }
 
 .app__tab-hint {
@@ -142,36 +215,74 @@
   color: var(--ink-4);
 }
 
-.app__main {
-  flex: 1;
-  padding: var(--space-5);
-  min-height: 0;
+.app__tab-indicator {
+  position: absolute;
+  bottom: -1px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  left: var(--indicator-left, 0px);
+  width: var(--indicator-width, 0px);
+  transition: left var(--duration-slow) var(--ease-smooth),
+    width var(--duration-slow) var(--ease-smooth);
 }
 
-/* No-task home screen: the new-task form next to the knowledge base. The
-   knowledge-base panel is narrower than the form, so the split hands the
-   form the wider share. */
-.app__main--split {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
+/* Panel entrance: a longer, softer settle than the old 4px fade -- the
+ * Apple-style slide-up. Used both as the no-View-Transitions fallback and as
+ * the state-change animation behind it. */
+.app__panel {
+  animation: panel-in var(--duration-slow) var(--ease-smooth);
+  /* Named snapshot for View Transitions: only the panel animates when the
+   * researcher switches tabs / home views -- the sidebar stays put. */
+  view-transition-name: app-panel;
 }
 
-@media (max-width: 1100px) {
-  .app__main--split {
-    grid-template-columns: 1fr;
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
-/* Six mutually-exclusive views used to hard-swap with no transition. The key
- * on the wrapper in App.tsx forces a fresh element per tab, so this plays on
- * every switch. Shares base.css's .fade-in-up keyframe rather than defining
- * its own -- same entrance, one definition.
- * base.css's blanket prefers-reduced-motion rule already collapses the
- * animation duration to 0.01ms, so no separate override is needed here. */
-.app__panel {
-  animation: fade-in-up var(--duration-standard) var(--ease-standard);
+/* View Transitions: the panel's old snapshot slides up and fades while the
+ * new one rises into place -- a continuous glide instead of a swap. */
+::view-transition-old(app-panel) {
+  animation: vt-panel-out 200ms var(--ease-smooth);
+}
+
+::view-transition-new(app-panel) {
+  animation: vt-panel-in var(--duration-slow) var(--ease-smooth);
+}
+
+@keyframes vt-panel-out {
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.995);
+  }
+}
+
+@keyframes vt-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* base.css already collapses durations; View Transition snapshots are
+   * separate pseudo-elements, so they need an explicit kill. */
+  ::view-transition-old(app-panel),
+  ::view-transition-new(app-panel) {
+    animation-duration: 0.01ms;
+  }
 }
 
 .app__error {

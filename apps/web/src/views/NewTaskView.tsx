@@ -14,10 +14,11 @@ import {
   createTask,
   DEFAULT_NEW_TASK_OPTIONS,
   fetchKnowledgeBases,
+  fetchSkills,
   type NewTaskOptions,
   uploadPaper,
 } from "../api/client";
-import type { KnowledgeBaseSummary, SuggestedClaim } from "../api/types";
+import type { KnowledgeBaseSummary, SkillSummary, SuggestedClaim } from "../api/types";
 import { Empty, Panel } from "../components/primitives";
 
 import "./NewTaskView.css";
@@ -42,7 +43,15 @@ function splitList(value: string): string[] {
     .filter(Boolean);
 }
 
-export function NewTaskView({ onCreated }: { onCreated: (taskId: string) => void }) {
+export function NewTaskView({
+  onCreated,
+  onManageKnowledge,
+}: {
+  onCreated: (taskId: string) => void;
+  /** Jump to the knowledge-base management view (pasting text, uploading
+   * files). Passed up so the home screen can switch views. */
+  onManageKnowledge: () => void;
+}) {
   const [question, setQuestion] = useState("");
   const [populations, setPopulations] = useState(
     DEFAULT_NEW_TASK_OPTIONS.populations.join(", "),
@@ -60,18 +69,14 @@ export function NewTaskView({ onCreated }: { onCreated: (taskId: string) => void
   );
   const [toolCallLimit, setToolCallLimit] = useState(DEFAULT_NEW_TASK_OPTIONS.toolCallLimit);
   const [sourceLimit, setSourceLimit] = useState(DEFAULT_NEW_TASK_OPTIONS.sourceLimit);
-  // 任务级模型设置：留空使用系统默认模型（部署配置的 DeepSeek）；
-  // 填写后本次任务使用研究者自己的 OpenAI 兼容接口。
-  const [modelBaseUrl, setModelBaseUrl] = useState("");
-  const [modelApiKey, setModelApiKey] = useState("");
-  const [modelName, setModelName] = useState("");
-  // 用户提供的证据（可选）：DOI 与 BibTeX 文本。只随创建任务提交，
-  // 工作台不提供任务创建后的编辑入口（YAGNI）。
-  const [doisText, setDoisText] = useState("");
-  const [bibtexText, setBibtexText] = useState("");
-  // 知识库（长期记忆）：文档作为 Level A 用户提供源交给议会。
+  // 知识库（长期记忆）：文档作为 Level A 用户提供源交给议会。模型设置
+  // 已移至右侧栏永久设置（保存于服务器，创建任务时自动生效），表单不再收集。
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseSummary[]>([]);
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string>("");
+  // Skills：账号已下载的技能，默认勾选启用的；提交时携带勾选结果，
+  // worker 会将其注入议会 prompt（非正式证据）。
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +87,26 @@ export function NewTaskView({ onCreated }: { onCreated: (taskId: string) => void
       .catch(() => {
         // 拉取失败不阻塞建任务：知识库是可选项。
         if (!cancelled) setKnowledgeBases([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSkills()
+      .then((list) => {
+        if (cancelled) return;
+        setSkills(list);
+        // 默认勾选账号里已启用的技能；用户可取消。
+        setSelectedSkills(
+          new Set(list.filter((skill) => skill.enabled).map((skill) => skill.id)),
+        );
+      })
+      .catch(() => {
+        // 拉取失败不阻塞建任务：Skills 是可选项。
+        if (!cancelled) setSkills([]);
       });
     return () => {
       cancelled = true;
@@ -155,17 +180,9 @@ export function NewTaskView({ onCreated }: { onCreated: (taskId: string) => void
         wallClockMinutes,
         toolCallLimit,
         sourceLimit,
-        dois: splitList(doisText),
-        bibtexEntries: splitList(bibtexText),
         knowledgeBaseId: knowledgeBaseId || null,
-        modelConfig:
-          modelBaseUrl.trim() && modelApiKey.trim()
-            ? {
-                baseUrl: modelBaseUrl.trim(),
-                apiKey: modelApiKey.trim(),
-                modelName: modelName.trim() || undefined,
-              }
-            : null,
+        skillIds: Array.from(selectedSkills),
+        // 模型设置不再随任务提交：右侧栏的永久设置由服务器在创建时自动套用。
       };
       const created = await createTask(question.trim(), options);
       setTaskId(created.task_id);
@@ -389,7 +406,7 @@ export function NewTaskView({ onCreated }: { onCreated: (taskId: string) => void
 
         <details className="newtask__advanced">
           <summary>
-            用户提供的证据（可选）——知识库、DOI 与 BibTeX，会作为正式证据源交给议会核验
+            用户提供的证据（可选）——关联知识库，文档会作为正式证据源交给议会核验
           </summary>
           <div className="newtask__advanced-grid">
             <label className="newtask__field newtask__field--wide">
@@ -407,77 +424,47 @@ export function NewTaskView({ onCreated }: { onCreated: (taskId: string) => void
                 ))}
               </select>
             </label>
+            <button
+              type="button"
+              className="button"
+              onClick={onManageKnowledge}
+              disabled={submitting}
+            >
+              管理知识库 →
+            </button>
           </div>
-          <div className="newtask__advanced-grid">
-            <label className="newtask__field newtask__field--wide">
-              DOI（每行一个，或逗号分隔）
-              <textarea
-                className="newtask__textarea newtask__textarea--compact"
-                placeholder={"10.1000/example\n10.1016/j.jadohealth.2023.01.001"}
-                value={doisText}
-                onChange={(event) => setDoisText(event.target.value)}
-                disabled={submitting}
-                rows={3}
-                spellCheck={false}
-              />
-            </label>
-            <label className="newtask__field newtask__field--wide">
-              BibTeX 条目（粘贴即可，系统会从中提取 DOI；无法提取的条目不会被消费）
-              <textarea
-                className="newtask__textarea newtask__textarea--compact"
-                placeholder={"@article{example,\n  doi = {10.1000/example},\n}"}
-                value={bibtexText}
-                onChange={(event) => setBibtexText(event.target.value)}
-                disabled={submitting}
-                rows={4}
-                spellCheck={false}
-              />
-            </label>
-          </div>
+
+          {skills.length > 0 ? (
+            <fieldset className="newtask__priorities">
+              <legend>
+                调用 Skills（可选，勾选后其指令会注入议会 prompt，作为非正式证据）
+              </legend>
+              {skills.map((skill) => (
+                <label key={skill.id} className="newtask__priority">
+                  <input
+                    type="checkbox"
+                    checked={selectedSkills.has(skill.id)}
+                    onChange={() =>
+                      setSelectedSkills((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(skill.id)) next.delete(skill.id);
+                        else next.add(skill.id);
+                        return next;
+                      })
+                    }
+                    disabled={submitting}
+                  />
+                  {skill.name}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
         </details>
 
-        <details className="newtask__advanced">
-          <summary>
-            模型设置（可选）——留空使用系统默认模型，填写则本次任务使用你自己的模型接口
-          </summary>
-          <div className="newtask__advanced-grid">
-            <label className="newtask__field">
-              Base URL（例如 https://api.deepseek.com）
-              <input
-                type="url"
-                placeholder="https://…"
-                value={modelBaseUrl}
-                onChange={(event) => setModelBaseUrl(event.target.value)}
-                disabled={submitting}
-                spellCheck={false}
-              />
-            </label>
-            <label className="newtask__field">
-              API Key
-              <input
-                type="password"
-                autoComplete="off"
-                value={modelApiKey}
-                onChange={(event) => setModelApiKey(event.target.value)}
-                disabled={submitting}
-                spellCheck={false}
-              />
-            </label>
-            <label className="newtask__field">
-              模型名（可留空，默认 deepseek-chat）
-              <input
-                placeholder="deepseek-chat"
-                value={modelName}
-                onChange={(event) => setModelName(event.target.value)}
-                disabled={submitting}
-                spellCheck={false}
-              />
-            </label>
-            <p className="newtask__model-note">
-              API Key 只随本次任务存储，任何页面都不会回显；不填则使用部署方配置的系统默认模型。
-            </p>
-          </div>
-        </details>
+        <p className="newtask__model-note">
+          模型设置已移至右侧栏「模型设置」面板：保存一次，之后创建的任务都会自动使用；
+          不设置则使用系统默认模型。
+        </p>
 
         {error ? (
           <p className="newtask__error" role="alert">

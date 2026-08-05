@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.dependencies import SessionDep
+from apps.api.dependencies import CurrentUserDep, SessionDep
 from apps.api.schemas import SafetyNotice, WorkspaceSnapshot
 from packages.council.rounds.registry import (
     CHALLENGE_RAISED,
@@ -292,9 +292,13 @@ async def _evolution(
 
 
 @router.get("/{task_id}", response_model=WorkspaceSnapshot)
-async def get_workspace(task_id: UUID, session: SessionDep) -> WorkspaceSnapshot:
+async def get_workspace(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> WorkspaceSnapshot:
     try:
-        task = await ResearchRepository(session).get_task(task_id)
+        task = await ResearchRepository(session).get_task(task_id, current_user.id)
     except TaskNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -7,7 +7,7 @@ upload with validation, preview truncation, and reference-checked deletion.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import fitz  # type: ignore[import-untyped]
@@ -35,7 +35,7 @@ async def _create_kb(
 ) -> dict[str, Any]:
     response = await api_client.post(KB_PATH, json={"name": name})
     assert response.status_code == 201, response.text
-    return response.json()
+    return cast(dict[str, Any], response.json())
 
 
 async def _upload(
@@ -93,19 +93,144 @@ async def test_upload_document_extracts_text_and_page_count(
     assert preview.json()["truncated"] is False
 
 
-async def test_upload_rejects_non_pdf_and_oversized(
+async def test_upload_rejects_garbage_pdf_and_oversized(
     api_client: httpx.AsyncClient,
 ) -> None:
     kb = await _create_kb(api_client)
-    non_pdf = await _upload(api_client, kb["id"], b"PK\x03\x04 not a pdf")
-    assert non_pdf.status_code == 422
-    assert "not a PDF" in non_pdf.text
+    # A .pdf-named upload whose bytes are not a PDF reaches the PDF parser and
+    # is refused there -- honest failure, not a fabricated empty document.
+    garbage = await _upload(api_client, kb["id"], b"PK\x03\x04 not a pdf")
+    assert garbage.status_code == 422
+    assert "pdf" in garbage.text
 
     oversized = await _upload(
         api_client, kb["id"], b"%PDF" + b"\0" * (21 * 1024 * 1024)
     )
     assert oversized.status_code == 422
     assert "20 MB" in oversized.text
+
+
+def _zip_bytes(entries: dict[str, str]) -> bytes:
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in entries.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+async def test_upload_supports_docx_csv_and_txt(
+    api_client: httpx.AsyncClient,
+) -> None:
+    kb = await _create_kb(api_client)
+
+    docx = _zip_bytes(
+        {
+            "word/document.xml": (
+                '<?xml version="1.0"?><w:document '
+                'xmlns:w="http://schemas.openxmlformats.org/'
+                'wordprocessingml/2006/main"><w:body>'
+                "<w:p><w:r><w:t>A Word paragraph.</w:t></w:r></w:p>"
+                "</w:body></w:document>"
+            )
+        }
+    )
+    response = await api_client.post(
+        f"{KB_PATH}/{kb['id']}/documents/upload",
+        files={
+            "file": (
+                "notes.docx",
+                docx,
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document",
+            )
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["page_count"] == 1
+
+    response = await api_client.post(
+        f"{KB_PATH}/{kb['id']}/documents/upload",
+        files={"file": ("data.csv", b"name,score\nada,1.0", "text/csv")},
+    )
+    assert response.status_code == 201, response.text
+
+    response = await api_client.post(
+        f"{KB_PATH}/{kb['id']}/documents/upload",
+        files={"file": ("note.txt", "纯文本笔记".encode(), "text/plain")},
+    )
+    assert response.status_code == 201, response.text
+
+    detail = await api_client.get(f"{KB_PATH}/{kb['id']}")
+    assert detail.status_code == 200
+    documents = detail.json()["documents"]
+    assert len(documents) == 3
+    # The DTO exposes the content type so the UI can label each document.
+    assert {doc["content_type"] for doc in documents} == {
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text/csv",
+        "text/plain",
+    }
+
+    preview = await api_client.get(
+        f"{KB_PATH}/{kb['id']}/documents/{documents[1]['document_id']}"
+    )
+    assert "name,score" in preview.json()["text"]
+
+
+async def test_upload_rejects_legacy_office_formats(
+    api_client: httpx.AsyncClient,
+) -> None:
+    kb = await _create_kb(api_client)
+    response = await _upload(api_client, kb["id"], b"\xd0\xcf\x11\xe0 ole", "old.doc")
+    assert response.status_code == 422
+    assert "另存为" in response.text or "save as" in response.text
+
+
+async def test_paste_text_document_round_trip(
+    api_client: httpx.AsyncClient,
+) -> None:
+    kb = await _create_kb(api_client)
+    response = await api_client.post(
+        f"{KB_PATH}/{kb['id']}/documents/text",
+        json={"title": "我的笔记", "content": "粘贴进来的研究摘录。"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["title"] == "我的笔记"
+    assert body["content_type"] == "text/plain"
+
+    preview = await api_client.get(
+        f"{KB_PATH}/{kb['id']}/documents/{body['document_id']}"
+    )
+    assert preview.status_code == 200
+    assert "粘贴进来的研究摘录" in preview.json()["text"]
+
+
+async def test_paste_text_document_validation(
+    api_client: httpx.AsyncClient,
+) -> None:
+    kb = await _create_kb(api_client)
+
+    empty_title = await api_client.post(
+        f"{KB_PATH}/{kb['id']}/documents/text",
+        json={"title": "  ", "content": "body"},
+    )
+    assert empty_title.status_code == 422
+
+    empty_content = await api_client.post(
+        f"{KB_PATH}/{kb['id']}/documents/text",
+        json={"title": "t", "content": "   "},
+    )
+    assert empty_content.status_code == 422
+
+    unknown_kb = await api_client.post(
+        f"{KB_PATH}/{str(uuid4())}/documents/text",
+        json={"title": "t", "content": "body"},
+    )
+    assert unknown_kb.status_code == 404
 
 
 async def test_upload_to_unknown_knowledge_base_returns_404(

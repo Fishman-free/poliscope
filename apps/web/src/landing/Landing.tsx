@@ -1,5 +1,5 @@
-/** 公开落地页，部署在站点根路径 `/`，不设访问口令；研究证据工作台在
- * `/workspace`（由 Caddy 在 /workspace* 上保留共享口令，见 deploy/caddy）。
+/** 公开落地页，部署在站点根路径 `/`，不需要登录；研究证据工作台在
+ * `/workspace`（未登录时由 AuthView 引导注册/登录）。
  *
  * 视觉语言是黑白色调的科研海报：浮动胶囊导航、三个错落的全小写大词
  * （researching / questioning / mapping 对应七人独立取证、交叉质询、

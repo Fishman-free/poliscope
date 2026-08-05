@@ -232,14 +232,18 @@ async def projector_sessions(
         yield factory
 
 
-@pytest_asyncio.fixture
-async def api_client(migrated_db: str) -> AsyncIterator[Any]:
-    """An HTTP client bound to the real ASGI app and the test database.
+TEST_ACCOUNT_USERNAME = "integration-test-user"
+TEST_ACCOUNT_PASSWORD = "integration-test-password"
 
-    The app is exercised through its ASGI interface rather than by calling
-    handler functions, so routing, dependency injection, status codes, and
-    response headers are all covered. A handler that works when called directly
-    and 404s over HTTP is a failure users would hit and unit tests would miss.
+
+@pytest_asyncio.fixture(scope="session")
+async def account(migrated_db: str) -> AsyncIterator[dict[str, Any]]:
+    """One registered test account for the whole session.
+
+    Registered exactly once against the session-scoped database (later
+    registrations would 409 on the username). The bearer token is valid for
+    30 days, so every test can reuse it; ``id`` is what tests seed rows with
+    so the API's ownership checks accept them.
     """
     import httpx
 
@@ -254,6 +258,48 @@ async def api_client(migrated_db: str) -> AsyncIterator[Any]:
             transport=transport,
             base_url="http://poliscope.test",
         ) as client:
+            response = await client.post(
+                "/api/auth/register",
+                json={
+                    "username": TEST_ACCOUNT_USERNAME,
+                    "password": TEST_ACCOUNT_PASSWORD,
+                },
+            )
+            assert response.status_code == 201, response.text
+            yield response.json()
+    finally:
+        await state.dispose()
+
+
+@pytest_asyncio.fixture
+async def api_client(
+    migrated_db: str,
+    account: dict[str, Any],
+) -> AsyncIterator[Any]:
+    """An HTTP client bound to the real ASGI app and the test database.
+
+    The app is exercised through its ASGI interface rather than by calling
+    handler functions, so routing, dependency injection, status codes, and
+    response headers are all covered. A handler that works when called directly
+    and 404s over HTTP is a failure users would hit and unit tests would miss.
+
+    The account system guards every endpoint, so the client carries the shared
+    test account's bearer token on every request by default.
+    """
+    import httpx
+
+    from apps.api.dependencies import AppState
+    from apps.api.main import app
+
+    state = AppState(_role_url(migrated_db, APP_ROLE, APP_PASSWORD))
+    app.state.poliscope = state
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://poliscope.test",
+        ) as client:
+            client.headers["authorization"] = f"Bearer {account['token']}"
             yield client
     finally:
         await state.dispose()
@@ -266,11 +312,16 @@ def valid_research_contract() -> Any:
 
 
 @pytest_asyncio.fixture
-async def seeded_task(app_session: AsyncSession) -> UUID:
-    """Insert one research task and return its task_id.
+async def seeded_task(
+    app_session: AsyncSession,
+    account: dict[str, Any],
+) -> UUID:
+    """Insert one research task owned by the test account and return its id.
 
     Call and event rows carry a foreign key to research_tasks.task_id, so any
-    audit assertion needs a real parent task rather than a loose UUID.
+    audit assertion needs a real parent task rather than a loose UUID. The
+    task is owned by the shared test account, so API-side ownership checks
+    accept it.
     """
     from packages.research.models import ResearchTaskModel
 
@@ -282,6 +333,7 @@ async def seeded_task(app_session: AsyncSession) -> UUID:
             question="Does social media use cause adolescent depression?",
             status="AWAITING_CLAIM_CONFIRMATION",
             created_by="test_harness",
+            user_id=UUID(account["id"]),
             wall_clock_minutes=60,
             model_cost_usd=Decimal("10.0000"),
             tool_call_limit=100,

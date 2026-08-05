@@ -86,3 +86,8 @@ class ResearchContract(ContractModel):
     # validates that the id names a real knowledge base before the task is
     # created (apps/api/routers/tasks.py).
     knowledge_base_id: UUID | None = None
+    # Skills the researcher enabled for this task (migration 0013). The worker
+    # resolves these to the downloaded SKILL.md texts and injects them into the
+    # council's prompts as explicitly non-evidence process context; the API
+    # layer validates that every id belongs to the creating account.
+    skill_ids: tuple[UUID, ...] = ()

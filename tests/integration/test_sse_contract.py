@@ -10,6 +10,7 @@ real stream backed by the real ledger.
 from __future__ import annotations
 
 import json
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -143,6 +144,7 @@ def test_a_nested_payload_serialises_instead_of_killing_the_stream() -> None:
 async def test_the_stream_delivers_every_event_including_nested_payloads(
     api_client: httpx.AsyncClient,
     app_session: AsyncSession,
+    account: dict[str, Any],
 ) -> None:
     """End to end: a nested payload mid-stream must not truncate the rest.
 
@@ -162,7 +164,10 @@ async def test_the_stream_delivers_every_event_including_nested_payloads(
     await ledger.append(task_id, TERMINAL, {"n": 3}, "seed-3")
     await app_session.commit()
 
-    response = await api_client.get(f"/api/stream/{task_id}")
+    response = await api_client.get(
+        f"/api/stream/{task_id}",
+        params={"token": account["token"]},
+    )
 
     frames = _frames(response.text)
     assert [frame["id"] for frame in frames] == ["1", "2", "3"]
@@ -195,10 +200,14 @@ def test_last_event_id_header_is_parsed_defensively(
 async def test_stream_delivers_events_in_sequence_order(
     api_client: httpx.AsyncClient,
     app_session: AsyncSession,
+    account: dict[str, Any],
 ) -> None:
     task_id = await _create_task(api_client)
     await _seed_events(app_session, task_id, ("A", "B", TERMINAL))
-    response = await api_client.get(f"/api/stream/{task_id}")
+    response = await api_client.get(
+        f"/api/stream/{task_id}",
+        params={"token": account["token"]},
+    )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     frames = _frames(response.text)
@@ -209,6 +218,7 @@ async def test_stream_delivers_events_in_sequence_order(
 async def test_stream_resumes_after_last_event_id_without_replaying(
     api_client: httpx.AsyncClient,
     app_session: AsyncSession,
+    account: dict[str, Any],
 ) -> None:
     """This is the property the whole ledger-backed design exists for.
 
@@ -219,6 +229,7 @@ async def test_stream_resumes_after_last_event_id_without_replaying(
     await _seed_events(app_session, task_id, ("A", "B", "C", "D", TERMINAL))
     response = await api_client.get(
         f"/api/stream/{task_id}",
+        params={"token": account["token"]},
         headers={"Last-Event-ID": "2"},
     )
     frames = _frames(response.text)
@@ -229,12 +240,14 @@ async def test_stream_resumes_after_last_event_id_without_replaying(
 async def test_stream_survives_a_reconnect_that_reports_a_stale_id(
     api_client: httpx.AsyncClient,
     app_session: AsyncSession,
+    account: dict[str, Any],
 ) -> None:
     """Replaying from zero is lossless, which is why a bad id is not an error."""
     task_id = await _create_task(api_client)
     await _seed_events(app_session, task_id, ("A", TERMINAL))
     response = await api_client.get(
         f"/api/stream/{task_id}",
+        params={"token": account["token"]},
         headers={"Last-Event-ID": "garbage"},
     )
     assert [frame["id"] for frame in _frames(response.text)] == ["1", "2"]
@@ -242,9 +255,13 @@ async def test_stream_survives_a_reconnect_that_reports_a_stale_id(
 
 async def test_stream_for_an_unknown_task_returns_404_not_an_empty_stream(
     api_client: httpx.AsyncClient,
+    account: dict[str, Any],
 ) -> None:
     """A 200 with no events would look identical to a task that has not started."""
-    response = await api_client.get(f"/api/stream/{uuid4()}")
+    response = await api_client.get(
+        f"/api/stream/{uuid4()}",
+        params={"token": account["token"]},
+    )
     assert response.status_code == 404
 
 

@@ -39,15 +39,25 @@ class PrivateObjectStore:
     def store(self, task_id: UUID, content: bytes) -> StoredObject:
         return self.store_named(f"tasks/{task_id}", content)
 
-    def store_named(self, namespace: str, content: bytes) -> StoredObject:
-        """Store bytes under ``namespace/<sha256>.pdf``.
+    def store_named(
+        self,
+        namespace: str,
+        content: bytes,
+        *,
+        suffix: str = ".pdf",
+        content_type: str = "application/pdf",
+    ) -> StoredObject:
+        """Store bytes under ``namespace/<sha256>{suffix}``.
 
         Namespaced per collection so unrelated uploads cannot collide on the
         same content hash: a knowledge base keeps its documents under
-        ``knowledge/{kb_id}``, a task under ``tasks/{task_id}``.
+        ``knowledge/{kb_id}``, a task under ``tasks/{task_id}``. The suffix
+        and content type default to PDF -- the task-upload path's format --
+        and the knowledge-base ingest passes the resolved values through so
+        a docx stays a .docx in both the key and the metadata row.
         """
         digest = hashlib.sha256(content).hexdigest()
-        key = f"{namespace}/{digest}.pdf"
+        key = f"{namespace}/{digest}{suffix}"
         path = self._root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
@@ -55,7 +65,7 @@ class PrivateObjectStore:
             object_key=key,
             content_hash=digest,
             encryption="AES256",
-            content_type="application/pdf",
+            content_type=content_type,
             size_bytes=len(content),
         )
 

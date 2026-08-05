@@ -1,0 +1,89 @@
+/* Skills panel: downloaded skills with checkboxes, plus the add-by-URL form
+   at the bottom -- the same quiet card language as the other sidebar panels. */
+
+.skills__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.skills__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+}
+
+.skills__row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.skills__row-main input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.skills__info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.skills__name {
+  font-size: var(--text-small);
+  color: var(--ink-1);
+}
+
+.skills__url {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills__add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.skills__add-hint {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.skills__add input {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-small);
+}
+
+.skills__add .button {
+  align-self: flex-start;
+}
+
+.skills__error {
+  font-size: var(--text-small);
+  color: var(--refuted);
+}

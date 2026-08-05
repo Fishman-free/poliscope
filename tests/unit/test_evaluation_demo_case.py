@@ -88,6 +88,7 @@ class _Acquired:
     authors: tuple[str, ...] = ()
     dataset_id: str | None = None
     object_id: UUID | None = None
+    document_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +137,14 @@ class _DemoAcquirer:
     ) -> _AcquisitionResult:
         # Not exercised by this file's scenario -- see module docstring on
         # what this demo case does and does not exercise.
+        return _AcquisitionResult()
+
+    async def acquire_dois(self, dois: tuple[str, ...]) -> _AcquisitionResult:
+        return _AcquisitionResult()
+
+    async def acquire_knowledge_documents(
+        self, documents: tuple[object, ...]
+    ) -> _AcquisitionResult:
         return _AcquisitionResult()
 
 
@@ -190,6 +199,12 @@ class _DemoFindingExtractor:
 
     async def extract_uploaded(
         self, source_id: UUID, object_id: UUID
+    ) -> _Extraction:
+        # Not exercised by this file's scenario -- see acquire_uploaded above.
+        raise NotImplementedError
+
+    async def extract_knowledge_document(
+        self, source_id: UUID, document_id: UUID
     ) -> _Extraction:
         # Not exercised by this file's scenario -- see acquire_uploaded above.
         raise NotImplementedError

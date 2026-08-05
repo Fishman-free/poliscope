@@ -69,17 +69,28 @@
   --radius-1: 4px;
   --radius-2: 8px;
   --radius-3: 12px;
+  --radius-4: 16px;
+  --radius-5: 20px;
   --radius-pill: 999px;
 
   --shadow-1: 0 1px 2px rgba(16, 16, 24, 0.06);
   --shadow-2: 0 4px 16px rgba(16, 16, 24, 0.10);
+  /* Floating: the elevated card / active segment / hovered row. Apple-style
+   * lift -- wide, soft, almost shadow-less at the contact edge. */
+  --shadow-3: 0 12px 40px rgba(16, 16, 24, 0.12), 0 2px 8px rgba(16, 16, 24, 0.06);
 
   /* Springs. Critically damped by default; bounce is reserved for motion the
    * user's own gesture started, and this product has exactly one such gesture
-   * (panning the map). */
+   * (panning the map). `--ease-smooth` is the Apple-style ease-out used for
+   * screen transitions and the sliding tab indicator. */
   --ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --duration-fast: 120ms;
   --duration-standard: 200ms;
+  --duration-slow: 320ms;
+
+  /* Right sidebar width (model settings + session history). */
+  --sidebar-w: 320px;
 }
 
 /* Reduced transparency: frost becomes solid rather than merely lighter. */
