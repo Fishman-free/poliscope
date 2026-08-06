@@ -27,6 +27,7 @@ import { useMemo } from "react";
 import type { LedgerEvent, Seat, SeatSummary } from "../api/types";
 import { SEAT_LABELS } from "../api/types";
 import { Badge, Empty, Panel } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./CouncilView.css";
 
@@ -155,8 +156,8 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
       <li className="council__tl-item">
         <details className="council__reasoning">
           <summary>
-            模型思考过程
-            <span className="council__reasoning-hint">原始模型输出，非正式证据</span>
+            {t("模型思考过程")}
+            <span className="council__reasoning-hint">{t("原始模型输出，非正式证据")}</span>
           </summary>
           <pre className="council__reasoning-text">{reasoning}</pre>
         </details>
@@ -169,9 +170,9 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
     const condition = typeof payload.update_condition === "string" ? payload.update_condition : "";
     return (
       <li className="council__tl-item">
-        <span className="council__tl-label">预承诺已密封</span>
+        <span className="council__tl-label">{t("预承诺已密封")}</span>
         <span className="council__tl-meta mono">
-          置信度 {confidence !== null && confidence !== undefined ? String(confidence) : "未记录"}
+          {t("置信度")} {confidence !== null && confidence !== undefined ? String(confidence) : t("未记录")}
         </span>
         {condition ? <p className="council__text">{condition}</p> : null}
       </li>
@@ -182,8 +183,8 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
     const count = payload.request_count;
     return (
       <li className="council__tl-item">
-        <span className="council__tl-label">请求证据</span>
-        <span className="council__tl-meta">{typeof count === "number" ? `${count} 条` : ""}</span>
+        <span className="council__tl-label">{t("请求证据")}</span>
+        <span className="council__tl-meta">{typeof count === "number" ? t("{0} 条", count) : ""}</span>
       </li>
     );
   }
@@ -192,9 +193,9 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
     const items = payload.items;
     return (
       <li className="council__tl-item">
-        <span className="council__tl-label">发布证据条目</span>
+        <span className="council__tl-label">{t("发布证据条目")}</span>
         <span className="council__tl-meta">
-          {Array.isArray(items) ? `${items.length} 条` : ""}
+          {Array.isArray(items) ? t("{0} 条", items.length) : ""}
         </span>
       </li>
     );
@@ -205,8 +206,8 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
     const fatal = payload.is_fatal === true;
     return (
       <li className="council__tl-item">
-        <Badge tone={fatal ? "refuted" : "provisional"}>{fatal ? "致命质询" : "非致命质询"}</Badge>
-        <span className="council__tl-text">{statement || "（未记录质询内容）"}</span>
+        <Badge tone={fatal ? "refuted" : "provisional"}>{fatal ? t("致命质询") : t("非致命质询")}</Badge>
+        <span className="council__tl-text">{statement || t("（未记录质询内容）")}</span>
       </li>
     );
   }
@@ -215,9 +216,9 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
     const rank = payload.priority_rank;
     return (
       <li className="council__tl-item">
-        <span className="council__tl-label">认领盲点悬赏</span>
+        <span className="council__tl-label">{t("认领盲点悬赏")}</span>
         <span className="council__tl-meta">
-          {typeof rank === "number" ? `优先级 #${rank}` : ""}
+          {typeof rank === "number" ? t("优先级 #{0}", rank) : ""}
         </span>
       </li>
     );
@@ -228,10 +229,10 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
     const confidence = payload.confidence;
     return (
       <li className="council__tl-item council__tl-item--final">
-        <span className="council__tl-label">最终复判</span>
-        {payload.has_dissent === true ? <Badge tone="refuted">异议</Badge> : null}
+        <span className="council__tl-label">{t("最终复判")}</span>
+        {payload.has_dissent === true ? <Badge tone="refuted">{t("异议")}</Badge> : null}
         <span className="council__tl-meta mono">
-          置信度 {confidence !== null && confidence !== undefined ? String(confidence) : "未记录"}
+          {t("置信度")} {confidence !== null && confidence !== undefined ? String(confidence) : t("未记录")}
         </span>
         {judgment ? <p className="council__text">{judgment}</p> : null}
       </li>
@@ -242,8 +243,8 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
     const reason = typeof payload.reason === "string" ? payload.reason : "";
     return (
       <li className="council__tl-item">
-        <Badge tone="unknown">缺席</Badge>
-        <span className="council__tl-text">{reason || "该轮次未产出判断"}</span>
+        <Badge tone="unknown">{t("缺席")}</Badge>
+        <span className="council__tl-text">{reason || t("该轮次未产出判断")}</span>
       </li>
     );
   }
@@ -261,36 +262,36 @@ function SummaryCard({ entry }: { entry: SeatSummary }) {
   return (
     <>
       <section className="council__block">
-        <h4>预承诺</h4>
+        <h4>{t("预承诺")}</h4>
         {entry.precommitment ? (
           <>
             <p className="council__confidence mono">
-              置信度{" "}
+              {t("置信度")}{" "}
               {entry.precommitment.confidence !== null
                 ? entry.precommitment.confidence
-                : "未记录"}
+                : t("未记录")}
             </p>
             <p className="council__text">
-              {entry.precommitment.update_condition ?? "未记录更新条件"}
+              {entry.precommitment.update_condition ?? t("未记录更新条件")}
             </p>
           </>
         ) : (
-          <Empty>本轮未记录预承诺。</Empty>
+          <Empty>{t("本轮未记录预承诺。")}</Empty>
         )}
       </section>
 
       <section className="council__block">
-        <h4>提出的质询（{entry.challenges_raised.length}）</h4>
+        <h4>{t("提出的质询（{0}）", entry.challenges_raised.length)}</h4>
         {entry.challenges_raised.length === 0 ? (
-          <Empty>本轮未提出质询。</Empty>
+          <Empty>{t("本轮未提出质询。")}</Empty>
         ) : (
           <ul className="council__challenges">
             {entry.challenges_raised.map((challenge, index) => (
               <li key={index}>
                 <Badge tone={challenge.is_fatal ? "refuted" : "provisional"}>
-                  {challenge.is_fatal ? "致命" : "非致命"}
+                  {challenge.is_fatal ? t("致命") : t("非致命")}
                 </Badge>
-                <span>{challenge.statement ?? "（未记录质询内容）"}</span>
+                <span>{challenge.statement ?? t("（未记录质询内容）")}</span>
               </li>
             ))}
           </ul>
@@ -298,21 +299,21 @@ function SummaryCard({ entry }: { entry: SeatSummary }) {
       </section>
 
       <section className="council__block">
-        <h4>最终复判</h4>
+        <h4>{t("最终复判")}</h4>
         {entry.final_judgment ? (
           <>
             <p className="council__text">
-              {entry.final_judgment.final_judgment ?? "（未记录判定文本）"}
+              {entry.final_judgment.final_judgment ?? t("（未记录判定文本）")}
             </p>
             <p className="council__confidence mono">
-              置信度{" "}
+              {t("置信度")}{" "}
               {entry.final_judgment.confidence !== null
                 ? entry.final_judgment.confidence
-                : "未记录"}
+                : t("未记录")}
             </p>
           </>
         ) : (
-          <Empty>本轮未产出最终复判。</Empty>
+          <Empty>{t("本轮未产出最终复判。")}</Empty>
         )}
       </section>
     </>
@@ -331,11 +332,11 @@ export function CouncilView({
 
   return (
     <Panel
-      title="七人议会"
-      subtitle="每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判，原始模型推理在对应轮次下展开（过程数据，非正式证据）。"
+      title={t("七人议会")}
+      subtitle={t("每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判，原始模型推理在对应轮次下展开（过程数据，非正式证据）。")}
     >
       {seats.length === 0 ? (
-        <Empty>尚未收到任何席位事件。任务可能仍在队列中。</Empty>
+        <Empty>{t("尚未收到任何席位事件。任务可能仍在队列中。")}</Empty>
       ) : (
         <ul className="council__grid">
           {seats.map((entry) => {
@@ -345,11 +346,11 @@ export function CouncilView({
                 <header className="council__seat-head">
                   <span className="council__seat-name">{seatName(entry.seat)}</span>
                   {entry.final_judgment?.has_dissent ? (
-                    <Badge tone="refuted">异议</Badge>
+                    <Badge tone="refuted">{t("异议")}</Badge>
                   ) : entry.unavailable_phases.length > 0 ? (
-                    <Badge tone="unknown">部分缺席</Badge>
+                    <Badge tone="unknown">{t("部分缺席")}</Badge>
                   ) : (
-                    <Badge tone="admitted">完整参与</Badge>
+                    <Badge tone="admitted">{t("完整参与")}</Badge>
                   )}
                 </header>
 
@@ -365,7 +366,7 @@ export function CouncilView({
                       return (
                         <li key={phase} className="council__tl-phase-row">
                           <span className="council__tl-phase">
-                            {PHASE_LABELS[phase] ?? phase}
+                            {t(PHASE_LABELS[phase] ?? phase)}
                           </span>
                           <ol className="council__tl-items">
                             {phaseEntries.map((item, index) => (
@@ -378,7 +379,7 @@ export function CouncilView({
                     {/* 没有 PHASE_STARTED 分隔的阶段外事件（极端情况） */}
                     {entries.some((item) => item.phase === null) ? (
                       <li className="council__tl-phase-row">
-                        <span className="council__tl-phase">（未定位轮次）</span>
+                        <span className="council__tl-phase">{t("（未定位轮次）")}</span>
                         <ol className="council__tl-items">
                           {entries
                             .filter((item) => item.phase === null)
@@ -393,7 +394,7 @@ export function CouncilView({
 
                 {entry.unavailable_phases.length > 0 ? (
                   <footer className="council__unavailable">
-                    缺席轮次：{entry.unavailable_phases.join("、")}
+                    {t("缺席轮次：{0}", entry.unavailable_phases.join("、"))}
                   </footer>
                 ) : null}
               </li>

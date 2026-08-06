@@ -25,6 +25,7 @@ import type {
   KnowledgeDocumentDetail,
 } from "../api/types";
 import { Badge, Empty, Panel, Spinner } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./KnowledgeBaseView.css";
 
@@ -130,14 +131,18 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
       const lower = file.name.toLowerCase();
       const looksSupported = ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
       if (!looksSupported) {
-        setUploadError(`「${file.name}」格式不支持，已跳过（支持 PDF/TXT/MD/CSV/DOCX/PPTX/XLSX）`);
+        setUploadError(
+          t("「{0}」格式不支持，已跳过（支持 PDF/TXT/MD/CSV/DOCX/PPTX/XLSX）", file.name),
+        );
         continue;
       }
       try {
         await uploadKnowledgeDocument(selectedId, file);
       } catch (cause) {
         setUploadError(
-          `「${file.name}」上传失败：${cause instanceof Error ? cause.message : String(cause)}`,
+          t(
+            `「${file.name}」上传失败：${cause instanceof Error ? cause.message : String(cause)}`,
+          ),
         );
       }
     }
@@ -208,8 +213,8 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
 
   if (bases === null) {
     return (
-      <Panel title="知识库" subtitle="长期记忆与检索">
-        <Spinner label="正在加载知识库…" />
+      <Panel title={t("知识库")} subtitle={t("长期记忆与检索")}>
+        <Spinner label={t("正在加载知识库…")} />
       </Panel>
     );
   }
@@ -217,9 +222,9 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
   return (
     <div className="knowledge__layout">
       <section className="knowledge__list">
-        <h3 className="knowledge__section-title">知识库</h3>
+        <h3 className="knowledge__section-title">{t("知识库")}</h3>
         {bases.length === 0 ? (
-          <Empty>还没有知识库。先创建一个，再上传 PDF 文档。</Empty>
+          <Empty>{t("还没有知识库。先创建一个，再上传 PDF 文档。")}</Empty>
         ) : (
           <ul className="knowledge__bases">
             {bases.map((kb) => (
@@ -233,7 +238,7 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
                 >
                   <span className="knowledge__base-name">{kb.name}</span>
                   <span className="knowledge__base-meta">
-                    {kb.document_count} 篇文档
+                    {t("{0} 篇文档", kb.document_count)}
                   </span>
                 </button>
               </li>
@@ -243,12 +248,12 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
 
         <div className="knowledge__create">
           <input
-            placeholder="新知识库名称"
+            placeholder={t("新知识库名称")}
             value={newName}
             onChange={(event) => setNewName(event.target.value)}
           />
           <input
-            placeholder="描述（可选）"
+            placeholder={t("描述（可选）")}
             value={newDescription}
             onChange={(event) => setNewDescription(event.target.value)}
           />
@@ -258,7 +263,7 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
             onClick={create}
             disabled={creating || !newName.trim()}
           >
-            {creating ? "创建中…" : "创建知识库"}
+            {creating ? t("创建中…") : t("创建知识库")}
           </button>
           {createError ? (
             <p className="knowledge__error" role="alert">
@@ -275,7 +280,7 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
           </p>
         ) : null}
         {detail === null ? (
-          <Empty>在左侧选择一个知识库查看文档。</Empty>
+          <Empty>{t("在左侧选择一个知识库查看文档。")}</Empty>
         ) : (
           <>
             <header className="knowledge__header">
@@ -285,7 +290,7 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
                   <p className="knowledge__description">{detail.description}</p>
                 ) : null}
                 <p className="knowledge__meta">
-                  共 {detail.documents.length} 篇文档 · 中文检索为子串匹配
+                  {t("共 {0} 篇文档 · 中文检索为子串匹配", detail.documents.length)}
                 </p>
               </div>
               <button
@@ -295,18 +300,17 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
                 disabled={detail.documents.length > 0}
                 title={
                   detail.documents.length > 0
-                    ? "请先删除知识库内的全部文档"
-                    : "删除此知识库"
+                    ? t("请先删除知识库内的全部文档")
+                    : t("删除此知识库")
                 }
               >
-                删除
+                {t("删除")}
               </button>
             </header>
 
             <div className="knowledge__upload">
               <p className="knowledge__upload-hint">
-                上传文件（PDF / TXT / MD / CSV / DOCX / PPTX / XLSX，单个不超过 20 MB；
-                老版 .doc/.ppt/.xls 请先另存为新格式）
+                {t("上传文件（PDF / TXT / MD / CSV / DOCX / PPTX / XLSX，单个不超过 20 MB；老版 .doc/.ppt/.xls 请先另存为新格式）")}
               </p>
               <input
                 type="file"
@@ -324,16 +328,16 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
 
             <div className="knowledge__paste">
               <p className="knowledge__upload-hint">
-                或者直接粘贴文本作为知识库文档（笔记、网页摘录、报告片段均可）
+                {t("或者直接粘贴文本作为知识库文档（笔记、网页摘录、报告片段均可）")}
               </p>
               <input
-                placeholder="文档标题"
+                placeholder={t("文档标题")}
                 value={pastedTitle}
                 onChange={(event) => setPastedTitle(event.target.value)}
                 disabled={pasting}
               />
               <textarea
-                placeholder="把内容粘贴到这里…"
+                placeholder={t("把内容粘贴到这里…")}
                 rows={4}
                 value={pastedContent}
                 onChange={(event) => setPastedContent(event.target.value)}
@@ -345,7 +349,7 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
                 onClick={pasteDocument}
                 disabled={pasting || !pastedTitle.trim() || !pastedContent.trim()}
               >
-                {pasting ? "保存中…" : "加入知识库"}
+                {pasting ? t("保存中…") : t("加入知识库")}
               </button>
               {pasteError ? (
                 <p className="knowledge__error" role="alert">
@@ -355,7 +359,9 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
             </div>
 
             {detail.documents.length === 0 ? (
-              <Empty>这个知识库还没有文档，上传文件或粘贴文本后即可在任务中使用。</Empty>
+              <Empty>
+                {t("这个知识库还没有文档，上传文件或粘贴文本后即可在任务中使用。")}
+              </Empty>
             ) : (
               <ul className="knowledge__documents">
                 {detail.documents.map((doc) => (
@@ -364,8 +370,8 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
                       <div className="knowledge__document-info">
                         <span className="knowledge__document-title">{doc.title}</span>
                         <span className="knowledge__document-meta">
-                          {CONTENT_TYPE_LABELS[doc.content_type] ?? doc.content_type} ·{" "}
-                          {doc.page_count} 页/块 · {formatBytes(doc.size_bytes)}
+                          {t(CONTENT_TYPE_LABELS[doc.content_type] ?? doc.content_type)} ·{" "}
+                          {doc.page_count} {t("页/块")} · {formatBytes(doc.size_bytes)}
                         </span>
                       </div>
                       <div className="knowledge__document-actions">
@@ -374,14 +380,14 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
                           className="button button--small"
                           onClick={() => togglePreview(doc.document_id)}
                         >
-                          {previews[doc.document_id] ? "收起" : "预览"}
+                          {previews[doc.document_id] ? t("收起") : t("预览")}
                         </button>
                         <button
                           type="button"
                           className="button button--small"
                           onClick={() => removeDocument(doc.document_id)}
                         >
-                          删除
+                          {t("删除")}
                         </button>
                       </div>
                     </div>
@@ -393,9 +399,9 @@ export function KnowledgeBaseView({ active = true }: { active?: boolean }) {
                     {previews[doc.document_id] ? (
                       <details className="knowledge__preview" open>
                         <summary>
-                          解析文本
+                          {t("解析文本")}
                           {previews[doc.document_id]?.truncated ? (
-                            <Badge tone="unknown">已截断（仅前 20000 字符）</Badge>
+                            <Badge tone="unknown">{t("已截断（仅前 20000 字符）")}</Badge>
                           ) : null}
                         </summary>
                         <pre className="knowledge__preview-text">

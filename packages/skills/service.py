@@ -10,6 +10,7 @@ moved file is re-downloaded, never silently skipped.
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from uuid import UUID
 
@@ -35,9 +36,28 @@ class SkillsService:
         self._client = client or httpx.AsyncClient(timeout=30.0)
         self._root = Path(root or os.environ.get(SKILLS_ROOT_ENV, DEFAULT_SKILLS_ROOT))
 
-    async def add_from_url(self, user_id: UUID, url: str) -> StoredSkill:
-        """Download a GitHub skill and remember it for the account."""
-        name, markdown = await fetch_skill_markdown(self._client, url)
+    async def add_from_url(
+        self,
+        user_id: UUID,
+        url: str,
+        llm_assistant: Callable[..., Awaitable[object]] | None = None,
+    ) -> StoredSkill:
+        """Download a GitHub skill and remember it for the account.
+
+        ``llm_assistant`` is the round-4 smart-install hook: when the repo has
+        no SKILL.md at any conventional location or tree depth, the caller may
+        provide an assistant (the API layer wires the account's model
+        settings) that picks an existing markdown file or synthesises a skill
+        summary instead of failing.
+        """
+        # Conditional keyword keeps the call compatible with test fakes that
+        # monkeypatch fetch_skill_markdown with the two-argument signature.
+        if llm_assistant is None:
+            name, markdown = await fetch_skill_markdown(self._client, url)
+        else:
+            name, markdown = await fetch_skill_markdown(
+                self._client, url, llm_assistant=llm_assistant
+            )
         directory = self._root / str(user_id) / _safe_name(name)
         directory.mkdir(parents=True, exist_ok=True)
         target = directory / "SKILL.md"

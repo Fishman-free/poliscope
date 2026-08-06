@@ -18,6 +18,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from apps.cli import exit_codes
 from apps.cli.client import (
     DEFAULT_BASE_URL,
@@ -25,6 +27,7 @@ from apps.cli.client import (
     APIUnreachable,
     CLIClient,
 )
+from apps.cli.docs_writer import write_task_docs
 
 # One bearer token per base URL, so a single machine can talk to a local API
 # and several deployed instances without re-logging in. The file is plain
@@ -219,6 +222,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export.set_defaults(handler=_cmd_export)
 
+    export_docs = subparsers.add_parser(
+        "export-docs",
+        help="write the task's full results into docs/poliscope/ in the project",
+        description=(
+            "Skill-mode output (round 4): renders the finished task's "
+            "workspace snapshot into docs/poliscope/{task-slug}/ -- "
+            "scientists/ (one file per seat), evidence.md (evidence map), "
+            "council.md (precommitments, challenges, final judgments, "
+            "evolution), brief.md (server-rendered research brief), and "
+            "README.md (index). All content comes from the API snapshot; "
+            "nothing is re-serialised or invented here."
+        ),
+    )
+    export_docs.add_argument("--task-id", required=True, metavar="UUID")
+    export_docs.add_argument(
+        "--output",
+        default="docs/poliscope",
+        metavar="DIR",
+        help="directory to write under (default: docs/poliscope)",
+    )
+    export_docs.set_defaults(handler=_cmd_export_docs)
+
     council_preview = subparsers.add_parser(
         "council-preview",
         help="show the 7 seats' positions while a task awaits guidance",
@@ -394,6 +419,37 @@ async def _cmd_council_guidance(client: CLIClient, args: argparse.Namespace) -> 
             print("guidance   submitted")
         else:
             print("guidance   none (continuing without intervention)")
+    return exit_codes.OK
+
+
+async def _cmd_export_docs(client: CLIClient, args: argparse.Namespace) -> int:
+    """Write the task's results into the project's docs/poliscope directory.
+
+    Skill-mode output: after ``poliscope watch`` reports a task finished, the
+    researcher (or the calling agent) runs this to put the evidence map, the
+    council record, and each scientist's position into the project itself.
+    """
+    try:
+        snapshot = await client.workspace(args.task_id)
+        report = await client.export(args.task_id, "markdown")
+    except httpx.HTTPStatusError as error:
+        detail = error.response.text[:300]
+        print(
+            f"poliscope: cannot fetch task {args.task_id}: HTTP "
+            f"{error.response.status_code} {detail}",
+            file=sys.stderr,
+        )
+        return exit_codes.FAILED
+    output_root = Path(args.output)
+    try:
+        written = write_task_docs(
+            dict(snapshot), report, output_root
+        )
+    except OSError as error:
+        print(f"poliscope: cannot write under {output_root}: {error}", file=sys.stderr)
+        return exit_codes.FAILED
+    for path in written:
+        print(f"wrote {path}")
     return exit_codes.OK
 
 

@@ -4,18 +4,28 @@ Every endpoint is scoped to the calling account. Adding a skill downloads
 its SKILL.md into the server's per-account directory and records it; the
 council injects enabled skills into a task's prompts when the task was
 created with the skill's id.
+
+Smart install (round-4): when the repo has no SKILL.md at any conventional
+path, the account's configured model is asked to pick an existing markdown
+file or synthesise a skill summary from the repo (packages/skills/llm_assist).
+Without a model configured the honest error explains exactly that.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.dependencies import CurrentUserDep, SessionDep
 from apps.api.schemas import SkillAddRequest, SkillToggleRequest
+from packages.models.settings import ModelSettingsRepository
 from packages.skills.github import SkillFetchError
+from packages.skills.llm_assist import SkillLLMError, analyze_repo_for_skill
 from packages.skills.repository import (
     SkillAlreadyAdded,
     SkillNotFound,
@@ -37,6 +47,29 @@ def _skill_dto(skill: StoredSkill) -> dict[str, Any]:
     }
 
 
+async def _llm_assistant_for(
+    session: AsyncSession,
+    user_id: UUID,
+) -> (
+    Callable[..., Awaitable[object]] | None
+):
+    """Wire the account's model settings into the skill-assist analysis.
+
+    ``None`` when the account has no model configured -- the honest error
+    message then tells the researcher to configure one before a no-SKILL.md
+    repo can be installed.
+    """
+    saved = await ModelSettingsRepository(session).get(user_id)
+    if not (saved.model_base_url and saved.has_api_key):
+        return None
+    model_config: dict[str, object] = {
+        "base_url": saved.model_base_url,
+        "api_key": saved.model_api_key,
+        "model_name": saved.model_name,
+    }
+    return partial(analyze_repo_for_skill, model_config=model_config)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 @router.post("/", status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def add_skill(
@@ -46,12 +79,15 @@ async def add_skill(
 ) -> dict[str, Any]:
     """Download a GitHub skill and remember it for the caller's account."""
     service = SkillsService(session)
+    llm_assistant = await _llm_assistant_for(session, current_user.id)
     try:
-        skill = await service.add_from_url(current_user.id, request.github_url)
-    except SkillFetchError as error:
+        skill = await service.add_from_url(
+            current_user.id, request.github_url, llm_assistant=llm_assistant
+        )
+    except (SkillFetchError, SkillLLMError) as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=error.reason,
+            detail=getattr(error, "reason", str(error)),
         ) from error
     except SkillAlreadyAdded as error:
         raise HTTPException(

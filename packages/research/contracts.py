@@ -91,3 +91,10 @@ class ResearchContract(ContractModel):
     # council's prompts as explicitly non-evidence process context; the API
     # layer validates that every id belongs to the creating account.
     skill_ids: tuple[UUID, ...] = ()
+    # Language the council must write its outputs in, following the language
+    # the researcher asked in (round-4 requirement): "auto" means the API
+    # detects it from `question` and stores the resolved value; otherwise one
+    # of zh-Hans / zh-Hant / en. The worker injects it into every seat's
+    # system prompt, so reasoning, structured outputs, and the final report
+    # all come back in that language.
+    output_language: str = "auto"

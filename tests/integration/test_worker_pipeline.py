@@ -15,11 +15,16 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
-from apps.worker.main import WorkerContext, claim_queued_tasks, drain
+from apps.worker.main import (
+    WorkerContext,
+    claim_queued_tasks,
+    drain,
+    recover_stale_running,
+)
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
     PHASE_STARTED,
@@ -562,3 +567,61 @@ async def test_a_paused_task_is_never_claimed_until_resumed(
         )
     finally:
         await context.dispose()
+
+
+async def test_claim_marks_the_task_running_so_it_is_never_claimed_twice(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Regression test for a real production incident.
+
+    The claim transaction flips the row to ``RUNNING`` before releasing its
+    lock. Previously the status stayed ``QUEUED`` for the whole run, so the
+    worker's own next poll -- two seconds later -- re-selected the same task
+    while the first run was still going, and the two parallel runs appended
+    the same idempotency keys with different payloads until one of them died
+    on ``EventConflict`` (16 conflicts and a FAILED task on one real task).
+    The ``RUNNING`` flip is what makes ``SKIP LOCKED`` actually safe.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions)
+
+    claimed = await claim_queued_tasks(app_sessions, limit=10)
+    assert task_id in claimed
+    assert await _status(app_sessions, task_id) == TaskStatus.RUNNING
+
+    # The next poll (or a second worker) must not select it again.
+    assert task_id not in await claim_queued_tasks(app_sessions, limit=10)
+
+
+async def test_recover_stale_running_requeues_only_crashed_claims(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """A crashed worker leaves RUNNING rows; reclaim only the stale ones.
+
+    The stale threshold is the task's own wall-clock budget times two plus a
+    buffer: a legitimate run stops when its budget is exhausted, so anything
+    still RUNNING beyond that is a dead claim. Re-running a reclaimed task is
+    safe because a crashed run's transaction rolled back -- no committed event
+    can collide with the rerun, and a run whose events *were* committed also
+    committed its terminal status, so it is never RUNNING here.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions)  # wall_clock_minutes=60
+    fresh_task, _ = await _seed_queued_task(app_sessions)
+    await claim_queued_tasks(app_sessions, limit=10)
+    assert await _status(app_sessions, fresh_task) == TaskStatus.RUNNING
+
+    # Age the first claim beyond its 2*60 + 15 = 135 minute threshold.
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(updated_at=func.now() - text("interval '4 hours'"))
+        )
+        await session.commit()
+
+    assert await recover_stale_running(app_sessions) == 1
+    assert await _status(app_sessions, task_id) == TaskStatus.QUEUED
+    # A fresh claim must be left alone.
+    assert await _status(app_sessions, fresh_task) == TaskStatus.RUNNING
+
+    # The reclaimed task can be claimed and run again.
+    assert task_id in await claim_queued_tasks(app_sessions, limit=10)

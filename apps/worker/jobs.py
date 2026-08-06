@@ -53,6 +53,7 @@ from packages.knowledge.search import KnowledgeBaseSearch
 from packages.memory.adapter import create_memory_adapter
 from packages.memory.council_memory import CouncilMemory
 from packages.models.contracts import ModelClass, ModelGateway
+from packages.models.endpoint_config import normalize_base_url
 from packages.models.gateway import AuditedModelGateway
 from packages.models.openai_compatible import (
     OpenAICompatibleConfig,
@@ -63,6 +64,7 @@ from packages.papers.bibtex import extract_dois_from_bibtex
 from packages.papers.finding_extraction import FindingExtractor
 from packages.papers.object_store import PrivateObjectStore
 from packages.research.contracts import TaskModelConfig
+from packages.research.language import detect_output_language
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
 from packages.skills.models import SkillModel
@@ -92,6 +94,11 @@ async def _claim(session: AsyncSession, task_id: UUID) -> ResearchTaskModel:
     which looks like it worked while burning the budget twice. The second worker
     here blocks until the first commits and then sees a status that is no longer
     QUEUED.
+
+    Two statuses are runnable. ``RUNNING`` is the worker's claim state
+    (``claim_queued_tasks`` flips the row before releasing its lock, so no
+    second claim can ever select it again -- see apps/worker/main.py); the
+    direct ``deliberate`` callers (CLI, tests) still pass QUEUED tasks.
     """
     row = await session.scalar(
         select(ResearchTaskModel)
@@ -100,9 +107,9 @@ async def _claim(session: AsyncSession, task_id: UUID) -> ResearchTaskModel:
     )
     if row is None:
         raise TaskNotRunnable(f"task {task_id} does not exist")
-    if row.status != TaskStatus.QUEUED:
+    if row.status not in (TaskStatus.QUEUED, TaskStatus.RUNNING):
         raise TaskNotRunnable(
-            f"task {task_id} is {row.status}, not {TaskStatus.QUEUED}"
+            f"task {task_id} is {row.status}, not runnable"
         )
     return row
 
@@ -124,10 +131,14 @@ def _gateway_for_task_config(
         or os.environ.get("POLISCOPE_MODEL_NAME")
         or "deepseek-v4-flash"
     )
+    # Normalise the stored endpoint too: tasks created before the settings API
+    # learned to do this can carry a console-portal URL (the incident that
+    # made the council go absent), and the gateway must not inherit it.
+    base_url, _ = normalize_base_url(parsed.base_url)
     return OpenAICompatibleModelGateway(
         OpenAICompatibleConfig(
             api_key=parsed.api_key,
-            base_url=parsed.base_url,
+            base_url=base_url,
             model_names={
                 ModelClass.STRONG_REASONING: model_name,
                 ModelClass.MEDIUM: model_name,
@@ -497,6 +508,11 @@ async def _deliberate_impl(
         else CouncilCheckpoint.model_validate(task.council_checkpoint)
     )
     skills = await _skills_context(session, task)
+    # Legacy rows created before migration 0017 carry "auto": resolve it from
+    # the question here so no pre-existing task is left without a language.
+    output_language = task.output_language or "auto"
+    if output_language == "auto":
+        output_language = detect_output_language(task.question)
     if checkpoint is None:
         report = await orchestrator.run(
             task_id=task_id,
@@ -508,6 +524,7 @@ async def _deliberate_impl(
             knowledge_documents=await _knowledge_documents(session, task),
             knowledge_search=_knowledge_searcher(session, task),
             researcher_skills=skills,
+            output_language=output_language,
             stop_before=TaskPhase.JOINT_MODELING,
         )
     else:
@@ -521,6 +538,7 @@ async def _deliberate_impl(
             knowledge_documents=await _knowledge_documents(session, task),
             knowledge_search=_knowledge_searcher(session, task),
             researcher_skills=skills,
+            output_language=output_language,
             resume_from=checkpoint,
             council_guidance=checkpoint.guidance,
         )
@@ -577,23 +595,18 @@ async def run_task(
     CLAUDE.md 10 asks for, rather than a lost round.
 
     ``EventConflict`` is different from every other failure this function can
-    raise, and is handled separately on purpose. CLAUDE.md 4.1 fixes the only
-    resume point at AWAITING_COUNCIL_INPUT; a checkpoint is written only when
-    a run actually reaches it (see :func:`deliberate`), so a task that fails
-    anywhere between PRECOMMITMENT committing and that checkpoint is left with
-    ``council_checkpoint IS NULL`` and ``status`` unchanged (``_claim`` never
-    sets a "running" status). The worker's poll loop
-    (``apps/worker/main.py::run_worker``) reclaims that still-QUEUED task
-    every ``POLL_INTERVAL_SECONDS`` and reruns every phase from PRECOMMITMENT
-    against the live, non-deterministic model -- which is *guaranteed* to
-    collide with the payload already sealed under the same idempotency key,
-    identically, forever. Left alone, that is an infinite retry loop that
-    burns real model calls with no terminal status ever recorded and nothing
-    surfaced to the researcher, which is what CLAUDE.md 10's "budget exhausted
-    must report incomplete evidence, never fabricate completeness" is really
-    asking to avoid. Since general mid-phase resume is explicitly out of scope
-    (CLAUDE.md 4.1), the only honest response to this specific exception is to
-    stop retrying and record the task as terminally ``FAILED``.
+    raise, and is handled separately on purpose. It means two *different*
+    events were assigned the same identity -- under normal operation this
+    cannot happen any more: the claim transaction flips the task to RUNNING
+    (apps/worker/main.py), so a task is never run twice, and a crashed
+    worker's reclaim (``recover_stale_running``) only ever resets runs whose
+    transaction rolled back, so no committed event is ever replayed against a
+    different payload. The exception survives as a backstop: if a conflict
+    somehow still surfaces, the honest response is to stop retrying and record
+    the task as terminally ``FAILED`` rather than burn model calls in an
+    infinite reclaim loop with no terminal status ever recorded -- the
+    "budget exhausted must report incomplete evidence, never fabricate
+    completeness" rule of CLAUDE.md 10, applied to identity conflicts.
     """
     # The live-view trace (model deltas, tool calls) rides a separate,
     # self-owned session chain: it must never tangle with the deliberation

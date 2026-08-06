@@ -202,6 +202,19 @@ export interface ModelSettingsUpdate {
   clear_api_key?: boolean;
 }
 
+/** `POST /api/settings/model/test` -- one live connectivity probe against
+ * the researcher's current form values. Nothing is saved; the key is never
+ * part of any response. `corrected_base_url` is set when the typed URL was
+ * rewritten (e.g. a console portal → its API endpoint), and the form should
+ * adopt it so what gets saved is what got tested. */
+export interface ModelTestResult {
+  ok: boolean;
+  message: string;
+  latency_ms: number | null;
+  corrected_base_url: string | null;
+  correction: string | null;
+}
+
 /** One seat's precommitment, straight off ``PRECOMMITMENT_SEALED``. */
 export interface SeatPrecommitment {
   confidence: number | null;

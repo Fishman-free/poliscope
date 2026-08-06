@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchTasks } from "../api/client";
 import type { TaskSummary } from "../api/types";
 import { Badge, Empty, Spinner, TASK_STATUS_TONE } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./SessionHistory.css";
 
@@ -111,23 +112,23 @@ export function SessionHistory({
         onClick={() => setOpen((value) => !value)}
         aria-haspopup="true"
         aria-expanded={open}
-        title="会话历史：回到任意一次研究会话"
+        title={t("会话历史：回到任意一次研究会话")}
       >
         <HistoryIcon />
-        会话历史
+        {t("会话历史")}
       </button>
       {open ? (
-        <div className="session__popover" role="group" aria-label="会话历史">
-          <span className="session__popover-head">全部会话</span>
+        <div className="session__popover" role="group" aria-label={t("会话历史")}>
+          <span className="session__popover-head">{t("全部会话")}</span>
           {error ? (
             <p className="session__error" role="alert">
               {error}
             </p>
           ) : null}
           {tasks === null ? (
-            <Spinner label="正在加载会话…" />
+            <Spinner label={t("正在加载会话…")} />
           ) : tasks.length === 0 ? (
-            <Empty>还没有会话。创建第一个研究任务后，它会出现在这里。</Empty>
+            <Empty>{t("还没有会话。创建第一个研究任务后，它会出现在这里。")}</Empty>
           ) : (
             <ol className="session__list">
               {tasks.map((task) => (
@@ -139,7 +140,7 @@ export function SessionHistory({
                       (task.task_id === currentTaskId ? " session__row--current" : "")
                     }
                     onClick={() => openAndClose(task.task_id)}
-                    title="打开这个会话"
+                    title={t("打开这个会话")}
                   >
                     <span className="session__question">{task.question}</span>
                     <span className="session__meta">

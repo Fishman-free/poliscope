@@ -23,9 +23,6 @@ from collections.abc import Sequence
 
 from alembic import op
 
-from packages.kernel.config import APP_ROLE
-from packages.kernel.privileges import FULL_DML, grant, revoke_all
-
 revision: str = "0016_process_stream_no_fk"
 down_revision: str | None = "0015_process_stream"
 branch_labels: str | Sequence[str] | None = None

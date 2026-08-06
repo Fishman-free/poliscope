@@ -41,6 +41,8 @@ EXPECTED_COLUMNS = {
         # Owning account (migration 0012) and enabled skills (0013).
         "user_id",
         "skill_ids",
+        # Output language the council must answer in (migration 0017).
+        "output_language",
     },
     "research_scopes": {
         "id",

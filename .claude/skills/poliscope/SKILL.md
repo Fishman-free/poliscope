@@ -130,6 +130,23 @@ invocation, which is fine for occasional calls but wasteful in a tight loop.
    `has_gaps` and `limitations` in the exported brief exist precisely so this
    is never silently smoothed over.
 
+7. **Write the full results into the user's project (round-4 skill output).**
+   After a task finishes, put the evidence map, the council record, and each
+   scientist's position into the project itself so the user can browse them
+   in their repository, not only in the web workbench:
+
+   ```bash
+   poliscope export-docs --task-id <task_id> --output docs/poliscope
+   ```
+
+   This creates `docs/poliscope/{task-slug}/` with `README.md` (index),
+   `brief.md` (server-rendered research brief), `evidence.md` (evidence map:
+   nodes and edges with paper/cluster counts), `council.md` (precommitments,
+   challenges, final judgments, evolution timeline), and `scientists/` (one
+   file per seat). Every fact comes from the API snapshot -- nothing is
+   re-serialised or invented by the CLI. Point the user at the directory in
+   your final summary.
+
 ## Hard constraints (design spec 8.7, non-negotiable)
 
 - Never call a model provider or a paper/data source directly from this skill.

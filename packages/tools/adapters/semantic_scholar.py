@@ -37,6 +37,7 @@ class SemanticScholarAdapter:
             year=cast(int | None, payload.get("year")),
             publication_type=publication_type,
             retracted=False,
+            citation_count=int(payload.get("citation_count", 0) or 0),
             provider_ids=FrozenDict(
                 {"semantic_scholar": str(payload.get("paper_id", ""))}
             ),
@@ -67,6 +68,7 @@ class SemanticScholarAdapter:
             year=cast(int | None, payload.get("year")),
             publication_type=publication_type,
             retracted=False,
+            citation_count=int(payload.get("citation_count", 0) or 0),
             provider_ids=FrozenDict(
                 {"semantic_scholar": str(payload.get("paper_id", ""))}
             ),

@@ -19,6 +19,7 @@ import { useMemo, useState } from "react";
 import type { LedgerEvent } from "../api/types";
 import { NODE_TYPE_LABELS, SEAT_LABELS, type Seat } from "../api/types";
 import { Badge, Empty, Panel, type Tone } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./AuditView.css";
 
@@ -94,7 +95,7 @@ function summarise(event: LedgerEvent): string {
   }
   const assignments = payload.assignments;
   if (Array.isArray(assignments)) {
-    parts.push(`${assignments.length} 项分派`);
+    parts.push(t("{0} 项分派", assignments.length));
   }
   const consensus = payload.conditional_consensus;
   if (typeof consensus === "string" && consensus) parts.push(consensus);
@@ -124,8 +125,8 @@ export function AuditView({
 
   return (
     <Panel
-      title="审计轨迹"
-      subtitle="科研事件账本的实时视图。不展示模型私有思维链。"
+      title={t("审计轨迹")}
+      subtitle={t("科研事件账本的实时视图。不展示模型私有思维链。")}
       actions={
         <label className="audit__filter">
           <input
@@ -133,7 +134,7 @@ export function AuditView({
             checked={refusalsOnly}
             onChange={(event) => setRefusalsOnly(event.target.checked)}
           />
-          只看拒绝与缺席（{refusalCount}）
+          {t("只看拒绝与缺席（{0}）", refusalCount)}
         </label>
       }
     >
@@ -143,15 +144,15 @@ export function AuditView({
           aria-hidden="true"
         />
         {streamOpen
-          ? "已连接事件流。断线重连时按账本序号续传，不会丢事件。"
-          : "事件流未连接。下方为本次会话已收到的事件。"}
+          ? t("已连接事件流。断线重连时按账本序号续传，不会丢事件。")
+          : t("事件流未连接。下方为本次会话已收到的事件。")}
       </p>
 
       {shown.length === 0 ? (
         <Empty>
           {refusalsOnly
-            ? "本次会话未收到任何拒绝或缺席事件。"
-            : "尚未收到事件。任务可能仍在队列中。"}
+            ? t("本次会话未收到任何拒绝或缺席事件。")
+            : t("尚未收到事件。任务可能仍在队列中。")}
         </Empty>
       ) : (
         <ol className="audit__list">

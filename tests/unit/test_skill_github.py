@@ -161,3 +161,144 @@ async def test_fetch_rejects_github_api_rate_limit() -> None:
             await fetch_skill_markdown(
                 client, "https://github.com/owner/skill-name"
             )
+
+
+# --------------------------------------------------------------------------
+# Round-4 smart install: recursive tree scan + LLM assistant
+# --------------------------------------------------------------------------
+
+
+def _tree_payload(paths: list[str]) -> dict[str, object]:
+    return {
+        "sha": "abc",
+        "truncated": False,
+        "tree": [{"path": path, "type": "blob"} for path in paths],
+    }
+
+
+def _directory_payload(paths: list[str]) -> dict[str, object]:
+    return {
+        "entries": [{"path": path, "type": "file"} for path in paths],
+    }
+
+
+async def test_fetch_finds_skill_md_at_arbitrary_tree_depth() -> None:
+    """A repo that nests its SKILL.md under an unusual directory still
+    installs: the recursive tree listing is the second resolution tier."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if "contents/SKILL.md" in path or "contents/skills/SKILL.md" in path:
+            return _json_response({"message": "not found"}, status=404)
+        if "git/trees" in path:
+            return _json_response(
+                _tree_payload(["README.md", "academic/skills/SKILL.md"])
+            )
+        if path.endswith("contents/academic/skills/SKILL.md"):
+            return _json_response(_file_payload(MARKDOWN))
+        return _json_response({"message": "not found"}, status=404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        name, markdown = await fetch_skill_markdown(
+            client, "https://github.com/owner/skill-name"
+        )
+
+    assert name == "my-skill"
+    assert "Instructions for the council." in markdown
+
+
+async def test_fetch_uses_llm_assistant_to_pick_a_file() -> None:
+    """No SKILL.md anywhere: the LLM assistant selects an existing markdown
+    file (e.g. the repo's real instruction document) and it is installed."""
+
+    async def assistant(
+        client: httpx.AsyncClient, location: object, files: list[dict[str, str]]
+    ) -> object:
+        assert files  # the candidate markdown files were collected
+        return type(
+            "Choice", (), {"selected_path": "guides/research-methods.md", "name": "methods"}  # noqa: E501
+        )()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("SKILL.md") or "git/trees" in path:
+            return _json_response({"message": "not found"}, status=404)
+        if "contents/" in path and path.endswith("research-methods.md"):
+            return _json_response(_file_payload("# Research Methods\nFollow these."))
+        if "contents/" in path:
+            # Root listing: the candidate markdown files for the assistant.
+            return _json_response(_directory_payload(["README.md", "guides/research-methods.md"]))  # noqa: E501
+        return _json_response({"message": "not found"}, status=404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        name, markdown = await fetch_skill_markdown(
+            client,
+            "https://github.com/owner/skill-name",
+            llm_assistant=assistant,
+        )
+
+    # A picked file keeps its own honest name: no frontmatter, so the repo
+    # name stands in (the assistant's suggested name applies to synthesis).
+    assert name == "skill-name"
+    assert "Follow these." in markdown
+
+
+async def test_fetch_uses_llm_assistant_generated_summary() -> None:
+    """No SKILL.md and no installable file: the assistant synthesises a skill
+    summary from the repo's README, clearly not pretending it found one."""
+
+    async def assistant(
+        client: httpx.AsyncClient, location: object, files: list[dict[str, str]]
+    ) -> object:
+        return type(
+            "Choice",
+            (),
+            {
+                "selected_path": None,
+                "name": "academic-research",
+                "markdown": "# Academic Research Skill\nSummarised from README.",
+            },
+        )()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("SKILL.md") or "git/trees" in path:
+            return _json_response({"message": "not found"}, status=404)
+        if "contents/" in path:
+            return _json_response(
+                _directory_payload(["README.md"])
+                if not path.endswith("README.md")
+                else _file_payload("# Academic Research\nTools and methods.")
+            )
+        return _json_response({"message": "not found"}, status=404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        name, markdown = await fetch_skill_markdown(
+            client,
+            "https://github.com/owner/skill-name",
+            llm_assistant=assistant,
+        )
+
+    assert name == "academic-research"
+    assert "Summarised from README." in markdown
+
+
+async def test_fetch_still_fails_honestly_without_assistant() -> None:
+    """A repo with no SKILL.md anywhere and no LLM assistant configured still
+    fails with the honest reason -- never a fabricated skill."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("SKILL.md"):
+            return _json_response({"message": "not found"}, status=404)
+        if "git/trees" in path:
+            return _json_response(_tree_payload(["README.md", "docs/notes.md"]))
+        if "contents/" in path:
+            return _json_response(_directory_payload(["README.md"]))
+        return _json_response({"message": "not found"}, status=404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SkillFetchError, match="no SKILL.md found"):
+            await fetch_skill_markdown(
+                client, "https://github.com/owner/skill-name"
+            )

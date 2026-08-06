@@ -42,7 +42,38 @@
 
 .settings__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+/* 连接测试结果：成功/失败两态与表单同宽，不挤在按钮行里。 */
+.settings__test-ok,
+.settings__test-fail {
+  font-size: var(--text-small);
+  line-height: 1.5;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-2);
+}
+
+.settings__test-ok {
+  color: var(--admitted);
+  background: color-mix(in srgb, var(--admitted) 8%, transparent);
+}
+
+.settings__test-fail {
+  color: var(--refuted);
+  background: color-mix(in srgb, var(--refuted) 8%, transparent);
+}
+
+.settings__correction {
+  color: var(--ink-2);
+}
+
+/* 门控提示：保存按钮被禁用时的原因说明。 */
+.settings__gate-hint {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.5;
 }
 
 .settings__ok {

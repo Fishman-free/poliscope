@@ -21,8 +21,10 @@ from apps.api.schemas import (
 )
 from packages.accounts.repository import StoredUser
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
+from packages.models.endpoint_config import normalize_base_url
 from packages.models.settings import ModelSettingsRepository
 from packages.research.contracts import ResearchContract
+from packages.research.language import detect_output_language
 from packages.research.repository import ResearchRepository, StoredTask, TaskNotFound
 from packages.research.service import (
     InvalidCouncilGuidanceState,
@@ -39,6 +41,23 @@ TASK_NOT_FOUND = "unknown task"
 
 def _service(session: SessionDep) -> ResearchService:
     return ResearchService(ResearchRepository(session))
+
+
+def _normalized_model_config(config: dict[str, object]) -> dict[str, object]:
+    """Normalise the endpoint before it is stored on the task.
+
+    User input is never stored verbatim (see packages/models/endpoint_config.py
+    for the incident that proved it): the base_url gets its scheme, trailing
+    slash, and any console-portal rewrite applied so the worker later builds a
+    working gateway. ``TaskModelConfig`` also rejects scheme-less values, so
+    normalising first means a bare ``platform.deepseek.com`` becomes a valid
+    ``https://api.deepseek.com`` instead of a 422.
+    """
+    raw_url = config.get("base_url")
+    if isinstance(raw_url, str) and raw_url.strip():
+        normalized, _ = normalize_base_url(raw_url)
+        config = {**config, "base_url": normalized}
+    return config
 
 
 def _not_found(task_id: UUID, error: Exception) -> HTTPException:
@@ -136,6 +155,16 @@ async def create_task(
                 "api_key": saved.model_api_key,
                 "model_name": saved.model_name,
             }
+    if task_model_config is not None:
+        task_model_config = _normalized_model_config(task_model_config)
+    # Output language follows the language the researcher asked in: "auto"
+    # (the default) is resolved here from the question so the stored row
+    # always carries a concrete language and the worker never has to guess.
+    # An explicit value from the client (round-4 language switching) wins.
+    if request.output_language in (None, "", "auto"):
+        output_language = detect_output_language(request.question)
+    else:
+        output_language = request.output_language
     try:
         contract = ResearchContract.model_validate(
             {
@@ -146,6 +175,7 @@ async def create_task(
                 "task_model_config": task_model_config,
                 "knowledge_base_id": request.knowledge_base_id,
                 "skill_ids": tuple(request.skill_ids),
+                "output_language": output_language,
             }
         )
     except ValueError as error:

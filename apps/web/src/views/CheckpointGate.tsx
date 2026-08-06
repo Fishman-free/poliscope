@@ -20,6 +20,7 @@ import { submitCouncilGuidance } from "../api/client";
 import type { Seat, SeatSummary } from "../api/types";
 import { SEAT_LABELS } from "../api/types";
 import { Badge, Empty, Panel } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./CheckpointGate.css";
 
@@ -50,11 +51,11 @@ export function CheckpointGate({
 
   return (
     <Panel
-      title="议会检查点：等待研究者方向性引导"
-      subtitle="七位科学家在盲点悬赏阶段结束时的立场仅供参考——这不是投票，您的意见不会改变任何证据判定。"
+      title={t("议会检查点：等待研究者方向性引导")}
+      subtitle={t("七位科学家在盲点悬赏阶段结束时的立场仅供参考——这不是投票，您的意见不会改变任何证据判定。")}
     >
       {seats.length === 0 ? (
-        <Empty>尚未收到任何席位事件。</Empty>
+        <Empty>{t("尚未收到任何席位事件。")}</Empty>
       ) : (
         <ul className="checkpoint__grid">
           {seats.map((entry) => (
@@ -64,28 +65,28 @@ export function CheckpointGate({
                   {SEAT_LABELS[entry.seat as Seat] ?? entry.seat}
                 </span>
                 {entry.unavailable_phases.length > 0 ? (
-                  <Badge tone="unknown">部分缺席</Badge>
+                  <Badge tone="unknown">{t("部分缺席")}</Badge>
                 ) : (
-                  <Badge tone="admitted">完整参与</Badge>
+                  <Badge tone="admitted">{t("完整参与")}</Badge>
                 )}
               </header>
               {entry.precommitment ? (
                 <>
                   <p className="checkpoint__confidence mono">
-                    置信度{" "}
+                    {t("置信度")}{" "}
                     {entry.precommitment.confidence !== null
                       ? entry.precommitment.confidence
-                      : "未记录"}
+                      : t("未记录")}
                   </p>
                   <p className="checkpoint__text">
-                    {entry.precommitment.update_condition ?? "未记录更新条件"}
+                    {entry.precommitment.update_condition ?? t("未记录更新条件")}
                   </p>
                 </>
               ) : (
-                <Empty>本轮未记录预承诺。</Empty>
+                <Empty>{t("本轮未记录预承诺。")}</Empty>
               )}
               <p className="checkpoint__challenge-count">
-                提出质询 {entry.challenges_raised.length} 条
+                {t("提出质询 {0} 条", entry.challenges_raised.length)}
               </p>
             </li>
           ))}
@@ -94,14 +95,14 @@ export function CheckpointGate({
 
       <div className="checkpoint__guidance">
         <label htmlFor="council-guidance" className="checkpoint__label">
-          方向性备注（可留空，直接继续；不会作为证据或科学判断使用）
+          {t("方向性备注（可留空，直接继续；不会作为证据或科学判断使用）")}
         </label>
         <textarea
           id="council-guidance"
           className="checkpoint__textarea"
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder="例如：优先讨论跨文化适用边界"
+          placeholder={t("例如：优先讨论跨文化适用边界")}
           rows={4}
           disabled={submitting}
         />
@@ -117,10 +118,10 @@ export function CheckpointGate({
           disabled={submitting}
         >
           {submitting
-            ? "提交中…"
+            ? t("提交中…")
             : text.trim()
-              ? "提交引导并继续"
-              : "不干预，直接继续"}
+              ? t("提交引导并继续")
+              : t("不干预，直接继续")}
         </button>
       </div>
     </Panel>

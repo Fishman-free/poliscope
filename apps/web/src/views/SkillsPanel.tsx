@@ -15,6 +15,7 @@ import {
 } from "../api/client";
 import type { SkillSummary } from "../api/types";
 import { Empty, Panel, Spinner } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./SkillsPanel.css";
 
@@ -81,7 +82,7 @@ export function SkillsPanel({
   return (
     <Panel
       title="Skills"
-      subtitle="GitHub 技能，勾选后注入议会"
+      subtitle={t("GitHub 技能，勾选后注入议会")}
     >
       {error ? (
         <p className="skills__error" role="alert">
@@ -89,9 +90,9 @@ export function SkillsPanel({
         </p>
       ) : null}
       {skills === null ? (
-        <Spinner label="正在加载 Skills…" />
+        <Spinner label={t("正在加载 Skills…")} />
       ) : skills.length === 0 ? (
-        <Empty>还没有技能。在下方输入 GitHub 仓库地址下载第一个。</Empty>
+        <Empty>{t("还没有技能。在下方输入 GitHub 仓库地址下载第一个。")}</Empty>
       ) : (
         <ul className="skills__list">
           {skills.map((skill) => (
@@ -111,9 +112,9 @@ export function SkillsPanel({
                 type="button"
                 className="button button--small"
                 onClick={() => remove(skill)}
-                title="删除此技能"
+                title={t("删除此技能")}
               >
-                删除
+                {t("删除")}
               </button>
             </li>
           ))}
@@ -122,7 +123,7 @@ export function SkillsPanel({
 
       <div className="skills__add">
         <p className="skills__add-hint">
-          新增技能：输入 GitHub 仓库地址（如 https://github.com/owner/skill-name）
+          {t("新增技能：输入 GitHub 仓库地址（如 https://github.com/owner/skill-name）")}
         </p>
         <input
           placeholder="https://github.com/…"
@@ -137,7 +138,7 @@ export function SkillsPanel({
           onClick={add}
           disabled={adding || !newUrl.trim()}
         >
-          {adding ? "下载中…" : "下载并添加"}
+          {adding ? t("下载中…") : t("下载并添加")}
         </button>
         {addError ? (
           <p className="skills__error" role="alert">

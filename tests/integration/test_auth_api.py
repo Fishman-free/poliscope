@@ -11,13 +11,33 @@ from __future__ import annotations
 from typing import Any, cast
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from packages.models.endpoint_config import ProbeResult
 from packages.research.models import ResearchTaskModel
 from tests.factories import make_research_contract
 
 AUTH_PATH = "/api/auth"
+
+
+@pytest.fixture(autouse=True)
+def _probe_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings saves are gated on a live connectivity probe (see
+    test_model_settings_api.py for the gate's own tests); this file tests
+    account isolation, so the probe is stubbed to pass."""
+
+    async def _ok(
+        *,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        client: object | None = None,
+    ) -> ProbeResult:
+        return ProbeResult(True, "连接成功（1 ms）", 1)
+
+    monkeypatch.setattr("apps.api.routers.settings.probe_endpoint", _ok)
 
 
 async def _register(

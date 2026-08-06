@@ -30,6 +30,7 @@ the round.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -61,8 +62,17 @@ LIGHTWEIGHT_MODEL_ENV = "POLISCOPE_MODEL_NAME_LIGHTWEIGHT"
 PRICE_INPUT_ENV = "POLISCOPE_MODEL_PRICE_INPUT_PER_1M_USD"
 PRICE_OUTPUT_ENV = "POLISCOPE_MODEL_PRICE_OUTPUT_PER_1M_USD"
 TIMEOUT_ENV = "POLISCOPE_MODEL_TIMEOUT_SECONDS"
+STREAM_TIMEOUT_ENV = "POLISCOPE_MODEL_STREAM_TIMEOUT_SECONDS"
+INVOKE_TIMEOUT_ENV = "POLISCOPE_MODEL_INVOKE_TIMEOUT_SECONDS"
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
+# Total-deadline guards (see OpenAICompatibleConfig docstring): a thinking-mode
+# stream that never produces a malformed chunk can outlive the per-read httpx
+# timeout forever, and a non-streaming invoke's repair+retry matrix can stack
+# ~16 sixty-second attempts. Both ceilings bound a single model call so a stuck
+# provider stalls one seat for minutes, never the whole worker indefinitely.
+STREAM_TOTAL_TIMEOUT_SECONDS = 240.0
+INVOKE_TOTAL_TIMEOUT_SECONDS = 300.0
 MAX_SCHEMA_REPAIR_ATTEMPTS = 1
 _PER_MILLION = Decimal(1_000_000)
 
@@ -102,6 +112,10 @@ class OpenAICompatibleConfig:
     price_input_per_1m_usd: Decimal = Decimal("0")
     price_output_per_1m_usd: Decimal = Decimal("0")
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    # ``timeout_seconds`` is the per-read httpx timeout; these two are the
+    # whole-call ceilings the file header's failure shape relies on.
+    stream_total_timeout_seconds: float = STREAM_TOTAL_TIMEOUT_SECONDS
+    invoke_total_timeout_seconds: float = INVOKE_TOTAL_TIMEOUT_SECONDS
 
     @classmethod
     def from_env(
@@ -117,6 +131,12 @@ class OpenAICompatibleConfig:
             ModelClass.LIGHTWEIGHT: values.get(LIGHTWEIGHT_MODEL_ENV, default_model),
         }
         timeout = float(values.get(TIMEOUT_ENV) or DEFAULT_TIMEOUT_SECONDS)
+        stream_total = float(
+            values.get(STREAM_TIMEOUT_ENV) or STREAM_TOTAL_TIMEOUT_SECONDS
+        )
+        invoke_total = float(
+            values.get(INVOKE_TIMEOUT_ENV) or INVOKE_TOTAL_TIMEOUT_SECONDS
+        )
         return cls(
             api_key=api_key,
             base_url=base_url.rstrip("/"),
@@ -124,6 +144,8 @@ class OpenAICompatibleConfig:
             price_input_per_1m_usd=_decimal_env(values, PRICE_INPUT_ENV),
             price_output_per_1m_usd=_decimal_env(values, PRICE_OUTPUT_ENV),
             timeout_seconds=timeout,
+            stream_total_timeout_seconds=stream_total,
+            invoke_total_timeout_seconds=invoke_total,
         )
 
 
@@ -188,7 +210,19 @@ class OpenAICompatibleModelGateway:
         thinking = request.model_class is ModelClass.STRONG_REASONING
         force_tool = not thinking
 
+        # Whole-call ceiling: the repair/retry matrix below can stack ~16
+        # sixty-second attempts against a slow vendor, which is minutes of
+        # silence for one seat. A total deadline turns that worst case into a
+        # single bounded failure the caller degrades from, never a worker-wide
+        # hang. Checked between attempts -- a natural cancellation point.
+        deadline = started + self._config.invoke_total_timeout_seconds
+
         for attempt in range(MAX_SCHEMA_REPAIR_ATTEMPTS + 1):
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"model invoke exceeded the "
+                    f"{self._config.invoke_total_timeout_seconds:g}s total deadline"
+                )
             if attempt:
                 repaired = True
                 retries += 1
@@ -283,6 +317,31 @@ class OpenAICompatibleModelGateway:
         body["stream"] = True
         body["thinking"] = {"type": "enabled"}
 
+        # Total deadline, not just the per-read httpx timeout: a thinking-mode
+        # stream keeps the connection alive with an endless drip of reasoning
+        # deltas, so the read timeout never fires and the seat could sit in
+        # "thinking…" forever. ``wait_for`` cancels the underlying stream
+        # (httpx closes it in ``__aexit__`` on cancellation), the caller falls
+        # back to the bounded non-streaming invoke, and the deltas already
+        # relayed stay on the wire as an honest partial trace.
+        try:
+            return await asyncio.wait_for(
+                self._stream_once(body, schema, request.output_schema, on_event),
+                timeout=self._config.stream_total_timeout_seconds,
+            )
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"model stream exceeded the "
+                f"{self._config.stream_total_timeout_seconds:g}s total deadline"
+            ) from error
+
+    async def _stream_once(
+        self,
+        body: dict[str, Any],
+        schema: dict[str, Any],
+        output_schema: str,
+        on_event: Callable[[StreamEvent], Awaitable[None]],
+    ) -> ModelResult:
         started = time.monotonic()
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
@@ -343,7 +402,7 @@ class OpenAICompatibleModelGateway:
         )
         if reasoning:
             message["reasoning_content"] = reasoning
-        content = _extract_structured_content(message, request.output_schema)
+        content = _extract_structured_content(message, output_schema)
         payload, errors = _parse_and_validate(content, schema)
         if errors:
             raise ValueError(

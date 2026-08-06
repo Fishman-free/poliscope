@@ -918,3 +918,20 @@ body:has(.landing) {
     box-shadow: var(--shadow-2);
   }
 }
+
+/* 落地页语言切换：跟随导航栏高度的小下拉。 */
+.landing__lang {
+  display: flex;
+  align-items: center;
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.landing__lang select {
+  font: inherit;
+  color: inherit;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+}

@@ -1,6 +1,7 @@
 ---
 name: poliscope
 description: Run an auditable Poliscope research task for a computational-social-science controversy (digital behavior, social media, mental health). Use when the user asks to research a contested empirical question, wants an evidence map with blindspots and preserved dissent instead of a single summarized answer, or explicitly mentions Poliscope, a Research Contract, or the 7-scientist council.
+allowed-tools: Bash(poliscope *), Bash(python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py *)
 ---
 
 # Poliscope
@@ -15,10 +16,13 @@ section 8.7). If you are tempted to shortcut any of this to "just get an
 answer faster," don't -- that would make this a second, divergent Poliscope
 implementation, which is exactly what the design forbids.
 
-This file is kept content-identical to
-`.claude/skills/poliscope/SKILL.md` (the Claude Code copy of this same
-skill), aside from frontmatter fields specific to each tool -- the point is
-one shared workflow, not two that can drift apart.
+**Known limitation, stated plainly rather than silently assumed away:** the
+`allowed-tools` line above only pre-approves those two command shapes so you
+are not asked to confirm every single invocation -- it does not technically
+prevent you from calling other tools. Do not use it as an excuse to reach for
+`packages/`, a database client, or a model API directly during a Poliscope
+task; the constraint is enforced by your own discipline here, not by the
+platform.
 
 ## Getting the `poliscope` CLI without cloning
 
@@ -55,22 +59,18 @@ invocation, which is fine for occasional calls but wasteful in a tight loop.
    material the user explicitly handed you.
 
 2. **Draft a Research Contract, do not submit it yet.** Build it with the
-   shared scaffolding script, kept next to this file at
-   `scripts/new_contract.py`, so the JSON shape always matches
+   shared scaffolding script so the JSON shape always matches
    `packages/research/contracts.py`'s `ResearchContract` schema without you
    hand-typing it:
 
    ```bash
-   python scripts/new_contract.py \
+   python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py \
      --question "<verbatim research question>" \
      --population "<population>" --region "<region>" --language "<lang>" \
      --evidence-priority CAUSAL_OR_REVERSE_CAUSAL --evidence-priority MEASUREMENT \
      --doi "<doi if the user gave one>" \
      --output poliscope_contract.json
    ```
-
-   (Resolve `scripts/new_contract.py` relative to this SKILL.md file's own
-   directory, wherever this skill was installed.)
 
    `--evidence-priority` accepts `CORRELATION`, `CAUSAL_OR_REVERSE_CAUSAL`,
    `MEASUREMENT`, `REPLICATION`, `BOUNDARY`, `MECHANISM`, or
@@ -129,6 +129,23 @@ invocation, which is fine for occasional calls but wasteful in a tight loop.
    configured, or a budget ran out), say so plainly in your summary --
    `has_gaps` and `limitations` in the exported brief exist precisely so this
    is never silently smoothed over.
+
+7. **Write the full results into the user's project (round-4 skill output).**
+   After a task finishes, put the evidence map, the council record, and each
+   scientist's position into the project itself so the user can browse them
+   in their repository, not only in the web workbench:
+
+   ```bash
+   poliscope export-docs --task-id <task_id> --output docs/poliscope
+   ```
+
+   This creates `docs/poliscope/{task-slug}/` with `README.md` (index),
+   `brief.md` (server-rendered research brief), `evidence.md` (evidence map:
+   nodes and edges with paper/cluster counts), `council.md` (precommitments,
+   challenges, final judgments, evolution timeline), and `scientists/` (one
+   file per seat). Every fact comes from the API snapshot -- nothing is
+   re-serialised or invented by the CLI. Point the user at the directory in
+   your final summary.
 
 ## Hard constraints (design spec 8.7, non-negotiable)
 

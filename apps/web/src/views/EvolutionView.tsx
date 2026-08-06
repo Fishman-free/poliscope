@@ -24,6 +24,7 @@ import { useMemo } from "react";
 import type { EvolutionEntry } from "../api/types";
 import { NODE_TYPE_LABELS } from "../api/types";
 import { Badge, Empty, Panel, toneForStatus } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./EvolutionView.css";
 
@@ -52,7 +53,7 @@ function summarise(entry: EvolutionEntry): string {
     const value = payload[key];
     if (typeof value === "string" && value) return value;
   }
-  return "（该事件未记录可展示的文本字段）";
+  return t("（该事件未记录可展示的文本字段）");
 }
 
 export function EvolutionView({ entries }: { entries: EvolutionEntry[] }) {
@@ -63,12 +64,14 @@ export function EvolutionView({ entries }: { entries: EvolutionEntry[] }) {
 
   return (
     <Panel
-      title="演化视图"
-      subtitle="按账本序号排列的主张分叉、质询、异议与置信度轨迹点时间线。CONFIDENCE_UPDATED 在证据交换、交叉质询、联合建模与最终复判四个阶段边界为每个确认主张给出定性变化说明，而非可绘制的数值曲线。"
+      title={t("演化视图")}
+      subtitle={t("按账本序号排列的主张分叉、质询、异议与置信度轨迹点时间线。CONFIDENCE_UPDATED 在证据交换、交叉质询、联合建模与最终复判四个阶段边界为每个确认主张给出定性变化说明，而非可绘制的数值曲线。")}
     >
       {ordered.length === 0 ? (
         <Empty>
-          本任务未记录主张分叉、质询或异议——这不是抓取失败，而是本轮协议确实未触发这些路径。
+          {t(
+            "本任务未记录主张分叉、质询或异议——这不是抓取失败，而是本轮协议确实未触发这些路径。",
+          )}
         </Empty>
       ) : (
         <ol className="evolution__list">

@@ -24,6 +24,7 @@ import {
   STATUS_LABELS,
   toneForStatus,
 } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./BlindspotRadarView.css";
 
@@ -106,9 +107,11 @@ export function BlindspotRadarView({
 
   if (blindspots.length === 0) {
     return (
-      <Panel title="盲点雷达" subtitle="横轴影响、纵轴可调查性，点的大小表示不确定性。">
+      <Panel title={t("盲点雷达")} subtitle={t("横轴影响、纵轴可调查性，点的大小表示不确定性。")}>
         <Empty>
-          本任务尚未产出任何盲点——这不等于「没有盲点」，而是「盲点悬赏与来源多样性检查均未触发」。
+          {t(
+            "本任务尚未产出任何盲点——这不等于「没有盲点」，而是「盲点悬赏与来源多样性检查均未触发」。",
+          )}
         </Empty>
       </Panel>
     );
@@ -116,15 +119,15 @@ export function BlindspotRadarView({
 
   return (
     <Panel
-      title="盲点雷达"
-      subtitle="横轴影响、纵轴可调查性，点的大小表示不确定性。● = 议会提名，◆ = 来源单一检查。"
+      title={t("盲点雷达")}
+      subtitle={t("横轴影响、纵轴可调查性，点的大小表示不确定性。● = 议会提名，◆ = 来源单一检查。")}
     >
       <div className="radar">
         <svg
           className="radar__plot"
           viewBox={`0 0 ${SIZE} ${SIZE}`}
           role="img"
-          aria-label="盲点影响与可调查性散点图"
+          aria-label={t("盲点影响与可调查性散点图")}
         >
           <line
             x1={MARGIN}
@@ -141,7 +144,7 @@ export function BlindspotRadarView({
             className="radar__axis"
           />
           <text x={SIZE / 2} y={SIZE - 10} className="radar__axis-label" textAnchor="middle">
-            影响 →
+            {t("影响 →")}
           </text>
           <text
             x={16}
@@ -150,7 +153,7 @@ export function BlindspotRadarView({
             textAnchor="middle"
             transform={`rotate(-90 16 ${SIZE / 2})`}
           >
-            可调查性 →
+            {t("可调查性 →")}
           </text>
 
           {plottable.map(({ node, impact, uncertainty, investigability }) => {
@@ -179,14 +182,14 @@ export function BlindspotRadarView({
 
         <aside className="radar__side">
           <div className="radar__inspector">
-            <h3>详情</h3>
+            <h3>{t("详情")}</h3>
             {selected === null ? (
-              <Empty>点击任一点查看该盲点的完整载荷。</Empty>
+              <Empty>{t("点击任一点查看该盲点的完整载荷。")}</Empty>
             ) : (
               <>
                 <p className="radar__inspector-head">
                   <Badge tone={toneForStatus(selected.status)}>
-                    {STATUS_LABELS[selected.status] ?? selected.status}
+                    {t(STATUS_LABELS[selected.status] ?? selected.status)}
                   </Badge>
                   {selected.kind ? (
                     <span className="radar__kind-label">
@@ -195,7 +198,7 @@ export function BlindspotRadarView({
                   ) : null}
                 </p>
                 <p className="radar__statement">
-                  {selected.statement ?? "（未记录陈述）"}
+                  {selected.statement ?? t("（未记录陈述）")}
                 </p>
                 {/* Raw payload, unformatted on purpose: CLAUDE.md 2 separates
                     the original record from any AI rendering of it. */}
@@ -208,10 +211,11 @@ export function BlindspotRadarView({
 
           {unscored.length > 0 ? (
             <div className="radar__unscored">
-              <h3>未评分盲点（{unscored.length}）</h3>
+              <h3>{t("未评分盲点（{0}）", unscored.length)}</h3>
               <p className="radar__unscored-note">
-                这些盲点缺少影响 / 不确定性 / 可调查性中的至少一项——例如来源多样性检查只标注问题，不打分。
-                展示于此而非画在原点，避免把「未测量」误显示为「已测量且为零」。
+                {t(
+                  "这些盲点缺少影响 / 不确定性 / 可调查性中的至少一项——例如来源多样性检查只标注问题，不打分。展示于此而非画在原点，避免把「未测量」误显示为「已测量且为零」。",
+                )}
               </p>
               <ul className="radar__unscored-list">
                 {unscored.map((node) => (
@@ -223,12 +227,12 @@ export function BlindspotRadarView({
                     <Badge tone={toneForStatus(node.status)}>
                       {node.kind
                         ? (BLINDSPOT_KIND_LABELS[node.kind] ?? node.kind)
-                        : "未知类型"}
+                        : t("未知类型")}
                     </Badge>
                     <span>
                       {typeof node.statement === "string"
                         ? node.statement
-                        : "（未记录陈述）"}
+                        : t("（未记录陈述）")}
                     </span>
                   </li>
                 ))}

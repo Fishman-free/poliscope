@@ -32,6 +32,7 @@ import "./MapView.css";
 import type { EvidenceGraph, GraphNode } from "../api/types";
 import { EDGE_TYPE_LABELS, NODE_TYPE_LABELS } from "../api/types";
 import { Badge, Empty, STATUS_LABELS, toneForStatus } from "../components/primitives";
+import { t } from "../i18n";
 
 /** Relations that mean "this weakens that". Dashed and red so the meaning
  * survives both greyscale printing and colour-blindness. */
@@ -116,8 +117,9 @@ export function MapView({ graph }: { graph: EvidenceGraph }) {
     return (
       <div className="map map--empty">
         <Empty>
-          证据图为空。任务尚未产出任何被采纳的证据节点——这不等于「没有争议」，
-          而是「还没有可展示的证据」。
+          {t(
+            "证据图为空。任务尚未产出任何被采纳的证据节点——这不等于「没有争议」，而是「还没有可展示的证据」。",
+          )}
         </Empty>
       </div>
     );
@@ -145,20 +147,20 @@ export function MapView({ graph }: { graph: EvidenceGraph }) {
 
       <aside className="map__side">
         <div className="map__legend">
-          <h3>图例</h3>
+          <h3>{t("图例")}</h3>
           <ul>
             <li>
-              <Badge tone="admitted">已采纳</Badge> 全文可得，证据等级 A
+              <Badge tone="admitted">{t("已采纳")}</Badge> {t("全文可得，证据等级 A")}
             </li>
             <li>
-              <Badge tone="provisional">仅元数据</Badge> 等级 B，未读原文
+              <Badge tone="provisional">{t("仅元数据")}</Badge> {t("等级 B，未读原文")}
             </li>
             <li>
-              <Badge tone="refuted">已反驳/隔离</Badge> 保留可审计，不删除
+              <Badge tone="refuted">{t("已反驳/隔离")}</Badge> {t("保留可审计，不删除")}
             </li>
             <li>
               <span className="map__legend-edge map__legend-edge--opposing" />
-              虚线红边 = 反驳、冲突、混杂
+              {t("虚线红边 = 反驳、冲突、混杂")}
             </li>
           </ul>
           <label className="map__toggle">
@@ -167,17 +169,17 @@ export function MapView({ graph }: { graph: EvidenceGraph }) {
               checked={dimRefuted}
               onChange={(event) => setDimRefuted(event.target.checked)}
             />
-            淡化已反驳节点
+            {t("淡化已反驳节点")}
             <span className="map__toggle-note">
-              仅改变不透明度。被反驳的节点永远留在图上。
+              {t("仅改变不透明度。被反驳的节点永远留在图上。")}
             </span>
           </label>
         </div>
 
         <div className="map__inspector">
-          <h3>节点详情</h3>
+          <h3>{t("节点详情")}</h3>
           {selected === null ? (
-            <Empty>点击任一节点查看其类型、状态与原始载荷。</Empty>
+            <Empty>{t("点击任一节点查看其类型、状态与原始载荷。")}</Empty>
           ) : (
             <>
               <p className="map__inspector-type">

@@ -35,6 +35,7 @@ class OpenAlexAdapter:
             year=cast(int | None, payload.get("year")),
             publication_type=payload.get("type"),
             retracted=bool(payload.get("retracted", False)),
+            citation_count=int(payload.get("citation_count", 0) or 0),
             provider_ids=FrozenDict({"openalex": str(payload.get("id", ""))}),
         )
 
@@ -66,5 +67,6 @@ class OpenAlexAdapter:
             year=cast(int | None, payload.get("year")),
             publication_type=payload.get("type"),
             retracted=bool(payload.get("retracted", False)),
+            citation_count=int(payload.get("citation_count", 0) or 0),
             provider_ids=FrozenDict({"openalex": str(payload.get("id", ""))}),
         )

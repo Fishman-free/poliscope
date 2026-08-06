@@ -94,6 +94,10 @@ class CreateTaskRequest(ContractModel):
     # Skills the researcher enabled for this task (migration 0013); the
     # router validates every id belongs to the calling account.
     skill_ids: tuple[UUID, ...] = ()
+    # Language the council must write its outputs in (round-4 language
+    # following): "auto" (default) resolves from the question; otherwise one
+    # of zh-Hans / zh-Hant / en.
+    output_language: str = "auto"
 
 
 class ConfirmClaimsRequest(ContractModel):

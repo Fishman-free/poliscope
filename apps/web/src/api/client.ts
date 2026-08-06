@@ -19,6 +19,7 @@ import type {
   ProcessEvent,
   ModelSettings,
   ModelSettingsUpdate,
+  ModelTestResult,
   SkillSummary,
   TaskSummary,
   UploadedPaper,
@@ -406,6 +407,15 @@ export function saveModelSettings(
   update: ModelSettingsUpdate,
 ): Promise<ModelSettings> {
   return putJson<ModelSettings>("/api/settings/model", update);
+}
+
+/** Probe the researcher's current form values against the live endpoint.
+ * Nothing is saved; the server answers with the reason when the connection
+ * fails, and the API key never appears in the response. */
+export function testModelConnection(
+  update: ModelSettingsUpdate,
+): Promise<ModelTestResult> {
+  return postJson<ModelTestResult>("/api/settings/model/test", update);
 }
 
 /** Paste a researcher's own text into a knowledge base as a document. The

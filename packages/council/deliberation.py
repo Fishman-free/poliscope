@@ -16,7 +16,9 @@ passing an AI derivation off as evidence.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from uuid import UUID
@@ -37,6 +39,12 @@ from packages.models.contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+# A model call that has gone quiet (no reasoning delta, no error) emits a
+# ``seat_working`` process event every interval so the live view can show
+# "still working, waited N s" instead of an eternal silent "thinking…".
+# The front end also keeps its own clock; this is the server-side source.
+HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 # What each seat is for. These are the questioning rules that make seven seats
 # different rather than seven copies; CLAUDE.md 3 forbids the latter.
@@ -117,8 +125,33 @@ PHASE_MODEL_CLASSES: dict[TaskPhase, ModelClass] = {
 }
 
 
-def _system_prompt(seat: Seat, phase: TaskPhase) -> str:
+# The language directive injected into every seat's system prompt (round-4
+# language following): a Chinese question must be answered in Chinese, an
+# English one in English. Deliberately part of the *system* prompt so it
+# outranks any instruction the seat's own text might imply, and phrased as a
+# hard MUST because extraction phases default to English otherwise.
+OUTPUT_LANGUAGE_DIRECTIVES: dict[str, str] = {
+    "zh-Hans": (
+        "Output language: Simplified Chinese (简体中文). The researcher asked "
+        "in Chinese, so you MUST write your reasoning, structured outputs, "
+        "review text, and every judgment in Simplified Chinese."
+    ),
+    "zh-Hant": (
+        "Output language: Traditional Chinese (繁體中文). The researcher asked "
+        "in Traditional Chinese, so you MUST write your reasoning, structured "
+        "outputs, review text, and every judgment in Traditional Chinese."
+    ),
+    "en": (
+        "Output language: English. The researcher asked in English, so you "
+        "MUST write your reasoning, structured outputs, review text, and "
+        "every judgment in English."
+    ),
+}
+
+
+def _system_prompt(seat: Seat, phase: TaskPhase, output_language: str = "en") -> str:
     spec = ROLE_SPECS[seat]
+    directive = OUTPUT_LANGUAGE_DIRECTIVES.get(output_language, OUTPUT_LANGUAGE_DIRECTIVES["en"])  # noqa: E501
     return (
         f"You are the {spec.display_name} on a seven seat research council. "
         f"Your expertise: {', '.join(spec.expertise)}.\n"
@@ -126,6 +159,7 @@ def _system_prompt(seat: Seat, phase: TaskPhase) -> str:
         "Ground every judgment in a retrievable source. Say plainly when the "
         "evidence does not support an answer; an admitted gap is a correct "
         "answer and a confident guess is not.\n"
+        f"{directive}\n"
         f"Current round: {phase.value}. Reply only with the requested schema."
     )
 
@@ -190,7 +224,9 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     return "\n".join(lines)
 
 
-def generic_system_prompt(seat: Seat, phase: TaskPhase) -> str:
+def generic_system_prompt(
+    seat: Seat, phase: TaskPhase, output_language: str = "en"
+) -> str:
     """One undifferentiated researcher voice, with no seat identity at all.
 
     Used by :func:`packages.evaluation.harness.generic_debate_deliberator` to
@@ -198,8 +234,13 @@ def generic_system_prompt(seat: Seat, phase: TaskPhase) -> str:
     copies of the same generic agent debating, rather than seven role-specialised
     seats. Deliberately does not read ``ROLE_SPECS`` or ``SEAT_INSTRUCTIONS`` --
     the whole point of this baseline is the *absence* of CLAUDE.md 3's per-seat
-    specialization, so every seat must receive an identical prompt.
+    specialization, so every seat must receive an identical prompt. The
+    language directive is still applied (same language-following contract as
+    the real council), via the shared directive table.
     """
+    directive = OUTPUT_LANGUAGE_DIRECTIVES.get(
+        output_language, OUTPUT_LANGUAGE_DIRECTIVES["en"]
+    )
     return (
         "You are a research assistant debating a contested empirical question "
         "alongside several other copies of yourself. No individual area of "
@@ -207,11 +248,12 @@ def generic_system_prompt(seat: Seat, phase: TaskPhase) -> str:
         "Ground every judgment in a retrievable source. Say plainly when the "
         "evidence does not support an answer; an admitted gap is a correct "
         "answer and a confident guess is not.\n"
+        f"{directive}\n"
         f"Current round: {phase.value}. Reply only with the requested schema."
     )
 
 
-SystemPromptBuilder = Callable[[Seat, TaskPhase], str]
+SystemPromptBuilder = Callable[[Seat, TaskPhase, str], str]
 UserPromptBuilder = Callable[[Seat, PhaseContext], str]
 
 # Receives a seat's raw chain of thought once a model call captured one, so
@@ -255,6 +297,11 @@ class GatewayDeliberator:
         # Tokens since the last flush of the process stream: the relay batches
         # so the live view does not pay a database write per token.
         self._since_flush = 0
+        # Why the most recent deliberate() call came back None. Read by the
+        # round collector so a SEAT_UNAVAILABLE event reports the real reason
+        # (provider outage, 401, quarantined schema) instead of a fixed
+        # "no model provider" string that is wrong half the time.
+        self.last_error: str | None = None
 
     def _request(self, seat: Seat, phase: TaskPhase, ctx: PhaseContext) -> ModelRequest:
         return ModelRequest(
@@ -263,31 +310,51 @@ class GatewayDeliberator:
             purpose=phase.value,
             model_class=PHASE_MODEL_CLASSES.get(phase, ModelClass.MEDIUM),
             messages=(
-                ModelMessage(role="system", content=self._system_prompt(seat, phase)),
+                ModelMessage(
+                    role="system",
+                    content=self._system_prompt(seat, phase, ctx.output_language),
+                ),
                 ModelMessage(role="user", content=self._user_prompt(seat, ctx)),
             ),
             output_schema=PHASE_OUTPUT_SCHEMAS.get(phase, "SeatOutput"),
             evidence_refs=ctx.confirmed_claims,
         )
 
-    async def _relay(self, event: StreamEvent) -> None:
+    async def _relay(
+        self,
+        event: StreamEvent,
+        seat: Seat,
+        phase: TaskPhase,
+    ) -> None:
         """Relay one streamed delta to the process writer, batched.
 
         ``kind`` maps onto the live view's vocabulary: reasoning deltas are
         the vendor's chain of thought, token deltas the structured answer
         taking shape. Every ~40 deltas the writer is flushed so the browser
         sees progress roughly as it happens, not all at the end.
+
+        Every row carries the seat and phase it belongs to. The live view
+        attributes a thinking slice to its scientist by these fields --
+        without them the deltas are un-attributable noise and every seat
+        renders as "no output yet" even while the model is streaming.
         """
         if self._on_process is None:
             return
         if event.kind == "done":
-            self._on_process("model_done", {})
+            self._on_process(
+                "model_done",
+                {"seat": seat.value, "phase": phase.value},
+            )
             return
         if not event.text:
             return
         self._on_process(
             "model_reasoning" if event.kind == "reasoning" else "model_token",
-            {"text": event.text},
+            {
+                "text": event.text,
+                "seat": seat.value,
+                "phase": phase.value,
+            },
         )
         self._since_flush += 1
         if self._since_flush >= 40 and self._on_flush is not None:
@@ -300,13 +367,47 @@ class GatewayDeliberator:
                     exc_info=True,
                 )
 
+    def _start_heartbeat(
+        self,
+        seat: Seat,
+        phase: TaskPhase,
+    ) -> asyncio.Task[None] | None:
+        """Begin periodic ``seat_working`` events for an in-flight model call.
+
+        ``None`` when no process sink is wired (tests, one-shot runs), which
+        keeps the heartbeat purely a live-view feature.
+        """
+        if self._on_process is None:
+            return None
+        return asyncio.create_task(self._heartbeat(seat, phase))
+
+    async def _stop_heartbeat(self, task: asyncio.Task[None] | None) -> None:
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    async def _heartbeat(self, seat: Seat, phase: TaskPhase) -> None:
+        started = time.monotonic()
+        while True:
+            await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
+            elapsed = int(time.monotonic() - started)
+            assert self._on_process is not None
+            self._on_process(
+                "seat_working",
+                {"seat": seat.value, "phase": phase.value, "elapsed": elapsed},
+            )
+
     async def deliberate(
         self,
         seat: Seat,
         phase: TaskPhase,
         context: PhaseContext,
     ) -> Mapping[str, object] | None:
+        self.last_error = None
         if phase not in PHASE_OUTPUT_SCHEMAS:
+            self.last_error = f"no output schema for phase {phase.value}"
             return None
         # Built outside the try on purpose. A malformed request is our bug, not a
         # provider outage, and letting it surface as an absent seat would hide a
@@ -319,7 +420,9 @@ class GatewayDeliberator:
                 "seat_deliberation",
                 {"seat": seat.value, "phase": phase.value},
             )
+        heartbeat: asyncio.Task[None] | None = None
         try:
+            heartbeat = self._start_heartbeat(seat, phase)
             if self._on_process is not None:
                 # Streaming is an optimisation over invoke, never a
                 # replacement: a streamed attempt that fails anywhere (vendor
@@ -328,8 +431,11 @@ class GatewayDeliberator:
                 # relayed remain on the wire as an honest partial trace.
                 streaming = getattr(self._gateway, "stream_invoke", None)
                 if streaming is not None:
+                    async def relay_for_seat(event: StreamEvent) -> None:
+                        await self._relay(event, seat, phase)
+
                     try:
-                        result = await streaming(request, self._relay)
+                        result = await streaming(request, relay_for_seat)
                     except Exception:
                         logger.warning(
                             "streaming call failed for %s/%s, falling back "
@@ -339,17 +445,33 @@ class GatewayDeliberator:
                             exc_info=True,
                         )
                         result = await self._gateway.invoke(request)
+                        # The fallback succeeded but never streamed a
+                        # ``model_done`` (that event is emitted only by the
+                        # stream's success path), so the live view would keep
+                        # this seat on "thinking…" forever. Emit the same
+                        # event the stream would have sent (see _relay).
+                        if self._on_process is not None:
+                            self._on_process(
+                                "model_done",
+                                {"seat": seat.value, "phase": phase.value},
+                            )
                     finally:
                         self._since_flush = 0
                 else:
                     result = await self._gateway.invoke(request)
             else:
                 result = await self._gateway.invoke(request)
-        except Exception:
+        except Exception as error:
             # A seat that cannot be reached is an absent seat, not a failed task.
             # CLAUDE.md 10 requires the run to degrade rather than abort, and the
-            # orchestrator already records the absence on the stream.
+            # orchestrator already records the absence on the stream. The reason
+            # is kept (bounded) so the absence event says what actually broke --
+            # a wrong base_url must show up as a connection error, not as the
+            # generic "no model provider" message.
+            self.last_error = str(error)[:300] or error.__class__.__name__
             return None
+        finally:
+            await self._stop_heartbeat(heartbeat)
 
         if self._budget is not None:
             # The spend already happened, so exhaustion is recorded rather than
@@ -380,6 +502,7 @@ class GatewayDeliberator:
         if result.schema_status is SchemaStatus.QUARANTINED:
             # CLAUDE.md 10: structured output that could not be repaired is
             # quarantined and must not reach the formal graph.
+            self.last_error = "structured output quarantined after schema repair failed"
             return None
         return dict(result.payload)
 

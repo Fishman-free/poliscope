@@ -104,6 +104,17 @@
   color: var(--accent);
 }
 
+/* 模型调用长时间无进展的警示：60s 起橙色（提示可能卡住），300s 起
+ * 红色（越过所有正常超时，watchdog 即将强制中断）。 */
+.live__seat-running--slow {
+  color: var(--warn, #b7791f);
+}
+
+.live__seat-running--critical {
+  color: var(--danger, #b3403a);
+  font-weight: 600;
+}
+
 .live__seat-text {
   height: 140px;
   overflow-y: auto;
@@ -162,7 +173,15 @@
   line-height: 1.6;
 }
 
-/* 右侧两栏：议会动作（上）+ 检索与文献（下）。 */
+/* 左侧主列：席位思考流（上）+ 检索与文献（下）。 */
+.live__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* 右侧栏：议会动作。 */
 .live__side {
   display: flex;
   flex-direction: column;
@@ -241,7 +260,8 @@
   word-break: break-word;
 }
 
-/* Tool / literature log: every lookup the council performs, hits clickable. */
+/* 检索与文献：主界面下方，一行多个资料卡片，每个卡片是一次检索动作
+   （查询 + 命中结果 + 跳转链接），由 tool_call/tool_result 事件配对而成。 */
 .live__tools {
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
@@ -256,7 +276,65 @@
   color: var(--ink-2);
 }
 
-.live__tool-log {
+.live__tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: var(--space-3);
+}
+
+.live__tool-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  min-width: 0;
+  animation: fade-in-up var(--duration-standard) var(--ease-standard);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.live__tool-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+}
+
+.live__tool-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.live__tool-kind {
+  flex: none;
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+  white-space: nowrap;
+}
+
+.live__tool-query {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-2);
+  font-size: var(--text-small);
+}
+
+.live__tool-seats {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+}
+
+.live__tool-results {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -265,56 +343,60 @@
   gap: var(--space-2);
 }
 
-.live__tool-call,
 .live__tool-result {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-1) var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  font-size: var(--text-small);
-  animation: fade-in-up var(--duration-standard) var(--ease-standard);
-}
-
-.live__tool-call {
-  color: var(--ink-3);
-}
-
-.live__tool-result {
-  color: var(--ink-1);
-  background: var(--surface-1);
-}
-
-.live__tool-result--miss {
-  color: var(--ink-3);
-  border-style: dashed;
-}
-
-.live__tool-kind {
-  font-size: var(--text-micro);
-  color: var(--ink-4);
-  padding-top: 1px;
-}
-
-.live__tool-query {
-  color: var(--ink-2);
-  word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
 }
 
 .live__tool-title {
   color: var(--ink-1);
+  font-size: var(--text-small);
+  line-height: 1.45;
   word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.live__tool-title--miss {
+  color: var(--ink-3);
+}
+
+.live__tool-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.live__tool-citations {
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+  white-space: nowrap;
 }
 
 .live__tool-link {
-  grid-column: 2;
-  justify-self: start;
+  align-self: flex-start;
   font-size: var(--text-micro);
+  color: var(--accent);
+  text-decoration: none;
 }
 
-.live__tool-seats {
-  grid-column: 2;
-  font-size: var(--text-micro);
-  color: var(--ink-4);
+.live__tool-link:hover {
+  text-decoration: underline;
+}
+
+.live__tool-empty {
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
+.live__tool-empty--miss {
+  color: var(--refuted);
 }

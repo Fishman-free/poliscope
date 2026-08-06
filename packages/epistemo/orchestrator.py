@@ -20,6 +20,7 @@ honest description of what happened.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -39,7 +40,7 @@ from packages.council.rounds.registry import (
     UnavailableDeliberator,
     runner_for,
 )
-from packages.epistemo.budget import BudgetTracker
+from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.epistemo.contracts import (
     PHASE_SEQUENCE,
     CouncilCheckpoint,
@@ -210,6 +211,7 @@ class CouncilOrchestrator:
         self._memory = memory
         self._acquirer = acquirer
         self._finding_extractor = finding_extractor
+        self._run_started: float | None = None
 
     async def run(
         self,
@@ -222,6 +224,7 @@ class CouncilOrchestrator:
         knowledge_documents: tuple[KnowledgeDocumentLike, ...] = (),
         knowledge_search: KnowledgeSearcher | None = None,
         researcher_skills: tuple[tuple[str, str], ...] = (),
+        output_language: str = "auto",
         stop_before: TaskPhase | None = None,
         resume_from: CouncilCheckpoint | None = None,
         council_guidance: str | None = None,
@@ -273,6 +276,10 @@ class CouncilOrchestrator:
 
         if self._memory is not None:
             await self._memory.open(self._seats, question)
+
+        # Wall-clock enforcement starts here so a resumed run budgets only the
+        # phases it still has left, not the ones already on the ledger.
+        self._run_started = time.monotonic()
 
         for phase in PHASE_SEQUENCE:
             if phase in already_run:
@@ -328,6 +335,7 @@ class CouncilOrchestrator:
                 knowledge_documents,
                 knowledge_search,
                 researcher_skills,
+                output_language,
                 state,
                 council_guidance,
             )
@@ -357,7 +365,19 @@ class CouncilOrchestrator:
         Evidence saturation deliberately cannot stop the run here: CLAUDE.md 4
         requires all seven rounds, and a round that produced nothing is a finding
         about the evidence, not a reason to skip the falsifier.
+
+        The wall-clock check runs first: it is the one budget dimension that
+        had no enforcement (``consume_wall_clock`` was defined but never
+        called), so a run whose model calls kept the worker alive could
+        outlive its wall-clock budget by hours. Between phases is the natural
+        cancellation point -- a phase is never interrupted mid-round, it
+        simply does not start.
         """
+        if self._run_started is not None:
+            try:
+                self._budget.record_elapsed(time.monotonic() - self._run_started)
+            except BudgetExhausted:
+                return StopReason.BUDGET_EXHAUSTED
         decision = decide_stop(
             no_new_information_rounds=0,
             budget_remaining=self._budget.tool_calls_remaining,
@@ -389,6 +409,7 @@ class CouncilOrchestrator:
         knowledge_documents: tuple[KnowledgeDocumentLike, ...],
         knowledge_search: KnowledgeSearcher | None,
         researcher_skills: tuple[tuple[str, str], ...],
+        output_language: str,
         state: _Accumulator,
         council_guidance: str | None = None,
     ) -> None:
@@ -417,6 +438,7 @@ class CouncilOrchestrator:
             knowledge_documents=knowledge_documents,
             knowledge_search=knowledge_search,
             researcher_skills=researcher_skills,
+            output_language=output_language,
             guidance=council_guidance,
         )
         try:

@@ -404,6 +404,13 @@ class PhaseContext:
     # non-evidence process context, exactly like knowledge-base search hits --
     # a skill instructs the scientists, it never supports or refutes a claim.
     researcher_skills: tuple[tuple[str, str], ...] = ()
+    # Language the council must write all its outputs in (round-4 language
+    # following): resolved from the researcher's question at task creation
+    # (one of zh-Hans / zh-Hant / en, or "auto" for legacy rows the worker
+    # resolves from the question). Rendered into every seat's system prompt
+    # so reasoning, structured outputs, and the final report all come back in
+    # the language the researcher asked in.
+    output_language: str = "auto"
     # Plan phase 8.3: the human's advisory directional steer collected at the
     # BLINDSPOT_BOUNTY -> JOINT_MODELING checkpoint, or None outside that one
     # phase. Deliberately a dedicated field rather than another `carried`
@@ -448,24 +455,45 @@ class PhaseContext:
 
 async def _collect(
     context: PhaseContext,
-) -> tuple[dict[Seat, Mapping[str, object]], tuple[str, ...], frozenset[Seat]]:
-    """Ask every seat for its output, recording the ones that cannot answer."""
+) -> tuple[
+    dict[Seat, Mapping[str, object]],
+    tuple[str, ...],
+    frozenset[Seat],
+    dict[Seat, str],
+]:
+    """Ask every seat for its output, recording the ones that cannot answer.
+
+    The returned reasons map holds, per absent seat, why it could not answer
+    (from the deliberator's ``last_error``). An absence caused by a dead model
+    endpoint must surface as the actual connection error -- CLAUDE.md 7 does
+    not let the system paper over the difference between "no provider
+    configured" and "provider rejected us".
+    """
     outputs: dict[Seat, Mapping[str, object]] = {}
     unfilled: list[str] = []
     absent: set[Seat] = set()
+    reasons: dict[Seat, str] = {}
     for seat in context.seats:
         result = await context.deliberator.deliberate(seat, context.phase, context)
         if result is None:
             unfilled.append(f"{context.phase.value}:{seat.value}")
             absent.add(seat)
+            reason = getattr(context.deliberator, "last_error", None)
+            if reason:
+                reasons[seat] = str(reason)
             continue
         outputs[seat] = result
-    return outputs, tuple(unfilled), frozenset(absent)
+    return outputs, tuple(unfilled), frozenset(absent), reasons
+
+
+# What a seat's absence event says when no specific failure was recorded.
+_DEFAULT_ABSENCE_REASON = "no model provider is connected to the Model Gateway"
 
 
 def _unavailable_events(
     context: PhaseContext,
     absent: frozenset[Seat],
+    reasons: dict[Seat, str],
 ) -> tuple[EmittedEvent, ...]:
     """Make each missing seat visible on the stream.
 
@@ -478,7 +506,7 @@ def _unavailable_events(
             payload={
                 "seat": seat.value,
                 "phase": context.phase.value,
-                "reason": "no model provider is connected to the Model Gateway",
+                "reason": reasons.get(seat) or _DEFAULT_ABSENCE_REASON,
             },
             idempotency_key=context.key("unavailable", seat.value),
         )
@@ -557,7 +585,7 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
     handler refuses a read before the seal, which is the property that makes the
     independence real rather than declared.
     """
-    outputs, unfilled, absent = await _collect(context)
+    outputs, unfilled, absent, reasons = await _collect(context)
     handler = PrecommitmentHandler()
     events: list[EmittedEvent] = [
         EmittedEvent(
@@ -591,7 +619,7 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
         )
         for seat, submission in sorted(sealed.items(), key=lambda kv: kv[0].value)
     )
-    events.extend(_unavailable_events(context, absent))
+    events.extend(_unavailable_events(context, absent, reasons))
     return PhaseOutcome(
         events=tuple(events),
         carry={
@@ -638,7 +666,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     table. See ``packages.evidence.adversarial_retrieval`` for the honest
     scope note on what these queries can and cannot do today.
     """
-    outputs, unfilled, absent = await _collect(context)
+    outputs, unfilled, absent, reasons = await _collect(context)
     round_ = AcquisitionRound()
     events: list[EmittedEvent] = []
     # Values later phases read; the knowledge-search pass adds
@@ -1123,7 +1151,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
             # explicitly non-evidence process context).
             carry["knowledge_base_context"] = outcome_hits
 
-    events.extend(_unavailable_events(context, absent))
+    events.extend(_unavailable_events(context, absent, reasons))
     return PhaseOutcome(
         events=tuple(events),
         carry=carry,
@@ -1193,7 +1221,7 @@ def _resurrection_events(
 
 async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
     """Publish each seat's evidence projection with private fields stripped."""
-    outputs, unfilled, absent = await _collect(context)
+    outputs, unfilled, absent, reasons = await _collect(context)
     round_ = ExchangeRound()
     events: list[EmittedEvent] = []
     slots: list[str] = list(unfilled)
@@ -1235,7 +1263,7 @@ async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
         )
         events.extend(resurrection_events)
         slots.extend(resurrection_slots)
-    events.extend(_unavailable_events(context, absent))
+    events.extend(_unavailable_events(context, absent, reasons))
     if published_item_count:
         # A marker per confirmed claim, not per published item: this round has
         # no claim_id on an evidence item (EvidenceProjectionItem carries a
@@ -1375,7 +1403,7 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
     forks a parallel Claim node instead of just blocking the original; see
     ``_fork_events``.
     """
-    outputs, unfilled, absent = await _collect(context)
+    outputs, unfilled, absent, reasons = await _collect(context)
     handler = CrossExaminationHandler()
     events: list[EmittedEvent] = []
     blocked: list[str] = []
@@ -1435,7 +1463,7 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                                 "fork_confidence", seat.value, index,
                             )
                         )
-    events.extend(_unavailable_events(context, absent))
+    events.extend(_unavailable_events(context, absent, reasons))
     return PhaseOutcome(
         events=tuple(events),
         carry={"blocked_claim_ids": tuple(blocked)},
@@ -1450,7 +1478,7 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
     The scoring is the one part of the protocol that is fully deterministic, so
     it runs for real on whatever the seats supplied.
     """
-    outputs, unfilled, absent = await _collect(context)
+    outputs, unfilled, absent, reasons = await _collect(context)
     handler = BlindspotBountyHandler()
     items: list[BlindspotItem] = []
     for output in outputs.values():
@@ -1526,7 +1554,7 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
                 idempotency_key=context.key("assignments"),
             )
         )
-    events.extend(_unavailable_events(context, absent))
+    events.extend(_unavailable_events(context, absent, reasons))
     return PhaseOutcome(
         events=tuple(events),
         unfilled_slots=unfilled,
@@ -1541,7 +1569,7 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
     falsification conditions are missing. That refusal is the mechanism behind
     CLAUDE.md 4's ban on settling scientific truth by majority.
     """
-    outputs, unfilled, absent = await _collect(context)
+    outputs, unfilled, absent, reasons = await _collect(context)
     handler = JointModelingHandler()
     merged: dict[str, list[str]] = {
         "boundary_conditions": [],
@@ -1648,7 +1676,7 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
             *unfilled,
             *(f"JOINT_MODELING:{name}" for name in result.missing_fields),
         )
-    events.extend(_unavailable_events(context, absent))
+    events.extend(_unavailable_events(context, absent, reasons))
     return PhaseOutcome(
         events=tuple(events),
         carry={"consensus_ready": result.ready},
@@ -1659,7 +1687,7 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
 
 async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
     """Let each seat judge again independently, and keep every dissent."""
-    outputs, unfilled, absent = await _collect(context)
+    outputs, unfilled, absent, reasons = await _collect(context)
     handler = FinalRejudgmentHandler()
     initial = context.carried.get("initial_judgments")
     judgments = {
@@ -1674,7 +1702,7 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
         }
     if not judgments:
         return PhaseOutcome(
-            events=_unavailable_events(context, absent),
+            events=_unavailable_events(context, absent, reasons),
             unfilled_slots=unfilled,
             absent_seats=absent,
         )
@@ -1747,7 +1775,7 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
             )
     elif dissenters:
         unfilled = (*unfilled, "FINAL_REJUDGMENT:no_dissent_target")
-    events.extend(_unavailable_events(context, absent))
+    events.extend(_unavailable_events(context, absent, reasons))
     return PhaseOutcome(
         events=tuple(events),
         unfilled_slots=unfilled,

@@ -28,6 +28,7 @@ from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher
+from packages.tools.models import ToolCallModel
 from tests.integration.test_seat_deliberation import (
     QUESTION,
     SHARED_COHORT_DOI,
@@ -226,6 +227,46 @@ async def test_knowledge_documents_become_level_a_sources(
         node.payload.get("knowledge_document_id") is not None
         for node in source_nodes
     )
+
+
+async def test_knowledge_base_does_not_suppress_external_retrieval(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Round-4 requirement: a task linked to a knowledge base still runs the
+    external literature retrieval. The KB is an *additional* channel (Level A
+    documents + keyword-search hits), never a replacement for OpenAlex /
+    Crossref / Semantic Scholar -- the external tool gateway must be called
+    exactly as it would be without a KB."""
+    kb_id = await _seed_knowledge_base_with_document(app_sessions)
+    task_id, claim_id = await _seed_queued_task_with_kb(app_sessions, kb_id)
+    result = await _run_with_kb(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        _ScriptedGateway(claim_id, uuid4()),
+        fulltext_fetcher=_fake_fulltext_fetcher(),
+    )
+
+    assert result.run.failures == ()
+    # The ScriptedGateway's ACQUISITION answer requests the shared-cohort DOI,
+    # which has no DOI in the KB document path -- only the external adapter
+    # can resolve it, so the audited tool_calls rows prove external retrieval
+    # ran even with a knowledge base attached.
+    async with app_sessions() as session:
+        external = (
+            await session.execute(
+                select(ToolCallModel).where(
+                    ToolCallModel.task_id == task_id,
+                    ToolCallModel.tool_name == "openalex",
+                    ToolCallModel.operation == "lookup_doi",
+                )
+            )
+        ).scalars().all()
+    assert external, "no external DOI lookup happened for a KB task"
+    # And the KB document still became a Level A source: the two channels are
+    # additive.
+    assert len(await _knowledge_sources(app_sessions, task_id)) == 1
 
 
 async def test_knowledge_document_acquisition_is_idempotent_on_replay(

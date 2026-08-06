@@ -63,6 +63,28 @@
   color: var(--ink-2);
 }
 
+/* 语言切换（round-4 多语言）：header 里的紧凑下拉，跟随全局字体语言。 */
+.app__lang {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.app__lang-label {
+  white-space: nowrap;
+}
+
+.app__lang select {
+  font: inherit;
+  color: inherit;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+}
+
 /* Main column + fixed right sidebar. The sidebar holds the researcher's
  * permanent model settings and session history; it exists in both states
  * (no task and task workspace). */

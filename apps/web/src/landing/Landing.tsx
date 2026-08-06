@@ -18,6 +18,8 @@ import {
   Star,
 } from "lucide-react";
 
+import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "../i18n";
+
 import "./Landing.css";
 
 /** 模板的 useInViewAnimation：IntersectionObserver（threshold 0.1），
@@ -96,27 +98,28 @@ function Hero() {
           </span>
           <span className="landing__brand-name">Poliscope</span>
         </a>
+        <LandingLanguageSwitcher />
         <div className="landing__nav-links">
           <a className="landing__nav-link" href="#views">
-            核心视图
+            {t("核心视图")}
           </a>
           <a
             className="landing__nav-link"
             href="https://github.com/Fishman-free/poliscope"
             rel="noreferrer"
           >
-            开源仓库
+            {t("开源仓库")}
           </a>
           <a
             className="landing__nav-link"
             href="https://github.com/Fishman-free/poliscope/blob/main/docs/DEVELOPMENT.md"
             rel="noreferrer"
           >
-            文档
+            {t("文档")}
           </a>
         </div>
         <a className="landing__btn landing__btn--primary" href="/workspace">
-          进入工作台
+          {t("进入工作台")}
         </a>
       </nav>
 
@@ -137,12 +140,12 @@ function Hero() {
       <div className="landing__hero-foot">
         <Reveal delay={0.4}>
           <p className="landing__tagline">
-            EPISTEMOBRAIN · 七人议会争议证据地图
+            EPISTEMOBRAIN · {t("七人议会争议证据地图")}
           </p>
         </Reveal>
         <Reveal delay={0.5}>
           <p className="landing__hero-desc">
-            七名 AI 科学家独立取证、交叉质询、专门找反例，产出一张可审计的争议证据地图。
+            {t("七名 AI 科学家独立取证、交叉质询、专门找反例，产出一张可审计的争议证据地图。")}
           </p>
         </Reveal>
         <Reveal delay={0.6}>
@@ -151,10 +154,10 @@ function Hero() {
               className="landing__btn landing__btn--primary"
               href="/workspace?mode=register"
             >
-              注册 · 开始研究
+              {t("注册 · 开始研究")}
             </a>
             <a className="landing__btn landing__btn--secondary" href="/workspace">
-              登录
+              {t("登录")}
             </a>
           </div>
         </Reveal>
@@ -167,13 +170,13 @@ function Hero() {
    卡片像证据图节点 —— 语义色边框 + 席位名 + mono 职责。 */
 function Marquee() {
   return (
-    <section className="landing__marquee" aria-label="七名科学家">
+    <section className="landing__marquee" aria-label={t("七名科学家")}>
       <div className="landing__marquee-track">
         {[...SEATS, ...SEATS].map((seat, index) => (
           <div key={`${seat.id}-${index}`} className="landing__seat-card">
             <span className="landing__seat-dot" aria-hidden="true" />
-            <span className="landing__seat-name">{seat.name}</span>
-            <span className="landing__seat-note mono">{seat.note}</span>
+            <span className="landing__seat-name">{t(seat.name)}</span>
+            <span className="landing__seat-note mono">{t(seat.note)}</span>
           </div>
         ))}
       </div>
@@ -191,25 +194,27 @@ function QuoteSection() {
       </Reveal>
       <Reveal delay={0.2}>
         <h2 className="landing__big-quote">
-          不是七个聊天机器人，
+          {t("不是七个聊天机器人，")}
           <br />
-          是一个<span className="landing__serif">自我质询</span>的科研共同体。
+          {t("是一个")}
+          <span className="landing__serif">{t("自我质询")}</span>
+          {t("的科研共同体。")}
         </h2>
       </Reveal>
       <Reveal delay={0.3}>
         <p className="landing__quote-author">
-          EpistemoBrain · 无投票权的组织脑，不代表任何学术立场
+          EpistemoBrain · {t("无投票权的组织脑，不代表任何学术立场")}
         </p>
       </Reveal>
       <Reveal delay={0.4}>
         <div className="landing__logo-row">
-          <span>独立预承诺</span>
-          <span>异议保真</span>
-          <span>精确溯源</span>
+          <span>{t("独立预承诺")}</span>
+          <span>{t("异议保真")}</span>
+          <span>{t("精确溯源")}</span>
         </div>
       </Reveal>
       <Reveal delay={0.5}>
-        <div className="landing__phases" aria-label="议会协议八阶段">
+        <div className="landing__phases" aria-label={t("议会协议八阶段")}>
           {PHASES.map((phase, index) => (
             <span key={phase} className="landing__phase">
               <span className="mono">{index + 1}</span>
@@ -226,48 +231,48 @@ function QuoteSection() {
    「过程透明」，两个约束即价格 —— 约束是真实的，价格是编的。 */
 function Capabilities() {
   return (
-    <section className="landing__caps" aria-label="能力">
+    <section className="landing__caps" aria-label={t("能力")}>
       <Reveal delay={0.1}>
         <div className="landing__cap landing__cap--dark">
-          <h3 className="landing__cap-title">证据治理</h3>
+          <h3 className="landing__cap-title">{t("证据治理")}</h3>
           <p className="landing__cap-desc">
-            双图隔离：过程轨迹永远成不了正式证据
+            {t("双图隔离：过程轨迹永远成不了正式证据")}
             <br />
-            事件账本：幂等、可重放、可审计
+            {t("事件账本：幂等、可重放、可审计")}
           </p>
           <ul className="landing__cap-list">
             <li>
-              <Check size={14} strokeWidth={2} /> 三层审计（来源真实性 · 引用蕴含 · 方法质量）
+              <Check size={14} strokeWidth={2} /> {t("三层审计（来源真实性 · 引用蕴含 · 方法质量）")}
             </li>
             <li>
-              <Check size={14} strokeWidth={2} /> Evidence Graph 唯一写入者
+              <Check size={14} strokeWidth={2} /> {t("Evidence Graph 唯一写入者")}
             </li>
             <li>
-              <Check size={14} strokeWidth={2} /> 被反驳、隔离的节点永不物理删除
+              <Check size={14} strokeWidth={2} /> {t("被反驳、隔离的节点永不物理删除")}
             </li>
           </ul>
           <a className="landing__btn landing__btn--primary" href="/workspace">
-            进入工作台
+            {t("进入工作台")}
           </a>
         </div>
       </Reveal>
       <Reveal delay={0.2}>
         <div className="landing__cap landing__cap--light">
-          <h3 className="landing__cap-title">过程透明</h3>
+          <h3 className="landing__cap-title">{t("过程透明")}</h3>
           <p className="landing__cap-desc">
-            思考链路实时可见
+            {t("思考链路实时可见")}
             <br />
-            模型推理、检索、文献链接全程流式呈现
+            {t("模型推理、检索、文献链接全程流式呈现")}
           </p>
           <ul className="landing__cap-list">
             <li>
-              <Check size={14} strokeWidth={2} /> 阶段推进自动跟随，不用干等结果
+              <Check size={14} strokeWidth={2} /> {t("阶段推进自动跟随，不用干等结果")}
             </li>
             <li>
-              <Check size={14} strokeWidth={2} /> 异议保真：DissentCertificate 可追溯
+              <Check size={14} strokeWidth={2} /> {t("异议保真：DissentCertificate 可追溯")}
             </li>
             <li>
-              <Check size={14} strokeWidth={2} /> 缺口计数常驻：未完成槽位显式报告
+              <Check size={14} strokeWidth={2} /> {t("缺口计数常驻：未完成槽位显式报告")}
             </li>
           </ul>
           <a
@@ -275,7 +280,7 @@ function Capabilities() {
             href="https://github.com/Fishman-free/poliscope/blob/main/docs/DEVELOPMENT.md"
             rel="noreferrer"
           >
-            阅读开发者文档
+            {t("阅读开发者文档")}
           </a>
         </div>
       </Reveal>
@@ -319,18 +324,19 @@ function Questions() {
     setIndex((i) => (i + delta + QUESTIONS.length) % QUESTIONS.length);
 
   return (
-    <section className="landing__questions" aria-label="示例研究问题">
+    <section className="landing__questions" aria-label={t("示例研究问题")}>
       <div className="landing__questions-head">
         <Reveal>
           <h2 className="landing__section-title">
-            研究者会问<span className="landing__serif">什么</span>
+            {t("研究者会问")}
+            <span className="landing__serif">{t("什么")}</span>
           </h2>
         </Reveal>
         <div className="landing__questions-rating">
           {Array.from({ length: 5 }).map((_, i) => (
             <Star key={i} size={20} strokeWidth={1.5} fill="#051A24" color="#051A24" />
           ))}
-          <span className="mono">7 人议会 · 0 票多数决</span>
+          <span className="mono">{t("7 人议会 · 0 票多数决")}</span>
         </div>
       </div>
       <div
@@ -341,7 +347,7 @@ function Questions() {
         <button
           type="button"
           className="landing__carousel-btn"
-          aria-label="上一个问题"
+          aria-label={t("上一个问题")}
           onClick={() => go(-1)}
         >
           <ChevronLeft size={20} strokeWidth={1.5} />
@@ -349,7 +355,7 @@ function Questions() {
         <div className="landing__carousel-viewport">
           {QUESTIONS.map((item, i) => (
             <div
-              key={item.q}
+              key={t(item.q)}
               className={
                 "landing__question-card" +
                 (i === index ? " landing__question-card--on" : "")
@@ -359,11 +365,11 @@ function Questions() {
               <span
                 className={`landing__status landing__status--${item.tone}`}
               >
-                {item.status}
+                {t(item.status)}
               </span>
-              <p className="landing__question-text">{item.q}</p>
+              <p className="landing__question-text">{t(item.q)}</p>
               <p className="landing__question-note mono">
-                （示例研究问题，用于演示视图）
+                {t("（示例研究问题，用于演示视图）")}
               </p>
             </div>
           ))}
@@ -371,7 +377,7 @@ function Questions() {
         <button
           type="button"
           className="landing__carousel-btn"
-          aria-label="下一个问题"
+          aria-label={t("下一个问题")}
           onClick={() => go(1)}
         >
           <ChevronRight size={20} strokeWidth={1.5} />
@@ -402,14 +408,14 @@ const VIEWS = [
 
 function Views() {
   return (
-    <section className="landing__views" id="views" aria-label="核心视图">
+    <section className="landing__views" id="views" aria-label={t("核心视图")}>
       {VIEWS.map((view, i) => (
-        <Reveal key={view.name} delay={0.05 * i}>
+        <Reveal key={t(view.name)} delay={0.05 * i}>
           <article className="landing__view">
             <div className="landing__view-text">
-              <span className="mono landing__view-badge">{view.badge}</span>
-              <h3 className="landing__view-name landing__serif">{view.name}</h3>
-              <p className="landing__view-desc">{view.desc}</p>
+              <span className="mono landing__view-badge">{t(view.badge)}</span>
+              <h3 className="landing__view-name landing__serif">{t(view.name)}</h3>
+              <p className="landing__view-desc">{t(view.desc)}</p>
             </div>
             <div className="landing__view-visual" aria-hidden="true">
               <div className="landing__view-grid" />
@@ -430,20 +436,21 @@ function Views() {
    （CLAUDE.md 11：没有无意义动画）。 */
 function Cta() {
   return (
-    <section className="landing__cta" aria-label="开始研究">
+    <section className="landing__cta" aria-label={t("开始研究")}>
       <Reveal>
         <h2 className="landing__cta-title">
-          开始你的<span className="landing__serif">研究</span>
+          {t("开始你的")}
+          <span className="landing__serif">{t("研究")}</span>
         </h2>
       </Reveal>
       <Reveal delay={0.15}>
         <a className="landing__btn landing__btn--primary landing__btn--lg" href="/workspace">
-          进入工作台
+          {t("进入工作台")}
         </a>
       </Reveal>
       <Reveal delay={0.25}>
         <p className="landing__cta-note">
-          科研辅助工具，输出不是临床诊断或医疗建议
+          {t("科研辅助工具，输出不是临床诊断或医疗建议")}
         </p>
       </Reveal>
     </section>
@@ -456,14 +463,14 @@ function Footer() {
     <>
       <footer className="landing__footer">
         <a className="landing__btn landing__btn--primary" href="/workspace">
-          开始研究
+          {t("开始研究")}
         </a>
         <ArrowUpRight size={22} strokeWidth={1.5} className="landing__footer-arrow" />
         <div className="landing__footer-cols">
           <div>
-            <a href="#views">核心视图</a>
-            <a href="#protocol">议会协议</a>
-            <a href="/workspace">工作台</a>
+            <a href="#views">{t("核心视图")}</a>
+            <a href="#protocol">{t("议会协议")}</a>
+            <a href="/workspace">{t("工作台")}</a>
           </div>
           <div>
             <a href="https://github.com/Fishman-free/poliscope" target="_blank" rel="noreferrer">
@@ -481,7 +488,7 @@ function Footer() {
       </footer>
       <div className="landing__copyright">
         <span>Poliscope · EpistemoBrain</span>
-        <span>科研辅助工具 · 非临床诊断</span>
+        <span>{t("科研辅助工具 · 非临床诊断")}</span>
       </div>
     </>
   );
@@ -490,18 +497,42 @@ function Footer() {
 /* 10. BOTTOM NAV：浮动 pill，P 字母 + 主按钮。 */
 function BottomNav() {
   return (
-    <nav className="landing__bottom-nav" aria-label="快捷入口">
+    <nav className="landing__bottom-nav" aria-label={t("快捷入口")}>
       <span className="landing__bottom-mark landing__serif" aria-hidden="true">
         P
       </span>
       <a className="landing__btn landing__btn--primary" href="/workspace">
-        进入工作台
+        {t("进入工作台")}
       </a>
     </nav>
   );
 }
 
+/** 落地页语言切换（round-4）：Landing 不经 App.tsx 渲染，所以在这里
+ * 提供同款下拉；切换通过 useSyncExternalStore 触发全页 t() 重渲染。 */
+function LandingLanguageSwitcher() {
+  const current = useLocale();
+  return (
+    <label className="app__lang landing__lang" aria-label={t("界面语言")}>
+      <select
+        value={current}
+        onChange={(event) => setLocale(event.target.value as (typeof LOCALES)[number])}
+      >
+        {LOCALES.map((localeOption) => (
+          <option key={localeOption} value={localeOption}>
+            {LOCALE_LABELS[localeOption]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function Landing() {
+  // Subscribes the whole landing page to locale changes: every child's t()
+  // call re-renders when the user switches language (the switcher alone
+  // cannot re-render the tree it lives in).
+  useLocale();
   return (
     <div className="landing">
       <Hero />

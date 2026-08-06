@@ -10,6 +10,15 @@ class TaskStatus(StrEnum):
     DRAFT = "DRAFT"
     AWAITING_CLAIM_CONFIRMATION = "AWAITING_CLAIM_CONFIRMATION"
     QUEUED = "QUEUED"
+    # The database-level "claimed and being run" state, set by the worker's
+    # claim transaction and cleared by the run's terminal status. Distinct
+    # from DEGRADED_RUNNING (a no-persistence state-machine marker for runs
+    # with absent seats): RUNNING exists so a second worker (or the same
+    # worker's next poll) cannot claim a task that is already running --
+    # without it, two parallel runs of one task collide on idempotency keys
+    # and the task dies with EventConflict. Crashed workers leave stale
+    # RUNNING rows; the worker reclaims them (see recover_stale_running).
+    RUNNING = "RUNNING"
     DEGRADED_RUNNING = "DEGRADED_RUNNING"
     # Plan phase 8: the one fixed checkpoint between BLINDSPOT_BOUNTY and
     # JOINT_MODELING. Not a general pause (CLAUDE.md 17 deviation, recorded in

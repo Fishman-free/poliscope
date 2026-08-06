@@ -78,6 +78,13 @@ class ResearchTaskModel(Base):
     skill_ids: Mapped[list[UUID]] = mapped_column(
         ARRAY(PGUUID(as_uuid=True)), nullable=False, default=list
     )
+    # Output language the council must write in (migration 0017), resolved
+    # from the researcher's question language at task creation ("auto" is
+    # replaced by the detection result before the row is stored, so the
+    # worker never has to guess). One of zh-Hans / zh-Hant / en.
+    output_language: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="auto"
+    )
 
 
 class ResearchScopeModel(Base):

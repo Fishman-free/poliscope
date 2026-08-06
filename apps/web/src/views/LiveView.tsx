@@ -10,11 +10,12 @@
  * 易逝过程数据：重连后从服务端重放并由 seq 去重，不作为审计依据。
  */
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { LedgerEvent, ProcessEvent, Seat, SeatSummary } from "../api/types";
 import { SEAT_LABELS } from "../api/types";
 import { Empty } from "../components/primitives";
+import { t } from "../i18n";
 import { CheckpointGate } from "./CheckpointGate";
 
 import "./LiveView.css";
@@ -58,45 +59,65 @@ function actionSummary(
     typeof payload.seat === "string"
       ? (SEAT_LABELS[payload.seat as Seat] ?? payload.seat)
       : null;
+  // Translation keys use {n} placeholders so the dictionaries can cover the
+  // template; the values are substituted after lookup (see i18n/index.ts).
   switch (event.kind) {
-    case "PRECOMMITMENT_SEALED":
+    case "PRECOMMITMENT_SEALED": {
+      const confidence = String(payload.confidence ?? t("未记录"));
       return {
         meta: meta.label,
         tone: meta.tone,
         body: seat
-          ? `${seat} 预承诺置信度 ${String(payload.confidence ?? "未记录")}`
-          : `预承诺置信度 ${String(payload.confidence ?? "未记录")}`,
+          ? t("{0} 预承诺置信度 {1}", seat, confidence)
+          : t("预承诺置信度 {0}", confidence),
       };
-    case "CHALLENGE_RAISED":
+    }
+    case "CHALLENGE_RAISED": {
+      const statement = String(payload.statement ?? "");
+      const fatal = payload.is_fatal === true ? t("（致命）") : "";
       return {
         meta: meta.label,
         tone: meta.tone,
         body: seat
-          ? `${seat} 质询：${String(payload.statement ?? "")}${payload.is_fatal === true ? "（致命）" : ""}`
-          : `质询：${String(payload.statement ?? "")}`,
+          ? t("{0} 质询：{1}{2}", seat, statement, fatal)
+          : t("质询：{0}{1}", statement, fatal),
       };
-    case "FINAL_JUDGMENT":
+    }
+    case "FINAL_JUDGMENT": {
+      const judgment = String(payload.final_judgment ?? "");
+      const confidence = String(payload.confidence ?? t("未记录"));
+      const dissent = payload.has_dissent === true ? t(" · 附异议") : "";
       return {
         meta: meta.label,
         tone: meta.tone,
         body: seat
-          ? `${seat} 复判「${String(payload.final_judgment ?? "")}」置信度 ${String(payload.confidence ?? "未记录")}${payload.has_dissent === true ? " · 附异议" : ""}`
-          : `复判「${String(payload.final_judgment ?? "")}」`,
+          ? t("{0} 复判「{1}」置信度 {2}{3}", seat, judgment, confidence, dissent)
+          : t("复判「{0}」置信度 {1}{2}", judgment, confidence, dissent),
       };
+    }
     case "CONFIDENCE_UPDATED":
       return { meta: meta.label, tone: meta.tone, body: String(payload.confidence_delta_note ?? "") };
     case "EVIDENCE_REQUESTED":
       return {
         meta: meta.label,
         tone: meta.tone,
-        body: seat ? `${seat} 请求补充证据` : "请求补充证据",
+        body: seat ? t("{0} 请求补充证据", seat) : t("请求补充证据"),
       };
-    case "SEAT_UNAVAILABLE":
+    case "SEAT_UNAVAILABLE": {
+      // 缺席原因来自账本事件本身（worker 记录的真实失败原因，如连接
+      // 错误、401、schema 修复失败）——「席位缺席」必须说明缺席为什么，
+      // 否则研究者无法区分「没有配置模型」与「模型调用失败」。
+      const reason = String(payload.reason ?? "");
+      const clipped = reason.length > 90 ? `${reason.slice(0, 90)}…` : reason;
+      const phase = String(payload.phase ?? "");
       return {
         meta: meta.label,
         tone: meta.tone,
-        body: seat ? `${seat} 缺席 ${String(payload.phase ?? "")}` : "席位缺席",
+        body: seat
+          ? t("{0} {1}{2}{3}", seat, phase ? `${phase} ${t("缺席")}` : t("缺席"), clipped ? `：${clipped}` : "", "")
+          : t("席位缺席{0}", clipped ? `：${clipped}` : ""),
       };
+    }
     default:
       return null;
   }
@@ -129,16 +150,21 @@ function phaseProgress(events: LedgerEvent[]): {
 }
 
 /** 每个席位最近的「一段」思考流：从最近的 seat_deliberation 起聚合
- * reasoning/token 片段，至最近的 model_done 截断。倒序遍历取最后一段。 */
+ * reasoning/token 片段，至最近的 model_done 截断。倒序遍历取最后一段。
+ * ``seat_working`` 是模型调用期间服务器发的心跳（elapsed = 已等待秒数），
+ * 供「思考中… 已等待 Ns」显示：一次调用卡住时，前端不再只有死寂的
+ * 「思考中…」，而是能看见它已经等了多久。 */
 function seatStreams(
   processEvents: ProcessEvent[],
-): Record<string, { phase: string; text: string; running: boolean }> {
+): Record<string, { phase: string; text: string; running: boolean; elapsed: number }> {
   const result: Record<
     string,
-    { phase: string; text: string; running: boolean }
+    { phase: string; text: string; running: boolean; elapsed: number }
   > = {};
-  const current: Record<string, { phase: string; parts: string[]; running: boolean }> =
-    {};
+  const current: Record<
+    string,
+    { phase: string; parts: string[]; running: boolean; elapsed: number }
+  > = {};
   for (const event of processEvents) {
     const payload = event.payload as Record<string, unknown>;
     const seat = typeof payload.seat === "string" ? payload.seat : null;
@@ -147,6 +173,7 @@ function seatStreams(
         phase: typeof payload.phase === "string" ? payload.phase : "",
         parts: [],
         running: true,
+        elapsed: 0,
       };
     } else if (seat && current[seat]) {
       const text = typeof payload.text === "string" ? payload.text : "";
@@ -154,14 +181,28 @@ function seatStreams(
         if (text) current[seat].parts.push(text);
       } else if (event.kind === "model_done") {
         current[seat].running = false;
+      } else if (event.kind === "seat_working") {
+        const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
+        current[seat].elapsed = elapsed;
       }
     }
   }
   for (const [seat, entry] of Object.entries(current)) {
-    result[seat] = { phase: entry.phase, text: entry.parts.join(""), running: entry.running };
+    result[seat] = {
+      phase: entry.phase,
+      text: entry.parts.join(""),
+      running: entry.running,
+      elapsed: entry.elapsed,
+    };
   }
   return result;
 }
+
+/** 一个席位连续无进展多久后提示「可能卡住」（秒）。阈值与后端模型调用
+ * 总 deadline（240s）+ 重试余量对齐：超过 300s 而仍在 running，说明
+ * 调用链已越过所有正常超时，即将被 watchdog 中断。 */
+const SEAT_STUCK_WARN_SECONDS = 60;
+const SEAT_STUCK_CRITICAL_SECONDS = 300;
 
 export function LiveView({
   events,
@@ -182,6 +223,18 @@ export function LiveView({
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
   const streams = useMemo(() => seatStreams(processEvents), [processEvents]);
+  // 每秒重渲染一次，让「思考中… 已等待 Ns」的秒数走动。只在还有席位
+  // running 时启动定时器，空闲时不空转。
+  const [, setTick] = useState(0);
+  const anyRunning = useMemo(
+    () => Object.values(streams).some((entry) => entry.running),
+    [streams],
+  );
+  useEffect(() => {
+    if (!anyRunning) return;
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [anyRunning]);
   const actions = useMemo(
     () =>
       events
@@ -192,14 +245,46 @@ export function LiveView({
     [events],
   );
 
-  // 工具调用日志（检索/DOI 解析），命中带可点击链接。
-  const toolLog = useMemo(
-    () =>
-      processEvents.filter(
-        (event) => event.kind === "tool_call" || event.kind === "tool_result",
-      ),
-    [processEvents],
-  );
+  // 检索与文献：一次检索（tool_call）与其结果（tool_result）配对成一个
+  // 卡片组，多列平铺。分组而不是逐条平铺，是因为一次检索的多个命中
+  // 属于同一个动作——把结果拆散成独立条目会让「这次检索找到了什么」
+  // 无法从布局上直接读出。citation_count 是权威度信号（检索按被引量
+  // 排序），缺失时显示为 undefined，卡片不渲染徽标。
+  const toolGroups = useMemo(() => {
+    const groups: {
+      kind: string;
+      query: string;
+      seats: string[];
+      results: { url: string | null; title: string; miss: boolean; citationCount?: number }[];
+    }[] = [];
+    let current: (typeof groups)[number] | null = null;
+    for (const event of processEvents) {
+      const payload = event.payload as Record<string, unknown>;
+      if (event.kind === "tool_call") {
+        current = {
+          kind: payload.kind === "doi_lookup" ? t("DOI 解析") : t("检索"),
+          query: String(payload.query ?? ""),
+          seats: Array.isArray(payload.seats)
+            ? payload.seats.map(String)
+            : [],
+          results: [],
+        };
+        groups.push(current);
+      } else if (event.kind === "tool_result" && current) {
+        const citationCount =
+          typeof payload.citation_count === "number" && payload.citation_count > 0
+            ? payload.citation_count
+            : undefined;
+        current.results.push({
+          url: typeof payload.url === "string" ? payload.url : null,
+          title: String(payload.title ?? payload.doi ?? ""),
+          miss: payload.miss === true,
+          citationCount,
+        });
+      }
+    }
+    return groups;
+  }, [processEvents]);
 
   const scrollRef = useRef<Record<string, HTMLDivElement | null>>({});
   useEffect(() => {
@@ -227,7 +312,7 @@ export function LiveView({
 
   return (
     <div className="live">
-      <section className="live__phases" aria-label="八阶段进度">
+      <section className="live__phases" aria-label={t("八阶段进度")}>
         {PHASES.map((phase) => {
           const isDone = done.has(phase.id);
           const isCurrent = current === phase.id;
@@ -240,10 +325,10 @@ export function LiveView({
                 (isDone ? " live__phase--done" : "") +
                 (isCurrent ? " live__phase--current" : "")
               }
-              title={phase.label}
+              title={t(phase.label)}
             >
               {isDone ? "✓ " : ""}
-              {phase.label}
+              {t(phase.label)}
             </span>
           );
         })}
@@ -253,13 +338,12 @@ export function LiveView({
         /* 排队 ≠ 没反应：任务还没有任何过程事件，但状态是「在队列里等
            worker」。说清楚在等什么，而不是留一句干巴巴的「已入队」。 */
         <div className="live__queued" role="status">
-          <span className="live__queued-badge">排队中</span>
-          <p className="live__queued-title">任务已入队，等待 Worker 认领</p>
+          <span className="live__queued-badge">{t("排队中")}</span>
+          <p className="live__queued-title">{t("任务已入队，等待 Worker 认领")}</p>
           <p className="live__queued-note">
-            Worker 正在处理队列中的任务。本任务开始运行后，这里会自动显示
-            七位科学家的思考、检索与议会动作，无需手动刷新。外部模型服务
-            繁忙时，排队时间可能较长；盲点悬赏结束后会到达方向性检查点，
-            届时可在此提交备注调整后续讨论重点（不进入任何证据判定）。
+            {t(
+              "Worker 正在处理队列中的任务。本任务开始运行后，这里会自动显示七位科学家的思考、检索与议会动作，无需手动刷新。外部模型服务繁忙时，排队时间可能较长；盲点悬赏结束后会到达方向性检查点，届时可在此提交备注调整后续讨论重点（不进入任何证据判定）。",
+            )}
           </p>
         </div>
       ) : (
@@ -276,48 +360,135 @@ export function LiveView({
             />
           ) : status && !anyTrace ? (
             <p className="live__checkpoint-note">
-              研究者干预窗口：盲点悬赏结束后会到达方向性检查点，届时可在本页
-              提交备注调整后续讨论重点 —— 备注不进入任何证据判定，也不改变
-              异议保留（CLAUDE.md 4.1）。
+              {t(
+                "研究者干预窗口：盲点悬赏结束后会到达方向性检查点，届时可在本页提交备注调整后续讨论重点 —— 备注不进入任何证据判定，也不改变异议保留（CLAUDE.md 4.1）。",
+              )}
             </p>
           ) : null}
 
           <div className="live__grid">
-            <section className="live__seats" aria-label="席位思考流">
-              {Object.entries(streams).length === 0 ? (
-                <Empty>还没有席位开始思考。</Empty>
-              ) : (
-                Object.entries(streams).map(([seat, entry]) => (
-                  <div key={seat} className="live__seat">
-                    <div className="live__seat-head">
-                      <span className="live__seat-name">
-                        {SEAT_LABELS[seat as Seat] ?? seat}
-                      </span>
-                      {entry.phase ? (
-                        <span className="live__seat-phase mono">{entry.phase}</span>
-                      ) : null}
-                      {entry.running ? (
-                        <span className="live__seat-running">思考中…</span>
-                      ) : null}
+            {/* 左列：席位思考流在上，检索与文献在下方 —— 研究者先看科学家
+                在做什么，再看他们检索到了什么（用户要求：文献区放在主界面
+                下方，一行多列铺开，而不是挤在右侧小栏里）。 */}
+            <div className="live__main">
+              <section className="live__seats" aria-label={t("席位思考流")}>
+                {Object.entries(streams).length === 0 ? (
+                  <Empty>{t("还没有席位开始思考。")}</Empty>
+                ) : (
+                  Object.entries(streams).map(([seat, entry]) => (
+                    <div key={seat} className="live__seat">
+                      <div className="live__seat-head">
+                        <span className="live__seat-name">
+                          {SEAT_LABELS[seat as Seat] ?? seat}
+                        </span>
+                        {entry.phase ? (
+                          <span className="live__seat-phase mono">{entry.phase}</span>
+                        ) : null}
+                        {entry.running ? (
+                          <span
+                            className={
+                              entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
+                                ? "live__seat-running live__seat-running--critical"
+                                : entry.elapsed >= SEAT_STUCK_WARN_SECONDS
+                                  ? "live__seat-running live__seat-running--slow"
+                                  : "live__seat-running"
+                            }
+                          >
+                            {entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
+                              ? t("模型长时间无响应（已等待 {0}s），系统将自动中断", entry.elapsed)
+                              : t("思考中… 已等待 {0}s", entry.elapsed)}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div
+                        className="live__seat-text mono"
+                        ref={(node) => {
+                          scrollRef.current[seat] = node;
+                        }}
+                      >
+                        {entry.text || t("（尚无输出）")}
+                      </div>
                     </div>
-                    <div
-                      className="live__seat-text mono"
-                      ref={(node) => {
-                        scrollRef.current[seat] = node;
-                      }}
-                    >
-                      {entry.text || "（尚无输出）"}
-                    </div>
+                  ))
+                )}
+              </section>
+
+              <section className="live__tools" aria-label={t("检索与文献")}>
+                <h3>{t("检索与文献")}</h3>
+                {toolGroups.length === 0 ? (
+                  <Empty>{t("还没有检索活动。")}</Empty>
+                ) : (
+                  <div className="live__tool-grid">
+                    {toolGroups.map((group, index) => (
+                      <div key={index} className="live__tool-card">
+                        <div className="live__tool-card-head">
+                          <span className="live__tool-kind mono">{group.kind}</span>
+                          <span className="live__tool-query" title={group.query}>
+                            {group.query}
+                          </span>
+                          {group.seats.length > 0 ? (
+                            <span className="live__tool-seats mono">
+                              {group.seats.join(", ")}
+                            </span>
+                          ) : null}
+                        </div>
+                        {group.results.length === 0 ? (
+                          <p className="live__tool-empty">{t("等待结果…")}</p>
+                        ) : group.results.every((result) => result.miss) ? (
+                          <p className="live__tool-empty live__tool-empty--miss">
+                            {t("未命中")}
+                          </p>
+                        ) : (
+                          <ul className="live__tool-results">
+                            {group.results.map((result, resultIndex) => (
+                              <li key={resultIndex} className="live__tool-result">
+                                {result.miss ? (
+                                  <span className="live__tool-title live__tool-title--miss">
+                                    {result.title || t("未命中")}
+                                  </span>
+                                ) : (
+                                  <>
+                                    <span className="live__tool-title">
+                                      {result.title}
+                                    </span>
+                                    <span className="live__tool-meta">
+                                      {result.citationCount !== undefined ? (
+                                        <span
+                                          className="live__tool-citations"
+                                          title={t("被引次数（权威度信号）")}
+                                        >
+                                          {t("被引 {0}", result.citationCount)}
+                                        </span>
+                                      ) : null}
+                                      {result.url ? (
+                                        <a
+                                          className="live__tool-link"
+                                          href={result.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                        >
+                                          {t("打开来源 ↗")}
+                                        </a>
+                                      ) : null}
+                                    </span>
+                                  </>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))
-              )}
-            </section>
+                )}
+              </section>
+            </div>
 
             <div className="live__side">
-              <section className="live__actions" aria-label="议会动作">
-                <h3>议会动作</h3>
+              <section className="live__actions" aria-label={t("议会动作")}>
+                <h3>{t("议会动作")}</h3>
                 {actions.length === 0 ? (
-                  <Empty>还没有结构化动作。</Empty>
+                  <Empty>{t("还没有结构化动作。")}</Empty>
                 ) : (
                   <ol className="live__action-log">
                     {actions.map((item, index) => (
@@ -325,66 +496,11 @@ export function LiveView({
                         <span
                           className={`live__action-kind live__action-kind--${item.tone}`}
                         >
-                          {item.meta}
+                          {t(item.meta)}
                         </span>
                         <span className="live__action-body">{item.body}</span>
                       </li>
                     ))}
-                  </ol>
-                )}
-              </section>
-
-              <section className="live__tools" aria-label="检索与文献">
-                <h3>检索与文献</h3>
-                {toolLog.length === 0 ? (
-                  <Empty>还没有检索活动。</Empty>
-                ) : (
-                  <ol className="live__tool-log">
-                    {toolLog.map((event, index) => {
-                      const payload = event.payload as Record<string, unknown>;
-                      if (event.kind === "tool_call") {
-                        return (
-                          <li key={index} className="live__tool-call">
-                            <span className="live__tool-kind mono">
-                              {payload.kind === "doi_lookup" ? "DOI 解析" : "检索"}
-                            </span>
-                            <span className="live__tool-query">{String(payload.query ?? "")}</span>
-                            {Array.isArray(payload.seats) ? (
-                              <span className="live__tool-seats mono">
-                                {payload.seats.join(", ")}
-                              </span>
-                            ) : null}
-                          </li>
-                        );
-                      }
-                      const url = typeof payload.url === "string" ? payload.url : null;
-                      if (payload.miss === true) {
-                        return (
-                          <li key={index} className="live__tool-result live__tool-result--miss">
-                            <span className="live__tool-kind mono">未命中</span>
-                            <span className="live__tool-query">{String(payload.query ?? "")}</span>
-                          </li>
-                        );
-                      }
-                      return (
-                        <li key={index} className="live__tool-result">
-                          <span className="live__tool-kind mono">命中</span>
-                          <span className="live__tool-title">
-                            {String(payload.title ?? payload.doi ?? "")}
-                          </span>
-                          {url ? (
-                            <a
-                              className="live__tool-link"
-                              href={url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              打开来源 ↗
-                            </a>
-                          ) : null}
-                        </li>
-                      );
-                    })}
                   </ol>
                 )}
               </section>

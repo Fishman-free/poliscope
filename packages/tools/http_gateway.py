@@ -57,7 +57,7 @@ SEMANTIC_SCHOLAR_BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
 SEMANTIC_SCHOLAR_FIELDS = "paperId,title,year,authors,publicationTypes"
 SEMANTIC_SCHOLAR_SEARCH_FIELDS = (
-    "paperId,title,year,authors,publicationTypes,externalIds"
+    "paperId,title,year,authors,publicationTypes,externalIds,citationCount"
 )
 
 # Providers with a real, keyless, free-text search endpoint. Unpaywall's real
@@ -264,9 +264,16 @@ class HttpToolGateway:
         return payload, retries
 
     async def _search_openalex(self, query: str) -> tuple[dict[str, object], int]:
+        # Round-4 authority: sort free-text hits by citation count so the
+        # first hit is the most-cited (most authoritative) work matching the
+        # query, not merely the most textually relevant one.
         data, retries = await self._get_json(
             f"{OPENALEX_BASE_URL}/works",
-            params={"search": query, "per-page": "1"},
+            params={
+                "search": query,
+                "per-page": "1",
+                "sort": "cited_by_count:desc",
+            },
         )
         results = data.get("results") or []
         if not results:
@@ -291,6 +298,7 @@ class HttpToolGateway:
             "year": work.get("publication_year"),
             "type": work.get("type"),
             "retracted": bool(work.get("is_retracted", False)),
+            "citation_count": int(work.get("cited_by_count") or 0),
         }
         return payload, retries
 
@@ -318,6 +326,7 @@ class HttpToolGateway:
             "authors": authors,
             "year": date_parts[0] if date_parts else None,
             "type": item.get("type"),
+            "citation_count": int(item.get("is-referenced-by-count") or 0),
         }
         return payload, retries
 
@@ -329,12 +338,15 @@ class HttpToolGateway:
             if self._config.semantic_scholar_api_key
             else None
         )
+        # Round-4 authority: sort by citation count, same rationale as the
+        # OpenAlex sort above.
         data, retries = await self._get_json(
             f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search",
             params={
                 "query": query,
                 "fields": SEMANTIC_SCHOLAR_SEARCH_FIELDS,
                 "limit": "1",
+                "sort": "citationCount:desc",
             },
             headers=headers,
         )
@@ -353,6 +365,7 @@ class HttpToolGateway:
             "authors": authors,
             "year": paper.get("year"),
             "publication_types": tuple(paper.get("publicationTypes") or ()),
+            "citation_count": int(paper.get("citationCount") or 0),
         }
         return payload, retries
 

@@ -35,6 +35,7 @@ class CrossrefAdapter:
             year=cast(int | None, payload.get("year")),
             publication_type=payload.get("type"),
             retracted=False,
+            citation_count=int(payload.get("citation_count", 0) or 0),
             provider_ids=FrozenDict({"crossref": cleaned}),
         )
 
@@ -61,5 +62,6 @@ class CrossrefAdapter:
             year=cast(int | None, payload.get("year")),
             publication_type=payload.get("type"),
             retracted=False,
+            citation_count=int(payload.get("citation_count", 0) or 0),
             provider_ids=FrozenDict({"crossref": cleaned}),
         )

@@ -89,6 +89,10 @@ class ProcessStreamModel(Base):
     )
     __table_args__ = (
         sa.UniqueConstraint("task_id", "seq", name="uq_process_stream_task_seq"),
+        # Mirrors migration 0015's ix_process_stream_task_seq: the stream's
+        # per-task replay (SELECT ... WHERE task_id = ? ORDER BY seq) scans
+        # this index. Declared here so autogenerate does not see drift.
+        sa.Index("ix_process_stream_task_seq", "task_id", "seq"),
     )
 
 

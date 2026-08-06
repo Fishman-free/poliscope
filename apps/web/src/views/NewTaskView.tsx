@@ -21,6 +21,7 @@ import {
 } from "../api/client";
 import type { KnowledgeBaseSummary, SkillSummary, SuggestedClaim } from "../api/types";
 import { Empty, Panel } from "../components/primitives";
+import { t } from "../i18n";
 
 import "./NewTaskView.css";
 
@@ -233,7 +234,7 @@ export function NewTaskView({
       const looksPdf =
         file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
       if (!looksPdf) {
-        setUploadError(`「${file.name}」不是 PDF 文件，已跳过`);
+        setUploadError(t("「{0}」不是 PDF 文件，已跳过", file.name));
         continue;
       }
       try {
@@ -241,7 +242,9 @@ export function NewTaskView({
         fresh.push({ name: file.name, size: result.size_bytes });
       } catch (cause) {
         setUploadError(
-          `「${file.name}」上传失败：${cause instanceof Error ? cause.message : String(cause)}`,
+          t(
+            `「${file.name}」上传失败：${cause instanceof Error ? cause.message : String(cause)}`,
+          ),
         );
       }
     }
@@ -336,11 +339,13 @@ export function NewTaskView({
       <Panel
         key="claims"
         className="fade-in-up"
-        title="确认要调查的原子主张"
-        subtitle="七人议会只会调查下面确认的主张。取消勾选不会删除——它仍会被记录，随时可在证据图里追溯。"
+        title={t("确认要调查的原子主张")}
+        subtitle={t(
+          "七人议会只会调查下面确认的主张。取消勾选不会删除——它仍会被记录，随时可在证据图里追溯。",
+        )}
       >
         {claims.length === 0 ? (
-          <Empty>没能从这个问题里拆出任何主张，请返回修改问题的表述。</Empty>
+          <Empty>{t("没能从这个问题里拆出任何主张，请返回修改问题的表述。")}</Empty>
         ) : (
           <ul className="newtask__claims">
             {claims.map((claim) => (
@@ -354,7 +359,8 @@ export function NewTaskView({
                   <span className="newtask__claim-body">
                     <span className="newtask__claim-statement">{claim.statement}</span>
                     <span className="newtask__claim-meta mono">
-                      {claim.claim_type} · 证伪条件：{claim.falsification_condition}
+                      {claim.claim_type} · {t("证伪条件：")}
+                      {claim.falsification_condition}
                     </span>
                   </span>
                 </label>
@@ -364,9 +370,9 @@ export function NewTaskView({
         )}
 
         <section className="newtask__upload">
-          <h4>补充 PDF 文献（可选，单个不超过 20 MB）</h4>
+          <h4>{t("补充 PDF 文献（可选，单个不超过 20 MB）")}</h4>
           <p className="newtask__upload-hint">
-            上传的 PDF 会作为用户提供的证据，交给议会做全文核验后按 Level A 进入证据图。
+            {t("上传的 PDF 会作为用户提供的证据，交给议会做全文核验后按 Level A 进入证据图。")}
           </p>
           <input
             type="file"
@@ -379,7 +385,9 @@ export function NewTaskView({
             <ul className="newtask__upload-list">
               {uploads.map((item, index) => (
                 <li key={index}>
-                  {item.name}（{(item.size / 1024).toFixed(0)} KB，已加入证据）
+                  {t(
+                    `${item.name}（${(item.size / 1024).toFixed(0)} KB，已加入证据）`,
+                  )}
                 </li>
               ))}
             </ul>
@@ -404,7 +412,7 @@ export function NewTaskView({
             onClick={() => setPhase("question")}
             disabled={submitting}
           >
-            返回修改问题
+            {t("返回修改问题")}
           </button>
           <button
             type="button"
@@ -412,7 +420,7 @@ export function NewTaskView({
             onClick={confirmAndStart}
             disabled={submitting || selected.size === 0}
           >
-            {submitting ? "提交中…" : "确认并开始研究"}
+            {submitting ? t("提交中…") : t("确认并开始研究")}
           </button>
         </div>
       </Panel>
@@ -423,28 +431,30 @@ export function NewTaskView({
     <Panel
       key="question"
       className="fade-in-up"
-      title="打开一个新的研究任务"
-      subtitle="七人议会会围绕这个问题独立取证、交叉质询，产出一张可审计的证据地图，而不是一段读起来通顺的摘要。"
+      title={t("打开一个新的研究任务")}
+      subtitle={t(
+        "七人议会会围绕这个问题独立取证、交叉质询，产出一张可审计的证据地图，而不是一段读起来通顺的摘要。",
+      )}
     >
       <form className="newtask__form" onSubmit={submitQuestion}>
         <label className="newtask__label" htmlFor="new-task-question">
-          研究问题
+          {t("研究问题")}
         </label>
         <textarea
           id="new-task-question"
           className="newtask__textarea"
           value={question}
           onChange={(event) => setQuestion(event.target.value)}
-          placeholder="例如：社交媒体使用时长是否会降低青少年的心理健康水平？"
+          placeholder={t("例如：社交媒体使用时长是否会降低青少年的心理健康水平？")}
           rows={3}
           disabled={submitting}
         />
 
         <details className="newtask__advanced">
-          <summary>高级选项（人群 / 地区 / 语言 / 证据侧重 / 预算，不填则使用默认值）</summary>
+          <summary>{t("高级选项（人群 / 地区 / 语言 / 证据侧重 / 预算，不填则使用默认值）")}</summary>
           <div className="newtask__advanced-grid">
             <label className="newtask__field">
-              人群（逗号分隔）
+              {t("人群（逗号分隔）")}
               <input
                 value={populations}
                 onChange={(event) => setPopulations(event.target.value)}
@@ -452,7 +462,7 @@ export function NewTaskView({
               />
             </label>
             <label className="newtask__field">
-              地区（逗号分隔）
+              {t("地区（逗号分隔）")}
               <input
                 value={regions}
                 onChange={(event) => setRegions(event.target.value)}
@@ -460,7 +470,7 @@ export function NewTaskView({
               />
             </label>
             <label className="newtask__field">
-              语言（逗号分隔）
+              {t("语言（逗号分隔）")}
               <input
                 value={languages}
                 onChange={(event) => setLanguages(event.target.value)}
@@ -474,10 +484,10 @@ export function NewTaskView({
                 onChange={(event) => setAllowPreprints(event.target.checked)}
                 disabled={submitting}
               />
-              允许预印本作为证据来源
+              {t("允许预印本作为证据来源")}
             </label>
             <label className="newtask__field">
-              时间预算（分钟）
+              {t("时间预算（分钟）")}
               <input
                 type="number"
                 min={1}
@@ -489,7 +499,7 @@ export function NewTaskView({
               />
             </label>
             <label className="newtask__field">
-              工具调用上限
+              {t("工具调用上限")}
               <input
                 type="number"
                 min={1}
@@ -499,7 +509,7 @@ export function NewTaskView({
               />
             </label>
             <label className="newtask__field">
-              来源篇数上限
+              {t("来源篇数上限")}
               <input
                 type="number"
                 min={1}
@@ -511,7 +521,7 @@ export function NewTaskView({
           </div>
 
           <fieldset className="newtask__priorities">
-            <legend>证据侧重（可多选，默认相关关系）</legend>
+            <legend>{t("证据侧重（可多选，默认相关关系）")}</legend>
             {Object.entries(EVIDENCE_PRIORITY_LABELS).map(([key, label]) => (
               <label key={key} className="newtask__priority">
                 <input
@@ -520,7 +530,7 @@ export function NewTaskView({
                   onChange={() => togglePriority(key)}
                   disabled={submitting}
                 />
-                {label}
+                {t(label)}
               </label>
             ))}
           </fieldset>
@@ -528,20 +538,20 @@ export function NewTaskView({
 
         <details className="newtask__advanced">
           <summary>
-            用户提供的证据（可选）——关联知识库，文档会作为正式证据源交给议会核验
+            {t("用户提供的证据（可选）——关联知识库，文档会作为正式证据源交给议会核验")}
           </summary>
           <div className="newtask__advanced-grid">
             <label className="newtask__field newtask__field--wide">
-              关联知识库（可选，长期记忆——其中的文档会作为 Level A 用户提供源）
+              {t("关联知识库（可选，长期记忆——其中的文档会作为 Level A 用户提供源）")}
               <select
                 value={knowledgeBaseId}
                 onChange={(event) => setKnowledgeBaseId(event.target.value)}
                 disabled={submitting || knowledgeBases.length === 0}
               >
-                <option value="">不关联（默认从公开文献检索）</option>
+                <option value="">{t("不关联（默认从公开文献检索）")}</option>
                 {knowledgeBases.map((kb) => (
                   <option key={kb.id} value={kb.id}>
-                    {kb.name}（{kb.document_count} 篇文档）
+                    {t("{0}（{1} 篇文档）", kb.name, kb.document_count)}
                   </option>
                 ))}
               </select>
@@ -552,15 +562,15 @@ export function NewTaskView({
               onClick={onManageKnowledge}
               disabled={submitting}
             >
-              管理知识库 →
+              {t("管理知识库 →")}
             </button>
             <details className="newtask__inline-create">
-              <summary>没有合适的知识库？在这里新建一个</summary>
+              <summary>{t("没有合适的知识库？在这里新建一个")}</summary>
               <div className="newtask__inline-create-row">
                 <input
                   value={newKbName}
                   onChange={(event) => setNewKbName(event.target.value)}
-                  placeholder="知识库名称"
+                  placeholder={t("知识库名称")}
                   disabled={submitting || creatingKb}
                 />
                 <button
@@ -569,7 +579,7 @@ export function NewTaskView({
                   onClick={createKbInline}
                   disabled={submitting || creatingKb || !newKbName.trim()}
                 >
-                  {creatingKb ? "创建中…" : "创建并关联"}
+                  {creatingKb ? t("创建中…") : t("创建并关联")}
                 </button>
               </div>
               {kbCreateError ? (
@@ -583,7 +593,7 @@ export function NewTaskView({
           {skills.length > 0 ? (
             <fieldset className="newtask__priorities">
               <legend>
-                调用 Skills（可选，勾选后其指令会注入议会 prompt，作为非正式证据）
+                {t("调用 Skills（可选，勾选后其指令会注入议会 prompt，作为非正式证据）")}
               </legend>
               {skills.map((skill) => (
                 <label key={skill.id} className="newtask__priority">
@@ -608,8 +618,9 @@ export function NewTaskView({
         </details>
 
         <p className="newtask__model-note">
-          模型设置已移至右侧栏「模型设置」面板：保存一次，之后创建的任务都会自动使用；
-          不设置则使用系统默认模型。
+          {t(
+            "模型设置已移至右侧栏「模型设置」面板：保存一次，之后创建的任务都会自动使用；不设置则使用系统默认模型。",
+          )}
         </p>
 
         {error ? (
@@ -623,13 +634,14 @@ export function NewTaskView({
           className="button button--primary"
           disabled={submitting || !question.trim()}
         >
-          {submitting ? "创建中…" : "开始研究"}
+          {submitting ? t("创建中…") : t("开始研究")}
         </button>
       </form>
 
       <p className="newtask__safety">
-        已填写的内容会自动保存在本机浏览器（草稿），切走、刷新都不丢；
-        确认开始研究后清空。本系统为科研辅助工具，不提供医学诊断或医疗建议。
+        {t(
+          "已填写的内容会自动保存在本机浏览器（草稿），切走、刷新都不丢；确认开始研究后清空。本系统为科研辅助工具，不提供医学诊断或医疗建议。",
+        )}
       </p>
     </Panel>
   );

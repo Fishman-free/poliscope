@@ -21,6 +21,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { clearToken, fetchMe, fetchReportMarkdown, getToken, logout } from "./api/client";
 import { useWorkspace } from "./api/useWorkspace";
 import { Badge, Spinner, TASK_STATUS_TONE } from "./components/primitives";
+import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "./i18n";
 import { AuditView } from "./views/AuditView";
 import { AuthView } from "./views/AuthView";
 import { BlindspotRadarView } from "./views/BlindspotRadarView";
@@ -51,6 +52,9 @@ type Tab =
 /** No-task home has two screens behind a small segmented control. */
 type HomeView = "newtask" | "knowledge";
 
+/** Tab labels are rendered through t() at render time (module-level t() could
+ * not react to a language switch). Labels that are already English pass
+ * through unchanged; hints are translated. */
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "live", label: "实时进展", hint: "思考链路与检索" },
   { id: "brief", label: "Research Brief", hint: "结论与局限并排" },
@@ -119,7 +123,32 @@ function withTransition(apply: () => void) {
  * "anon" renders the login screen; "authed" renders the workspace. */
 type AuthState = "checking" | "anon" | "authed";
 
+/** Language switcher (round-4 UI i18n). Changing the locale re-renders the
+ * whole app through useSyncExternalStore, so every t() call refreshes. */
+function LanguageSwitcher() {
+  const current = useLocale();
+  return (
+    <label className="app__lang">
+      <span className="app__lang-label">{t("语言")}</span>
+      <select
+        value={current}
+        onChange={(event) => setLocale(event.target.value as (typeof LOCALES)[number])}
+        aria-label={t("界面语言")}
+      >
+        {LOCALES.map((localeOption) => (
+          <option key={localeOption} value={localeOption}>
+            {LOCALE_LABELS[localeOption]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function App() {
+  // Subscribes the shell to locale changes; the switcher and every t() call
+  // in the tree re-render through the same store.
+  useLocale();
   const [auth, setAuth] = useState<AuthState>(
     getToken() ? "checking" : "anon",
   );
@@ -264,15 +293,16 @@ export function App() {
       <div className="app">
         <header className="app__chrome">
           <div className="app__identity">
-            <a className="app__wordmark" href="/" title="返回公开落地页">
+            <a className="app__wordmark" href="/" title={t("返回公开落地页")}>
               Poliscope
             </a>
-            <span className="app__method">EpistemoBrain · 争议证据地图</span>
+            <span className="app__method">{t("EpistemoBrain · 争议证据地图")}</span>
           </div>
+          <LanguageSwitcher />
         </header>
         {auth === "checking" ? (
           <main className="app__main">
-            <Spinner label="正在验证登录状态…" />
+            <Spinner label={t("正在验证登录状态…")} />
           </main>
         ) : (
           <AuthView
@@ -295,16 +325,17 @@ export function App() {
     <div className="app">
       <header className="app__chrome">
         <div className="app__identity">
-          <a className="app__wordmark" href="/" title="返回公开落地页">
+          <a className="app__wordmark" href="/" title={t("返回公开落地页")}>
             Poliscope
           </a>
-          <span className="app__method">EpistemoBrain · 争议证据地图</span>
+          <span className="app__method">{t("EpistemoBrain · 争议证据地图")}</span>
         </div>
         <div className="app__account">
+          <LanguageSwitcher />
           <span className="app__account-name">{username}</span>
           <SessionHistory currentTaskId={taskId} onOpen={open} />
           <button type="button" className="button button--small" onClick={signOut}>
-            退出登录
+            {t("退出登录")}
           </button>
         </div>
       </header>
@@ -313,7 +344,7 @@ export function App() {
         <main className="app__main">
           {taskId === null ? (
             <>
-              <div className="app__home-switch" role="tablist" aria-label="主页视图">
+              <div className="app__home-switch" role="tablist" aria-label={t("主页视图")}>
                 {(["newtask", "knowledge"] as const).map((view) => (
                   <button
                     key={view}
@@ -325,7 +356,7 @@ export function App() {
                     }
                     onClick={() => switchHome(view)}
                   >
-                    {view === "newtask" ? "新建任务" : "知识库"}
+                    {view === "newtask" ? t("新建任务") : t("知识库")}
                   </button>
                 ))}
               </div>
@@ -370,7 +401,7 @@ export function App() {
             <>
               <div className="app__task">
                 <div className="app__task-head">
-                  <h1>{snapshot?.task.question ?? "载入中…"}</h1>
+                  <h1>{snapshot?.task.question ?? t("载入中…")}</h1>
                   <div className="app__task-meta">
                     {snapshot ? (
                       <Badge tone={TASK_STATUS_TONE[snapshot.task.status] ?? "unknown"}>
@@ -383,16 +414,16 @@ export function App() {
                     {gapCount > 0 ? (
                       <Badge
                         tone="refuted"
-                        title="缺席席位、未执行轮次与失败轮次的合计"
+                        title={t("缺席席位、未执行轮次与失败轮次的合计")}
                       >
-                        {gapCount} 处未完成
+                        {t("{count} 处未完成", gapCount)}
                       </Badge>
                     ) : null}
                     <span className="app__task-id mono">{taskId}</span>
                   </div>
                 </div>
 
-                <nav className="app__tabs" aria-label="视图">
+                <nav className="app__tabs" aria-label={t("视图")}>
                   {TABS.map((item) => (
                     <button
                       key={item.id}
@@ -404,8 +435,8 @@ export function App() {
                       aria-current={tab === item.id ? "page" : undefined}
                       onClick={() => selectTab(item.id)}
                     >
-                      <span>{item.label}</span>
-                      <span className="app__tab-hint">{item.hint}</span>
+                      <span>{t(item.label)}</span>
+                      <span className="app__tab-hint">{t(item.hint)}</span>
                     </button>
                   ))}
                   <span
@@ -421,16 +452,17 @@ export function App() {
               </div>
 
               {load === "loading" && !snapshot ? (
-                <Spinner label="正在载入工作台快照…" />
+                <Spinner label={t("正在载入工作台快照…")} />
               ) : null}
 
               {load === "error" ? (
                 <div className="app__error" role="alert">
-                  <strong>无法载入工作台</strong>
+                  <strong>{t("无法载入工作台")}</strong>
                   <p>{error}</p>
                   <p className="app__error-note">
-                    这不是「没有证据」，而是「读不到证据」。请确认 API 正在运行且
-                    task_id 正确。
+                    {t(
+                      "这不是「没有证据」，而是「读不到证据」。请确认 API 正在运行且 task_id 正确。",
+                    )}
                   </p>
                 </div>
               ) : null}
@@ -467,6 +499,7 @@ export function App() {
                       <BriefView
                         brief={brief}
                         safety={snapshot.safety_notice}
+                        graph={snapshot.graph}
                         onExport={exportMarkdown}
                       />
                     ) : null}

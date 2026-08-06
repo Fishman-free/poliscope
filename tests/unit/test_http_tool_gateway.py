@@ -304,6 +304,9 @@ async def test_openalex_search_returns_doi_and_flattened_fields() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert "works" in str(request.url)
         assert request.url.params["search"] == "digital wellbeing screen time"
+        # Round-4 authority: free-text search sorts by citation count so the
+        # most-cited work surfaces first.
+        assert request.url.params["sort"] == "cited_by_count:desc"
         return httpx.Response(
             200,
             json={
@@ -315,6 +318,7 @@ async def test_openalex_search_returns_doi_and_flattened_fields() -> None:
                         "publication_year": 2021,
                         "type": "article",
                         "is_retracted": False,
+                        "cited_by_count": 4321,
                         "authorships": [{"author": {"display_name": "Rivera"}}],
                     }
                 ]
@@ -334,6 +338,7 @@ async def test_openalex_search_returns_doi_and_flattened_fields() -> None:
     assert payload["doi"] == "10.9999/counter"
     assert payload["title"] == "A counterexample"
     assert payload["authors"] == ("Rivera",)
+    assert payload["citation_count"] == 4321
 
 
 async def test_openalex_search_miss_returns_no_doi() -> None:
@@ -406,6 +411,8 @@ async def test_semantic_scholar_search_returns_doi_from_external_ids() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert "paper/search" in str(request.url)
         assert request.url.params["query"] == "reverse causation screen time"
+        # Round-4 authority: sort by citation count, same as OpenAlex.
+        assert request.url.params["sort"] == "citationCount:desc"
         return httpx.Response(
             200,
             json={
@@ -416,6 +423,7 @@ async def test_semantic_scholar_search_returns_doi_from_external_ids() -> None:
                         "year": 2022,
                         "authors": [{"name": "Kim"}],
                         "publicationTypes": ["JournalArticle"],
+                        "citationCount": 987,
                         "externalIds": {"DOI": "10.7777/reverse"},
                     }
                 ]
@@ -434,6 +442,7 @@ async def test_semantic_scholar_search_returns_doi_from_external_ids() -> None:
     payload = dict(result.payload)
     assert payload["doi"] == "10.7777/reverse"
     assert payload["paper_id"] == "S9"
+    assert payload["citation_count"] == 987
 
 
 async def test_semantic_scholar_search_miss_returns_no_doi() -> None:

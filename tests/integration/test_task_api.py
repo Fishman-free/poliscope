@@ -228,6 +228,50 @@ async def test_a_scope_with_an_inverted_date_range_is_rejected(
     assert response.status_code == 422
 
 
+async def test_output_language_is_detected_from_a_chinese_question(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Round-4 language following: a Chinese question stores zh-Hans without
+    the client having to say so; an English question stores en."""
+    payload = _contract_payload()
+    payload["question"] = "中国大陆地区青少年自杀率和学习成绩是否具有显著关系？"
+    response = await api_client.post("/api/tasks", json=payload)
+    assert response.status_code == 201, response.text
+    task_id = response.json()["task_id"]
+
+    async with app_sessions() as session:
+        row = await session.scalar(
+            select(ResearchTaskModel).where(
+                ResearchTaskModel.task_id == task_id
+            )
+        )
+    assert row is not None
+    assert row.output_language == "zh-Hans"
+
+
+async def test_explicit_output_language_wins_over_detection(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """An explicit zh-Hant / en from the client overrides auto-detection."""
+    payload = _contract_payload()
+    payload["question"] = "Does X cause Y?"
+    payload["output_language"] = "zh-Hant"
+    response = await api_client.post("/api/tasks", json=payload)
+    assert response.status_code == 201, response.text
+    task_id = response.json()["task_id"]
+
+    async with app_sessions() as session:
+        row = await session.scalar(
+            select(ResearchTaskModel).where(
+                ResearchTaskModel.task_id == task_id
+            )
+        )
+    assert row is not None
+    assert row.output_language == "zh-Hant"
+
+
 async def test_create_with_model_config_stores_it_and_never_echoes_it(
     api_client: httpx.AsyncClient,
     app_sessions: async_sessionmaker[AsyncSession],
@@ -264,14 +308,30 @@ async def test_create_with_model_config_stores_it_and_never_echoes_it(
     assert "sk-task-secret" not in response.text
 
 
-async def test_model_config_without_a_url_scheme_is_rejected(
+async def test_model_config_without_a_url_scheme_is_normalized(
     api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    """A key without a proper endpoint URL is a broken config, not a gap."""
+    """A scheme-less endpoint is not rejected -- it is normalised to https://
+    before storage. (The old behaviour rejected it; user input is no longer
+    stored verbatim since the console-portal incident, see
+    packages/models/endpoint_config.py.)"""
     payload = _contract_payload()
     payload["task_model_config"] = {"base_url": "api.deepseek.com", "api_key": "sk-x"}
     response = await api_client.post("/api/tasks", json=payload)
-    assert response.status_code == 422
+    assert response.status_code == 201, response.text
+    task_id = response.json()["task_id"]
+
+    async with app_sessions() as session:
+        row = (
+            await session.execute(
+                select(ResearchTaskModel).where(
+                    ResearchTaskModel.task_id == task_id
+                )
+            )
+        ).scalar_one()
+    assert row.model_config is not None
+    assert row.model_config["base_url"] == "https://api.deepseek.com"
 
 
 async def test_create_with_dois_and_bibtex_stores_them(

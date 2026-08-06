@@ -58,6 +58,23 @@ class BudgetTracker:
             raise BudgetExhausted("wall clock budget exhausted")
         self._wall_clock_used += minutes
 
+    def record_elapsed(self, seconds: float) -> None:
+        """Record wall-clock time that has actually elapsed since the run began.
+
+        Called between phases -- a natural cancellation point -- so a run that
+        outlives its wall-clock budget stops with an honest unfilled-slot
+        report instead of keeping the council running forever (CLAUDE.md 10:
+        budget exhaustion is reported, never papered over). The
+        ``_wall_clock_used`` counter stays in whole minutes to match the
+        existing ``consume_wall_clock`` semantics; the exhaustion check itself
+        compares seconds so a zero-minute budget stops the run immediately.
+        """
+        if seconds >= self.limits.wall_clock_minutes * 60:
+            raise BudgetExhausted("wall clock budget exhausted")
+        minutes = int(seconds // 60)
+        if minutes > self._wall_clock_used:
+            self._wall_clock_used = minutes
+
     def consume_model_cost(self, cost_usd: Decimal) -> None:
         if self.model_budget_remaining < cost_usd:
             raise BudgetExhausted("model cost budget exhausted")

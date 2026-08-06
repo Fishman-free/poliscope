@@ -20,6 +20,8 @@ Two rules govern what comes out:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
@@ -43,6 +45,15 @@ METADATA_EVIDENCE_LEVEL = "B"
 # The provider asked first. Others are configured but unused until a fallback
 # policy exists; picking one silently would hide which provider a fact came from.
 PRIMARY_ADAPTER = "openalex"
+
+# Wall-clock ceilings for one acquisition pass (see SourceAcquisition.acquire):
+# per-query and whole-pass totals so a rate-limited or half-open vendor stalls
+# one pass for minutes, never the whole worker. Per-query work is also
+# bounded-concurrency (ACQUISITION_CONCURRENCY) so several free-text queries
+# fetch in parallel instead of serially stretching into a long silence.
+ACQUISITION_PER_QUERY_SECONDS = 45.0
+ACQUISITION_TOTAL_SECONDS = 600.0
+ACQUISITION_CONCURRENCY = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +242,12 @@ class SourceAcquisition:
         unresolvable: list[str] = []
         source_adapter = adapter(PRIMARY_ADAPTER, self._gateway, self._task_id)
 
+        # Whole-pass ceiling: one acquisition pass must never hold the worker
+        # hostage behind a rate-limited or half-open vendor. Checked between
+        # items -- a natural cancellation point -- and the remainder is
+        # reported honestly as a refused/timeout candidate (CLAUDE.md 10).
+        deadline = time.monotonic() + ACQUISITION_TOTAL_SECONDS
+
         for doi in sorted(seats_by_doi):
             seats = frozenset(seats_by_doi[doi])
             existing = await self._existing(doi)
@@ -252,6 +269,9 @@ class SourceAcquisition:
             if not self._spend():
                 refused.append(RefusedCandidate(doi, "source budget exhausted"))
                 continue
+            if time.monotonic() >= deadline:
+                refused.append(RefusedCandidate(doi, "acquisition timed out"))
+                continue
             if self._on_process is not None:
                 self._on_process(
                     "tool_call",
@@ -262,7 +282,10 @@ class SourceAcquisition:
                     },
                 )
             try:
-                normalized = await source_adapter.lookup_doi(doi)
+                normalized = await asyncio.wait_for(
+                    source_adapter.lookup_doi(doi),
+                    timeout=ACQUISITION_PER_QUERY_SECONDS,
+                )
             except Exception as error:
                 refused.append(RefusedCandidate(doi, f"lookup failed: {error!r}"))
                 continue
@@ -280,6 +303,7 @@ class SourceAcquisition:
                         "doi": normalized.doi or doi,
                         "title": normalized.title,
                         "url": f"https://doi.org/{doi}",
+                        "citation_count": normalized.citation_count,
                     },
                 )
             row = await self._persist(normalized)
@@ -305,6 +329,28 @@ class SourceAcquisition:
                 )
             )
 
+        # Free-text pass: planning (budget + tool_call event) runs first so the
+        # live view shows every query starting in order; the provider fetches
+        # then run bounded-concurrency (ACQUISITION_CONCURRENCY) with a per-query
+        # hard ceiling, so a handful of adversarial-retrieval intents finish in
+        # one parallel burst instead of serially stretching the pass into a
+        # minutes-long silence. A timed-out query is a reported miss, not a hang.
+        sem = asyncio.Semaphore(ACQUISITION_CONCURRENCY)
+
+        async def _fetch(
+            text: str,
+        ) -> tuple[str, NormalizedSource | None, bool]:
+            async with sem:
+                try:
+                    hit = await asyncio.wait_for(
+                        self._search_first_hit(text),
+                        timeout=ACQUISITION_PER_QUERY_SECONDS,
+                    )
+                    return text, hit, False
+                except TimeoutError:
+                    return text, None, True
+
+        planned_texts: list[str] = []
         for text in sorted(free_text):
             seats = frozenset(free_text[text])
             # Budget is spent before the search rather than after, mirroring
@@ -316,6 +362,9 @@ class SourceAcquisition:
             if not self._spend():
                 refused.append(RefusedCandidate(text, "source budget exhausted"))
                 continue
+            if time.monotonic() >= deadline:
+                refused.append(RefusedCandidate(text, "acquisition timed out"))
+                continue
             if self._on_process is not None:
                 self._on_process(
                     "tool_call",
@@ -325,7 +374,26 @@ class SourceAcquisition:
                         "seats": sorted(seat.value for seat in seats),
                     },
                 )
-            resolved = await self._search_first_hit(text)
+            planned_texts.append(text)
+
+        fetch_results = dict(
+            (text, (hit, timed_out))
+            for text, hit, timed_out in await asyncio.gather(
+                *(_fetch(text) for text in planned_texts)
+            )
+        )
+
+        for text in planned_texts:
+            seats = frozenset(free_text[text])
+            resolved, timed_out = fetch_results[text]
+            if timed_out:
+                refused.append(RefusedCandidate(text, "acquisition timed out"))
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {"query": text, "miss": True},
+                    )
+                continue
             if resolved is None:
                 # Every free, keyless provider missed (or errored). Recorded
                 # honestly rather than faked as a hit -- CLAUDE.md 7.
@@ -344,6 +412,7 @@ class SourceAcquisition:
                         "doi": resolved.doi,
                         "title": resolved.title,
                         "url": f"https://doi.org/{resolved.doi}",
+                        "citation_count": resolved.citation_count,
                     },
                 )
             doi = normalize_doi(resolved.doi)

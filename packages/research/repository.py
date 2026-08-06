@@ -104,6 +104,7 @@ class ResearchRepository:
                 created_by=created_by,
                 user_id=user_id,
                 skill_ids=list(contract.skill_ids),
+                output_language=contract.output_language,
                 wall_clock_minutes=contract.budget.wall_clock_minutes,
                 model_cost_usd=contract.budget.model_cost_usd,
                 tool_call_limit=contract.budget.tool_call_limit,
