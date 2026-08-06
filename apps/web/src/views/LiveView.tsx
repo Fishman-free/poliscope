@@ -12,8 +12,10 @@
 
 import { useEffect, useMemo, useRef } from "react";
 
-import type { LedgerEvent, ProcessEvent } from "../api/types";
+import type { LedgerEvent, ProcessEvent, Seat, SeatSummary } from "../api/types";
+import { SEAT_LABELS } from "../api/types";
 import { Empty } from "../components/primitives";
+import { CheckpointGate } from "./CheckpointGate";
 
 import "./LiveView.css";
 
@@ -29,15 +31,76 @@ const PHASES: { id: string; label: string }[] = [
   { id: "REPORTING", label: "报告生成" },
 ];
 
-const SEAT_LABELS: Record<string, string> = {
-  theory_builder: "理论建构者",
-  causal_scientist: "因果推断专家",
-  measurement_scientist: "测量与构念专家",
-  replication_scientist: "统计与复现专家",
-  boundary_scientist: "边界与情境专家",
-  adversarial_falsifier: "对抗性证伪者",
-  evidence_auditor: "证据与溯源审计员",
+/** 议会结构化动作的中文呈现 —— 预承诺、质询、复判是议会「过程」的
+ * 骨架，与 token 流互补：token 是思考的原料，动作是思考的产物。 */
+const ACTION_META: Record<
+  string,
+  { label: string; tone: "admitted" | "provisional" | "refuted" | "unknown" }
+> = {
+  PRECOMMITMENT_SEALED: { label: "预承诺", tone: "admitted" },
+  CHALLENGE_RAISED: { label: "质询", tone: "refuted" },
+  FINAL_JUDGMENT: { label: "复判", tone: "admitted" },
+  CONFIDENCE_UPDATED: { label: "置信度调整", tone: "provisional" },
+  EVIDENCE_REQUESTED: { label: "证据请求", tone: "unknown" },
+  SEAT_UNAVAILABLE: { label: "席位缺席", tone: "unknown" },
 };
+
+/** 把账本事件折叠成一句可读的议会动作摘要。不是投票记录 —— 议会
+ * 禁止多数投票裁决科研真理（CLAUDE.md 4），这里展示的是每位科学家
+ * 的预承诺、质询与复判，以及它们引用的证据。 */
+function actionSummary(
+  event: LedgerEvent,
+): { meta: string; tone: string; body: string } | null {
+  const payload = event.payload as Record<string, unknown>;
+  const meta = ACTION_META[event.kind];
+  if (!meta) return null;
+  const seat =
+    typeof payload.seat === "string"
+      ? (SEAT_LABELS[payload.seat as Seat] ?? payload.seat)
+      : null;
+  switch (event.kind) {
+    case "PRECOMMITMENT_SEALED":
+      return {
+        meta: meta.label,
+        tone: meta.tone,
+        body: seat
+          ? `${seat} 预承诺置信度 ${String(payload.confidence ?? "未记录")}`
+          : `预承诺置信度 ${String(payload.confidence ?? "未记录")}`,
+      };
+    case "CHALLENGE_RAISED":
+      return {
+        meta: meta.label,
+        tone: meta.tone,
+        body: seat
+          ? `${seat} 质询：${String(payload.statement ?? "")}${payload.is_fatal === true ? "（致命）" : ""}`
+          : `质询：${String(payload.statement ?? "")}`,
+      };
+    case "FINAL_JUDGMENT":
+      return {
+        meta: meta.label,
+        tone: meta.tone,
+        body: seat
+          ? `${seat} 复判「${String(payload.final_judgment ?? "")}」置信度 ${String(payload.confidence ?? "未记录")}${payload.has_dissent === true ? " · 附异议" : ""}`
+          : `复判「${String(payload.final_judgment ?? "")}」`,
+      };
+    case "CONFIDENCE_UPDATED":
+      return { meta: meta.label, tone: meta.tone, body: String(payload.confidence_delta_note ?? "") };
+    case "EVIDENCE_REQUESTED":
+      return {
+        meta: meta.label,
+        tone: meta.tone,
+        body: seat ? `${seat} 请求补充证据` : "请求补充证据",
+      };
+    case "SEAT_UNAVAILABLE":
+      return {
+        meta: meta.label,
+        tone: meta.tone,
+        body: seat ? `${seat} 缺席 ${String(payload.phase ?? "")}` : "席位缺席",
+      };
+    default:
+      return null;
+  }
+}
 
 /** 从账本事件推导每个阶段的完成度：有 PHASE_COMPLETED 即完成；最后一个
  * PHASE_STARTED 且未完成的是当前阶段；REPORTING 的 COMPLETED 无后续。 */
@@ -103,12 +166,31 @@ function seatStreams(
 export function LiveView({
   events,
   processEvents,
+  status,
+  taskId,
+  seats,
+  onGuidanceSubmitted,
 }: {
   events: LedgerEvent[];
   processEvents: ProcessEvent[];
+  /** 任务状态：QUEUED 时展示排队说明，而不是让研究者以为没反应。 */
+  status?: string;
+  /** 方向性检查点（AWAITING_COUNCIL_INPUT）时在实时进展页就地提交。 */
+  taskId?: string;
+  seats?: SeatSummary[];
+  onGuidanceSubmitted?: () => void;
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
   const streams = useMemo(() => seatStreams(processEvents), [processEvents]);
+  const actions = useMemo(
+    () =>
+      events
+        .map(actionSummary)
+        .filter(
+          (item): item is { meta: string; tone: string; body: string } => item !== null,
+        ),
+    [events],
+  );
 
   // 工具调用日志（检索/DOI 解析），命中带可点击链接。
   const toolLog = useMemo(
@@ -167,95 +249,148 @@ export function LiveView({
         })}
       </section>
 
-      {!anyTrace ? (
-        <Empty>任务已入队。Worker 开始运行后，这里会实时显示阶段推进、七位科学家的思考与检索过程。</Empty>
-      ) : (
-        <div className="live__grid">
-          <section className="live__seats" aria-label="席位思考流">
-            {Object.entries(streams).length === 0 ? (
-              <Empty>还没有席位开始思考。</Empty>
-            ) : (
-              Object.entries(streams).map(([seat, entry]) => (
-                <div key={seat} className="live__seat">
-                  <div className="live__seat-head">
-                    <span className="live__seat-name">
-                      {SEAT_LABELS[seat] ?? seat}
-                    </span>
-                    {entry.phase ? (
-                      <span className="live__seat-phase mono">{entry.phase}</span>
-                    ) : null}
-                    {entry.running ? (
-                      <span className="live__seat-running">思考中…</span>
-                    ) : null}
-                  </div>
-                  <div
-                    className="live__seat-text mono"
-                    ref={(node) => {
-                      scrollRef.current[seat] = node;
-                    }}
-                  >
-                    {entry.text || "（尚无输出）"}
-                  </div>
-                </div>
-              ))
-            )}
-          </section>
-
-          <section className="live__tools" aria-label="检索与文献">
-            <h3>检索与文献</h3>
-            {toolLog.length === 0 ? (
-              <Empty>还没有检索活动。</Empty>
-            ) : (
-              <ol className="live__tool-log">
-                {toolLog.map((event, index) => {
-                  const payload = event.payload as Record<string, unknown>;
-                  if (event.kind === "tool_call") {
-                    return (
-                      <li key={index} className="live__tool-call">
-                        <span className="live__tool-kind mono">
-                          {payload.kind === "doi_lookup" ? "DOI 解析" : "检索"}
-                        </span>
-                        <span className="live__tool-query">{String(payload.query ?? "")}</span>
-                        {Array.isArray(payload.seats) ? (
-                          <span className="live__tool-seats mono">
-                            {payload.seats.join(", ")}
-                          </span>
-                        ) : null}
-                      </li>
-                    );
-                  }
-                  const url = typeof payload.url === "string" ? payload.url : null;
-                  if (payload.miss === true) {
-                    return (
-                      <li key={index} className="live__tool-result live__tool-result--miss">
-                        <span className="live__tool-kind mono">未命中</span>
-                        <span className="live__tool-query">{String(payload.query ?? "")}</span>
-                      </li>
-                    );
-                  }
-                  return (
-                    <li key={index} className="live__tool-result">
-                      <span className="live__tool-kind mono">命中</span>
-                      <span className="live__tool-title">
-                        {String(payload.title ?? payload.doi ?? "")}
-                      </span>
-                      {url ? (
-                        <a
-                          className="live__tool-link"
-                          href={url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          打开来源 ↗
-                        </a>
-                      ) : null}
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
-          </section>
+      {!anyTrace && status === "QUEUED" ? (
+        /* 排队 ≠ 没反应：任务还没有任何过程事件，但状态是「在队列里等
+           worker」。说清楚在等什么，而不是留一句干巴巴的「已入队」。 */
+        <div className="live__queued" role="status">
+          <span className="live__queued-badge">排队中</span>
+          <p className="live__queued-title">任务已入队，等待 Worker 认领</p>
+          <p className="live__queued-note">
+            Worker 正在处理队列中的任务。本任务开始运行后，这里会自动显示
+            七位科学家的思考、检索与议会动作，无需手动刷新。外部模型服务
+            繁忙时，排队时间可能较长；盲点悬赏结束后会到达方向性检查点，
+            届时可在此提交备注调整后续讨论重点（不进入任何证据判定）。
+          </p>
         </div>
+      ) : (
+        <>
+          {/* 研究者干预窗口：唯一、固定的方向性检查点（CLAUDE.md 4.1）。
+              说明它的边界 —— 可以调整讨论重点，不能影响任何判定。 */}
+          {status === "AWAITING_COUNCIL_INPUT" && taskId && seats ? (
+            <CheckpointGate
+              taskId={taskId}
+              seats={seats}
+              onSubmitted={() => {
+                onGuidanceSubmitted?.();
+              }}
+            />
+          ) : status && !anyTrace ? (
+            <p className="live__checkpoint-note">
+              研究者干预窗口：盲点悬赏结束后会到达方向性检查点，届时可在本页
+              提交备注调整后续讨论重点 —— 备注不进入任何证据判定，也不改变
+              异议保留（CLAUDE.md 4.1）。
+            </p>
+          ) : null}
+
+          <div className="live__grid">
+            <section className="live__seats" aria-label="席位思考流">
+              {Object.entries(streams).length === 0 ? (
+                <Empty>还没有席位开始思考。</Empty>
+              ) : (
+                Object.entries(streams).map(([seat, entry]) => (
+                  <div key={seat} className="live__seat">
+                    <div className="live__seat-head">
+                      <span className="live__seat-name">
+                        {SEAT_LABELS[seat as Seat] ?? seat}
+                      </span>
+                      {entry.phase ? (
+                        <span className="live__seat-phase mono">{entry.phase}</span>
+                      ) : null}
+                      {entry.running ? (
+                        <span className="live__seat-running">思考中…</span>
+                      ) : null}
+                    </div>
+                    <div
+                      className="live__seat-text mono"
+                      ref={(node) => {
+                        scrollRef.current[seat] = node;
+                      }}
+                    >
+                      {entry.text || "（尚无输出）"}
+                    </div>
+                  </div>
+                ))
+              )}
+            </section>
+
+            <div className="live__side">
+              <section className="live__actions" aria-label="议会动作">
+                <h3>议会动作</h3>
+                {actions.length === 0 ? (
+                  <Empty>还没有结构化动作。</Empty>
+                ) : (
+                  <ol className="live__action-log">
+                    {actions.map((item, index) => (
+                      <li key={index} className="live__action">
+                        <span
+                          className={`live__action-kind live__action-kind--${item.tone}`}
+                        >
+                          {item.meta}
+                        </span>
+                        <span className="live__action-body">{item.body}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+
+              <section className="live__tools" aria-label="检索与文献">
+                <h3>检索与文献</h3>
+                {toolLog.length === 0 ? (
+                  <Empty>还没有检索活动。</Empty>
+                ) : (
+                  <ol className="live__tool-log">
+                    {toolLog.map((event, index) => {
+                      const payload = event.payload as Record<string, unknown>;
+                      if (event.kind === "tool_call") {
+                        return (
+                          <li key={index} className="live__tool-call">
+                            <span className="live__tool-kind mono">
+                              {payload.kind === "doi_lookup" ? "DOI 解析" : "检索"}
+                            </span>
+                            <span className="live__tool-query">{String(payload.query ?? "")}</span>
+                            {Array.isArray(payload.seats) ? (
+                              <span className="live__tool-seats mono">
+                                {payload.seats.join(", ")}
+                              </span>
+                            ) : null}
+                          </li>
+                        );
+                      }
+                      const url = typeof payload.url === "string" ? payload.url : null;
+                      if (payload.miss === true) {
+                        return (
+                          <li key={index} className="live__tool-result live__tool-result--miss">
+                            <span className="live__tool-kind mono">未命中</span>
+                            <span className="live__tool-query">{String(payload.query ?? "")}</span>
+                          </li>
+                        );
+                      }
+                      return (
+                        <li key={index} className="live__tool-result">
+                          <span className="live__tool-kind mono">命中</span>
+                          <span className="live__tool-title">
+                            {String(payload.title ?? payload.doi ?? "")}
+                          </span>
+                          {url ? (
+                            <a
+                              className="live__tool-link"
+                              href={url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              打开来源 ↗
+                            </a>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </section>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

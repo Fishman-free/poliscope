@@ -67,7 +67,10 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
  * once the worker resumes and starts emitting new phase events again, but the
  * status flip itself (AWAITING_COUNCIL_INPUT -> QUEUED) is a plain column
  * update, not a ledger event -- nothing would otherwise tell this tab to stop
- * showing the gate the instant the researcher's own submission succeeds. */
+ * showing the gate the instant the researcher's own submission succeeds.
+ * QUEUED gets the same polling: a queued task emits no ledger or process
+ * events until the worker picks it up, so without polling the "排队中" view
+ * would sit frozen until a manual refresh. */
 const CHECKPOINT_POLL_MS = 3000;
 
 /** Phase -> the tab that shows that phase's product. While a run is live,
@@ -178,14 +181,16 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (snapshot?.task.status !== "AWAITING_COUNCIL_INPUT") return;
+    const status = snapshot?.task.status;
+    if (status !== "AWAITING_COUNCIL_INPUT" && status !== "QUEUED") return;
     const id = window.setInterval(refresh, CHECKPOINT_POLL_MS);
     return () => window.clearInterval(id);
   }, [snapshot?.task.status, refresh]);
 
-  // 终态任务没有新事件，auto-follow 无处发力：打开一个已完成的会话
-  // （或任务在 live 页上跑到终态）时，把界面送回 brief —— 完成的任务
-  // 有内容可读的是 Research Brief，不是已冻结的思考链路。
+  // 打开任务后按状态定初始视图：排队中 / 运行中 / 停在检查点的任务落在
+  // 「实时进展」（思考链路是这类任务唯一有内容可看的地方，尤其是从外部
+  // 链接直达时 —— 没有新事件驱动 follow，不显式切换就会停在 brief）；
+  // 终态任务没有新事件、留在 brief（有内容可读的是 Research Brief）。
   useEffect(() => {
     if (!follow || !snapshot) return;
     const terminal =
@@ -193,7 +198,8 @@ export function App() {
       snapshot.task.status === "COMPLETED_WITH_GAPS" ||
       snapshot.task.status === "FAILED";
     if (terminal) setTab("brief");
-  }, [follow, snapshot]);
+    else if (tab === "brief") setTab("live");
+  }, [follow, snapshot, tab]);
 
   // Follow the newest ledger event while auto-follow is armed. This reads the
   // wire's event list, never the snapshot -- the projector, not the browser,
@@ -431,7 +437,12 @@ export function App() {
 
               {snapshot && brief ? (
                 <>
-                  {taskId && snapshot.task.status === "AWAITING_COUNCIL_INPUT" ? (
+                  {/* 检查点在「实时进展」tab 内由 LiveView 就地渲染（研究者
+                      盯着进展页时不想离开去找输入框）；其他 tab 仍显示在
+                      任务头下方，两处不重复。 */}
+                  {taskId &&
+                  snapshot.task.status === "AWAITING_COUNCIL_INPUT" &&
+                  tab !== "live" ? (
                     <CheckpointGate
                       taskId={taskId}
                       seats={snapshot.seats}
@@ -443,7 +454,14 @@ export function App() {
                       of only on first load -- see .app__panel there. */}
                   <div className="app__panel" key={tab}>
                     {tab === "live" ? (
-                      <LiveView events={events} processEvents={processEvents} />
+                      <LiveView
+                        events={events}
+                        processEvents={processEvents}
+                        status={snapshot.task.status}
+                        taskId={taskId}
+                        seats={snapshot.seats}
+                        onGuidanceSubmitted={refresh}
+                      />
                     ) : null}
                     {tab === "brief" ? (
                       <BriefView

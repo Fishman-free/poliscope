@@ -120,15 +120,19 @@ function Hero() {
         </a>
       </nav>
 
-      <Reveal delay={0.1} className="landing__word landing__word--1">
-        <h1>brainstorming</h1>
-      </Reveal>
-      <Reveal delay={0.2} className="landing__word landing__word--2">
-        <h1>researching</h1>
-      </Reveal>
-      <Reveal delay={0.3} className="landing__word landing__word--3">
-        <h1>mapping</h1>
-      </Reveal>
+      {/* 三个大字走正常文档流（不是绝对定位），Z 字错落靠水平偏移：
+          行与行永不重叠，也就永远不会压到下面的描述与按钮。 */}
+      <div className="landing__words">
+        <Reveal delay={0.1} className="landing__word landing__word--1">
+          <h1>brainstorming</h1>
+        </Reveal>
+        <Reveal delay={0.2} className="landing__word landing__word--2">
+          <h1>researching</h1>
+        </Reveal>
+        <Reveal delay={0.3} className="landing__word landing__word--3">
+          <h1>mapping</h1>
+        </Reveal>
+      </div>
 
       <div className="landing__hero-foot">
         <Reveal delay={0.4}>

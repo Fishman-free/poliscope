@@ -116,6 +116,131 @@
   word-break: break-word;
 }
 
+/* 排队卡片：任务 QUEUED 且尚无过程事件时，说明在等什么。 */
+.live__queued {
+  max-width: 36rem;
+  padding: var(--space-5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.live__queued-badge {
+  align-self: flex-start;
+  font-size: var(--text-micro);
+  font-weight: 500;
+  color: var(--provisional);
+  background: var(--provisional-soft);
+  border: 1px solid color-mix(in srgb, var(--provisional) 40%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 0.15rem 0.75rem;
+}
+
+.live__queued-title {
+  font-size: var(--text-body);
+  font-weight: 550;
+  color: var(--ink-1);
+}
+
+.live__queued-note {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  line-height: 1.6;
+}
+
+/* 干预窗口说明：运行中（尚无事件时）提醒研究者检查点机制的位置与边界。 */
+.live__checkpoint-note {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-2);
+  line-height: 1.6;
+}
+
+/* 右侧两栏：议会动作（上）+ 检索与文献（下）。 */
+.live__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Council action log: precommitments, challenges, final judgments --
+   the structured output of the council, alongside the raw token stream. */
+.live__actions {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-4);
+}
+
+.live__actions h3 {
+  margin-bottom: var(--space-3);
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.live__action-log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.live__action {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  font-size: var(--text-small);
+  animation: fade-in-up var(--duration-standard) var(--ease-standard);
+}
+
+.live__action-kind {
+  font-size: var(--text-micro);
+  font-weight: 500;
+  white-space: nowrap;
+  padding: 0.1em 0.5em;
+  border-radius: var(--radius-pill);
+  align-self: start;
+}
+
+.live__action-kind--admitted {
+  color: var(--admitted);
+  background: var(--admitted-soft);
+}
+
+.live__action-kind--provisional {
+  color: var(--provisional);
+  background: var(--provisional-soft);
+}
+
+.live__action-kind--refuted {
+  color: var(--refuted);
+  background: var(--refuted-soft);
+}
+
+.live__action-kind--unknown {
+  color: var(--unknown);
+  background: var(--unknown-soft);
+}
+
+.live__action-body {
+  color: var(--ink-2);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
 /* Tool / literature log: every lookup the council performs, hits clickable. */
 .live__tools {
   border: 1px solid var(--line);
