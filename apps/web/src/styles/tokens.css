@@ -25,12 +25,14 @@
 :root {
   color-scheme: light;
 
-  /* Surfaces: white cards on a near-white field (the template is white
-   * throughout; the field gets one step of grey so elevation reads). */
+  /* Surfaces: white throughout, template-style. Cards, field and wells are
+   * all pure white; elevation reads through shadow and hairline only, so the
+   * instrument never turns grey. Grey exists solely on interactive states
+   * (hover/active wells). */
   --surface-0: #ffffff;
-  --surface-1: #f6f7f8;
-  --surface-2: #eef0f1;
-  --surface-3: #e4e7e8;
+  --surface-1: #ffffff;
+  --surface-2: #fafafa;
+  --surface-3: #f0f1f2;
   --line: rgba(5, 26, 36, 0.1);
   --line-strong: rgba(5, 26, 36, 0.2);
 

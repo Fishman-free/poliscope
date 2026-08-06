@@ -1,132 +1,521 @@
 /** 公开落地页，部署在站点根路径 `/`，不需要登录；研究证据工作台在
  * `/workspace`（未登录时由 AuthView 引导注册/登录）。
  *
- * 视觉语言是黑白色调的科研海报：浮动胶囊导航、三个错落的全小写大词
- * （researching / questioning / mapping 对应七人独立取证、交叉质询、
- * 绘制证据图三个环节）、一张不依赖任何第三方媒体的背景占位符。
- *
- * 这里没有编造的统计数字（模板里的 +65k/+1.5b/+300k 是虚构广告数据，
- * CLAUDE.md 16 禁止系统呈现未知内容），三个角位放的是机制事实：
- * 独立预承诺、异议保真、精确溯源——它们才是这个产品真正拿得出手的"数字"。
+ * 视觉语言仿照研究者选定的 Viktor Oddy 模板：白色底、PP Mondwest serif
+ * 强调词、mono 标签行、跑马灯证据卡、滚动入场动画（IntersectionObserver
+ * 触发一次）、深蓝黑分层阴影按钮。段落结构一一对应模板，但填充内容全部
+ * 换成 Poliscope 的机制事实 —— 这里没有编造的统计数字（CLAUDE.md 16），
+ * 「示例研究问题」明确标注为示例，机制名词以设计规格为准。
  */
+
+import { useEffect, useRef, useState } from "react";
+import {
+  ArrowUpRight,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Quote,
+  Star,
+} from "lucide-react";
 
 import "./Landing.css";
 
-function Logo() {
-  /* 三条证据线从不同方向汇聚到中心圆点：七名科学家独立取证后，
-   * 汇入同一张可审计的证据图。 */
-  return (
-    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <circle cx="16" cy="16" r="2.5" fill="#ffffff" />
-      <path
-        d="M3 6 L14 13.5"
-        stroke="#ffffff"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M29 6 L18 13.5"
-        stroke="#ffffff"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <path
-        d="M16 1.5 L16 13"
-        stroke="#ffffff"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-/** 角位机制标签——模板里是统计数字块的位置，这里放真实的产品机制。 */
-function Fact({
-  name,
-  note,
-  side,
+/** 模板的 useInViewAnimation：IntersectionObserver（threshold 0.1），
+ * 元素进入视口触发一次入场动画；opacity-0 起步，命中后播放 fadeInUp。 */
+function Reveal({
+  delay = 0,
+  children,
+  className = "",
 }: {
-  name: string;
-  note: string;
-  side: "tr" | "bl" | "br";
+  delay?: number;
+  children: React.ReactNode;
+  className?: string;
 }) {
-  const dividerClass =
-    side === "bl" ? "hero__fact-divider--back" : "hero__fact-divider--fwd";
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          setInView(true);
+          obs.disconnect();
+        }
+      },
+      { threshold: 0.1 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
   return (
-    <div className={`hero__fact hero__fact--${side}`}>
-      <div className="hero__fact-row">
-        <span className={`hero__fact-divider ${dividerClass}`} aria-hidden="true" />
-        <span className="hero__fact-name">{name}</span>
-      </div>
-      <span className="hero__fact-note">{note}</span>
+    <div
+      ref={ref}
+      className={`landing__reveal${inView ? " landing__reveal--on" : ""} ${className}`}
+      style={delay ? { animationDelay: `${delay}s` } : undefined}
+    >
+      {children}
     </div>
   );
 }
 
-export function Landing() {
+/** 七名科学家的席位卡（跑马灯与引文区复用）。 */
+const SEATS: { id: string; name: string; note: string }[] = [
+  { id: "theory_builder", name: "理论建构者", note: "机制与风险预测" },
+  { id: "causal_scientist", name: "因果推断专家", note: "混杂与反向因果" },
+  { id: "measurement_scientist", name: "测量与构念专家", note: "测量偏差" },
+  { id: "replication_scientist", name: "统计与复现专家", note: "复现风险" },
+  { id: "boundary_scientist", name: "边界与情境专家", note: "适用边界" },
+  { id: "adversarial_falsifier", name: "对抗性证伪者", note: "专门找反例" },
+  { id: "evidence_auditor", name: "证据与溯源审计员", note: "三层审计" },
+];
+
+/** 议会的八个阶段（设计规格 PHASE_SEQUENCE 的公开呈现）。 */
+const PHASES = [
+  "独立预承诺",
+  "专业取证",
+  "证据交换",
+  "交叉质询",
+  "盲点悬赏",
+  "联合建模",
+  "最终复判",
+  "报告生成",
+];
+
+/* 1. HERO：serif logo + mono tagline + 两行主标题（serif 强调词）+ 三段
+   描述 + 双按钮（primary 深蓝黑分层阴影 / secondary 白底发丝环）。 */
+function Hero() {
   return (
-    <section className="hero">
-      {/* 背景视频占位符：纯 CSS 的"暗房 + 极细网格刻度"，不加载外部
-          CDN 视频（自部署站点不应依赖第三方媒体），也不做循环动画
-          （CLAUDE.md 11：没有无意义动画）。 */}
-      <div className="hero__backdrop" aria-hidden="true" />
-
-      <nav className="hero__nav">
-        <a className="hero__brand" href="/workspace">
-          <Logo />
-          <span className="hero__brand-name">Poliscope</span>
+    <header className="landing__hero">
+      <nav className="landing__nav">
+        <a className="landing__brand" href="/workspace">
+          <span className="landing__brand-mark" aria-hidden="true">
+            P
+          </span>
+          <span className="landing__brand-name">Poliscope</span>
         </a>
-
-        <div className="hero__links">
-          <a className="hero__link" href="/workspace">
-            工作台
+        <div className="landing__nav-links">
+          <a className="landing__nav-link" href="#views">
+            核心视图
           </a>
           <a
-            className="hero__link"
+            className="landing__nav-link"
             href="https://github.com/Fishman-free/poliscope"
             rel="noreferrer"
           >
             开源仓库
           </a>
           <a
-            className="hero__link"
+            className="landing__nav-link"
             href="https://github.com/Fishman-free/poliscope/blob/main/docs/DEVELOPMENT.md"
             rel="noreferrer"
           >
             文档
           </a>
         </div>
-
-        <a className="hero__cta" href="/workspace">
+        <a className="landing__btn landing__btn--primary" href="/workspace">
           进入工作台
         </a>
       </nav>
 
-      <h1 className="hero-title hero__word hero__word--1">researching</h1>
-      <h1 className="hero-title hero__word hero__word--2">questioning</h1>
-      <h1 className="hero-title hero__word hero__word--3">mapping</h1>
+      <div className="landing__hero-main">
+        <Reveal delay={0.1}>
+          <p className="landing__tagline">
+            EPISTEMOBRAIN · 七人议会争议证据地图
+          </p>
+        </Reveal>
+        <Reveal delay={0.2}>
+          <h1 className="landing__heading">
+            让七名 AI 科学家，
+            <br />
+            专门找<span className="landing__serif">科研盲点</span>。
+          </h1>
+        </Reveal>
+        <div className="landing__desc">
+          <Reveal delay={0.3}>
+            <p>
+              Poliscope 为有争议的计算社会科学问题组织 7 名 AI 科学家：
+              独立预承诺、专业取证、交叉质询、盲点悬赏，全程可审计。
+            </p>
+          </Reveal>
+          <Reveal delay={0.4}>
+            <p>
+              每个结论绑定可核验的原文位置；被反驳的观点不删除、仍可追溯；
+              不知道的地方明确说不知道。相关不自动升级为因果。
+            </p>
+          </Reveal>
+          <Reveal delay={0.5}>
+            <p>
+              首版领域：数字行为、社交媒体与心理健康。开源，MIT 许可。
+            </p>
+          </Reveal>
+        </div>
+        <Reveal delay={0.6}>
+          <div className="landing__hero-actions">
+            <a className="landing__btn landing__btn--primary" href="/workspace">
+              开始研究
+            </a>
+            <a className="landing__btn landing__btn--secondary" href="#protocol">
+              了解议会协议
+            </a>
+          </div>
+        </Reveal>
+      </div>
+    </header>
+  );
+}
 
-      <p className="hero__desc">
-        七名 AI 科学家独立取证、交叉质询、专门找反例，产出一张可审计的争议证据地图。
-      </p>
-
-      <Fact
-        side="tr"
-        name="独立预承诺"
-        note="七人先各自下判断，再交换证据——质询是真的质询"
-      />
-      <Fact
-        side="bl"
-        name="异议保真"
-        note="被反驳的观点不删除，仍可追溯，不允许假共识"
-      />
-      <Fact
-        side="br"
-        name="精确溯源"
-        note="关键判断绑定原文位置，三层审计后才能进证据图"
-      />
-
-      <div className="hero__fade" aria-hidden="true" />
+/* 2. MARQUEE：7 张席位卡复制成 14 张，无限平移（30s linear），
+   卡片像证据图节点 —— 语义色边框 + 席位名 + mono 职责。 */
+function Marquee() {
+  return (
+    <section className="landing__marquee" aria-label="七名科学家">
+      <div className="landing__marquee-track">
+        {[...SEATS, ...SEATS].map((seat, index) => (
+          <div key={`${seat.id}-${index}`} className="landing__seat-card">
+            <span className="landing__seat-dot" aria-hidden="true" />
+            <span className="landing__seat-name">{seat.name}</span>
+            <span className="landing__seat-note mono">{seat.note}</span>
+          </div>
+        ))}
+      </div>
     </section>
+  );
+}
+
+/* 3. QUOTE：大引文 + 机制词文字 logo 行 + 议会八阶段流程（替换模板的
+   parallax 图 —— 自部署站点不加载第三方媒体，CLAUDE.md 16）。 */
+function QuoteSection() {
+  return (
+    <section className="landing__quote" id="protocol">
+      <Reveal delay={0.1}>
+        <Quote size={24} strokeWidth={1.5} color="#051A24" />
+      </Reveal>
+      <Reveal delay={0.2}>
+        <h2 className="landing__big-quote">
+          不是七个聊天机器人，
+          <br />
+          是一个<span className="landing__serif">自我质询</span>的科研共同体。
+        </h2>
+      </Reveal>
+      <Reveal delay={0.3}>
+        <p className="landing__quote-author">
+          EpistemoBrain · 无投票权的组织脑，不代表任何学术立场
+        </p>
+      </Reveal>
+      <Reveal delay={0.4}>
+        <div className="landing__logo-row">
+          <span>独立预承诺</span>
+          <span>异议保真</span>
+          <span>精确溯源</span>
+        </div>
+      </Reveal>
+      <Reveal delay={0.5}>
+        <div className="landing__phases" aria-label="议会协议八阶段">
+          {PHASES.map((phase, index) => (
+            <span key={phase} className="landing__phase">
+              <span className="mono">{index + 1}</span>
+              {phase}
+            </span>
+          ))}
+        </div>
+      </Reveal>
+    </section>
+  );
+}
+
+/* 4. CAPABILITIES（模板的 pricing 位置）：深色卡「证据治理」+ 白卡
+   「过程透明」，两个约束即价格 —— 约束是真实的，价格是编的。 */
+function Capabilities() {
+  return (
+    <section className="landing__caps" aria-label="能力">
+      <Reveal delay={0.1}>
+        <div className="landing__cap landing__cap--dark">
+          <h3 className="landing__cap-title">证据治理</h3>
+          <p className="landing__cap-desc">
+            双图隔离：过程轨迹永远成不了正式证据
+            <br />
+            事件账本：幂等、可重放、可审计
+          </p>
+          <ul className="landing__cap-list">
+            <li>
+              <Check size={14} strokeWidth={2} /> 三层审计（来源真实性 · 引用蕴含 · 方法质量）
+            </li>
+            <li>
+              <Check size={14} strokeWidth={2} /> Evidence Graph 唯一写入者
+            </li>
+            <li>
+              <Check size={14} strokeWidth={2} /> 被反驳、隔离的节点永不物理删除
+            </li>
+          </ul>
+          <a className="landing__btn landing__btn--primary" href="/workspace">
+            进入工作台
+          </a>
+        </div>
+      </Reveal>
+      <Reveal delay={0.2}>
+        <div className="landing__cap landing__cap--light">
+          <h3 className="landing__cap-title">过程透明</h3>
+          <p className="landing__cap-desc">
+            思考链路实时可见
+            <br />
+            模型推理、检索、文献链接全程流式呈现
+          </p>
+          <ul className="landing__cap-list">
+            <li>
+              <Check size={14} strokeWidth={2} /> 阶段推进自动跟随，不用干等结果
+            </li>
+            <li>
+              <Check size={14} strokeWidth={2} /> 异议保真：DissentCertificate 可追溯
+            </li>
+            <li>
+              <Check size={14} strokeWidth={2} /> 缺口计数常驻：未完成槽位显式报告
+            </li>
+          </ul>
+          <a
+            className="landing__btn landing__btn--secondary"
+            href="https://github.com/Fishman-free/poliscope/blob/main/docs/DEVELOPMENT.md"
+            rel="noreferrer"
+          >
+            阅读开发者文档
+          </a>
+        </div>
+      </Reveal>
+    </section>
+  );
+}
+
+/* 5. QUESTIONS（模板的 testimonial 位置）：研究者可能会问的问题 ——
+   明确标注为示例，不冒充真实用户数据。 */
+const QUESTIONS: { q: string; status: string; tone: string }[] = [
+  {
+    q: "社交媒体使用时长与青少年抑郁：是因果，还是选择偏差？",
+    status: "已生成争议证据地图",
+    tone: "admitted",
+  },
+  {
+    q: "数字行为数据的测量偏差，如何影响效应估计的方向？",
+    status: "盲点雷达已定位未调查盲区",
+    tone: "provisional",
+  },
+  {
+    q: "屏幕时间与心理健康的相关证据，是否存在发表偏差？",
+    status: "交叉质询完成 · 待联合建模",
+    tone: "unknown",
+  },
+];
+
+function Questions() {
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  useEffect(() => {
+    if (paused) return;
+    const id = window.setInterval(
+      () => setIndex((i) => (i + 1) % QUESTIONS.length),
+      3000,
+    );
+    return () => window.clearInterval(id);
+  }, [paused]);
+
+  const go = (delta: number) =>
+    setIndex((i) => (i + delta + QUESTIONS.length) % QUESTIONS.length);
+
+  return (
+    <section className="landing__questions" aria-label="示例研究问题">
+      <div className="landing__questions-head">
+        <Reveal>
+          <h2 className="landing__section-title">
+            研究者会问<span className="landing__serif">什么</span>
+          </h2>
+        </Reveal>
+        <div className="landing__questions-rating">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Star key={i} size={20} strokeWidth={1.5} fill="#051A24" color="#051A24" />
+          ))}
+          <span className="mono">7 人议会 · 0 票多数决</span>
+        </div>
+      </div>
+      <div
+        className="landing__carousel"
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+      >
+        <button
+          type="button"
+          className="landing__carousel-btn"
+          aria-label="上一个问题"
+          onClick={() => go(-1)}
+        >
+          <ChevronLeft size={20} strokeWidth={1.5} />
+        </button>
+        <div className="landing__carousel-viewport">
+          {QUESTIONS.map((item, i) => (
+            <div
+              key={item.q}
+              className={
+                "landing__question-card" +
+                (i === index ? " landing__question-card--on" : "")
+              }
+              aria-hidden={i !== index}
+            >
+              <span
+                className={`landing__status landing__status--${item.tone}`}
+              >
+                {item.status}
+              </span>
+              <p className="landing__question-text">{item.q}</p>
+              <p className="landing__question-note mono">
+                （示例研究问题，用于演示视图）
+              </p>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="landing__carousel-btn"
+          aria-label="下一个问题"
+          onClick={() => go(1)}
+        >
+          <ChevronRight size={20} strokeWidth={1.5} />
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/* 6. VIEWS（模板的 projects 位置）：三个核心视图。 */
+const VIEWS = [
+  {
+    name: "Controversy Map",
+    desc: "一张可审计的争议证据地图：节点、边与证据谱系，结论与局限并排，相关性不自动升级为因果性。",
+    badge: "证据图",
+  },
+  {
+    name: "Blindspot Radar",
+    desc: "影响 × 可调查性：还没有人查过的盲区先于结论暴露 —— 这是本产品最看重的产出。",
+    badge: "盲点雷达",
+  },
+  {
+    name: "Audit Trail",
+    desc: "事件账本：谁在什么时候、基于什么证据、改了什么判断；异议与拒绝记录都在。",
+    badge: "审计轨迹",
+  },
+];
+
+function Views() {
+  return (
+    <section className="landing__views" id="views" aria-label="核心视图">
+      {VIEWS.map((view, i) => (
+        <Reveal key={view.name} delay={0.05 * i}>
+          <article className="landing__view">
+            <div className="landing__view-text">
+              <span className="mono landing__view-badge">{view.badge}</span>
+              <h3 className="landing__view-name landing__serif">{view.name}</h3>
+              <p className="landing__view-desc">{view.desc}</p>
+            </div>
+            <div className="landing__view-visual" aria-hidden="true">
+              <div className="landing__view-grid" />
+              <span className="landing__view-node landing__view-node--a" />
+              <span className="landing__view-node landing__view-node--b" />
+              <span className="landing__view-node landing__view-node--c" />
+              <span className="landing__view-line landing__view-line--1" />
+              <span className="landing__view-line landing__view-line--2" />
+            </div>
+          </article>
+        </Reveal>
+      ))}
+    </section>
+  );
+}
+
+/* 7. CTA（模板的 partner 位置）：大标题 + 主按钮；不做鼠标轨迹特效
+   （CLAUDE.md 11：没有无意义动画）。 */
+function Cta() {
+  return (
+    <section className="landing__cta" aria-label="开始研究">
+      <Reveal>
+        <h2 className="landing__cta-title">
+          开始你的<span className="landing__serif">研究</span>
+        </h2>
+      </Reveal>
+      <Reveal delay={0.15}>
+        <a className="landing__btn landing__btn--primary landing__btn--lg" href="/workspace">
+          进入工作台
+        </a>
+      </Reveal>
+      <Reveal delay={0.25}>
+        <p className="landing__cta-note">
+          科研辅助工具，输出不是临床诊断或医疗建议
+        </p>
+      </Reveal>
+    </section>
+  );
+}
+
+/* 8-9. FOOTER + COPYRIGHT。 */
+function Footer() {
+  return (
+    <>
+      <footer className="landing__footer">
+        <a className="landing__btn landing__btn--primary" href="/workspace">
+          开始研究
+        </a>
+        <ArrowUpRight size={22} strokeWidth={1.5} className="landing__footer-arrow" />
+        <div className="landing__footer-cols">
+          <div>
+            <a href="#views">核心视图</a>
+            <a href="#protocol">议会协议</a>
+            <a href="/workspace">工作台</a>
+          </div>
+          <div>
+            <a href="https://github.com/Fishman-free/poliscope" target="_blank" rel="noreferrer">
+              GitHub
+            </a>
+            <a
+              href="https://github.com/Fishman-free/poliscope/blob/main/docs/DEVELOPMENT.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              License · MIT
+            </a>
+          </div>
+        </div>
+      </footer>
+      <div className="landing__copyright">
+        <span>Poliscope · EpistemoBrain</span>
+        <span>科研辅助工具 · 非临床诊断</span>
+      </div>
+    </>
+  );
+}
+
+/* 10. BOTTOM NAV：浮动 pill，P 字母 + 主按钮。 */
+function BottomNav() {
+  return (
+    <nav className="landing__bottom-nav" aria-label="快捷入口">
+      <span className="landing__bottom-mark landing__serif" aria-hidden="true">
+        P
+      </span>
+      <a className="landing__btn landing__btn--primary" href="/workspace">
+        进入工作台
+      </a>
+    </nav>
+  );
+}
+
+export function Landing() {
+  return (
+    <div className="landing">
+      <Hero />
+      <Marquee />
+      <QuoteSection />
+      <Capabilities />
+      <Questions />
+      <Views />
+      <Cta />
+      <Footer />
+      <BottomNav />
+    </div>
   );
 }
