@@ -128,6 +128,19 @@ export function LiveView({
     }
   }, [processEvents.length]);
 
+  // 阶段切换时把当前阶段 pill 滚进视野：阶段行可换行，研究者不能被
+  // 一个刚刚开始的阶段留在屏幕之外（reduced-motion 时不做平滑滚动）。
+  const currentRef = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!current) return;
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    currentRef.current?.scrollIntoView({
+      behavior: reduce ? "auto" : "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [current]);
+
   const anyTrace = processEvents.length > 0;
 
   return (
@@ -139,6 +152,7 @@ export function LiveView({
           return (
             <span
               key={phase.id}
+              ref={isCurrent ? currentRef : undefined}
               className={
                 "live__phase" +
                 (isDone ? " live__phase--done" : "") +

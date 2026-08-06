@@ -34,14 +34,18 @@
 }
 
 .app__wordmark {
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  font-size: 1.0625rem;
+  /* 模板的 logo 语言：serif 强调字体。PP Mondwest 缺失时回退 Georgia，
+     中文阅读无影响（wordmark 是拉丁字）。 */
+  font-family: var(--serif);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-size: 1.25rem;
   color: inherit;
   text-decoration: none;
 }
 
 .app__method {
+  font-family: var(--mono);
   font-size: var(--text-micro);
   color: var(--ink-3);
   letter-spacing: 0.01em;

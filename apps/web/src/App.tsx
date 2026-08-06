@@ -183,6 +183,18 @@ export function App() {
     return () => window.clearInterval(id);
   }, [snapshot?.task.status, refresh]);
 
+  // 终态任务没有新事件，auto-follow 无处发力：打开一个已完成的会话
+  // （或任务在 live 页上跑到终态）时，把界面送回 brief —— 完成的任务
+  // 有内容可读的是 Research Brief，不是已冻结的思考链路。
+  useEffect(() => {
+    if (!follow || !snapshot) return;
+    const terminal =
+      snapshot.task.status === "COMPLETED" ||
+      snapshot.task.status === "COMPLETED_WITH_GAPS" ||
+      snapshot.task.status === "FAILED";
+    if (terminal) setTab("brief");
+  }, [follow, snapshot]);
+
   // Follow the newest ledger event while auto-follow is armed. This reads the
   // wire's event list, never the snapshot -- the projector, not the browser,
   // decides what an event means (see useWorkspace's docstring).
@@ -204,7 +216,9 @@ export function App() {
       url.searchParams.set("task", taskIdToOpen);
       window.history.pushState({}, "", url);
       setTaskId(taskIdToOpen);
-      setTab("brief");
+      // 打开任务直接落在「实时进展」：研究者要看到思考链路，不是干等结果。
+      // 任务若已终态，下方 snapshot 终态 effect 会把它带回 brief。
+      setTab("live");
       setFollow(true);
     });
   }

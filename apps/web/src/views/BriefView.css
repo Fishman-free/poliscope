@@ -134,23 +134,4 @@
   padding: var(--space-3) var(--space-1);
 }
 
-.button {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-2);
-  background: var(--surface-0);
-  font-size: var(--text-small);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-standard),
-    transform var(--duration-fast) var(--ease-standard);
-}
-
-.button:hover {
-  background: var(--surface-2);
-}
-
-/* Feedback on press, not on release. */
-.button:active {
-  transform: scale(0.98);
-  background: var(--surface-3);
-}
+/* 按钮基类已上移到 base.css（全站共享的语言）；本文件只保留 Brief 专属覆盖。 */

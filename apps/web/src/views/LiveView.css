@@ -1,7 +1,8 @@
 /* Live view: the running council's thinking path, real time.
-   The dark-field surfaces are the same tokens as everywhere else; only the
-   seat text wells go slightly deeper so a stream of mono text reads as a
-   live instrument readout, not a chat window. */
+   Same tokens as everywhere else; the seat text wells are slightly deeper
+   so a stream of mono text reads as a live instrument readout, not a chat
+   window. New content enters with the shared fade-in-up, and a phase change
+   glows once on the pill that just became current. */
 
 .live {
   display: flex;
@@ -10,7 +11,8 @@
 }
 
 /* Eight-phase progress rail. Done = quiet check; current = accent fill;
-   pending = dim. No animation: the researcher reads state, not pulses. */
+   pending = dim. The current pill animates once on becoming current (a soft
+   halo fade, not a pulse -- the researcher reads state, not a beacon). */
 .live__phases {
   display: flex;
   flex-wrap: wrap;
@@ -36,6 +38,16 @@
   color: var(--surface-0);
   border-color: var(--accent);
   background: var(--accent);
+  animation: phase-current-in var(--duration-slow) var(--ease-smooth);
+}
+
+@keyframes phase-current-in {
+  from {
+    box-shadow: 0 0 0 5px var(--accent-soft);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 
 .live__grid {
@@ -61,7 +73,9 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   background: var(--surface-0);
+  box-shadow: var(--shadow-1);
   overflow: hidden;
+  animation: fade-in-up var(--duration-standard) var(--ease-standard);
 }
 
 .live__seat-head {
@@ -107,6 +121,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   background: var(--surface-0);
+  box-shadow: var(--shadow-1);
   padding: var(--space-4);
 }
 
@@ -134,6 +149,7 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-2);
   font-size: var(--text-small);
+  animation: fade-in-up var(--duration-standard) var(--ease-standard);
 }
 
 .live__tool-call {

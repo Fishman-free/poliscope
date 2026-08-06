@@ -1,59 +1,72 @@
 /* Design tokens.
  *
  * CLAUDE.md 11 asks for the look of a scientific instrument and an evidence
- * review tool -- not a cockpit. The instrument is a dark one: near-black
- * blue-grey surfaces (the palette used to be white paper; the flat white
- * field drowned the evidential colours and read as generic SaaS). On a dark
- * field the hierarchy comes from surface steps, hairlines and one restrained
- * accent, and the semantic colours (admitted, provisional, refuted, unknown)
- * stay the only saturated ones in the system -- colour still means "how much
- * can I trust this", never decoration.
+ * review tool -- not a cockpit. The instrument is a white one, in the
+ * visual language of the Viktor Oddy studio template the researcher chose:
+ * white paper throughout, ink in the deep blue-black scale (#051A24 ->
+ * #7E93A0), one serif accent face (PP Mondwest) reserved for wordmarks and
+ * key phrases, mono for metadata, generously rounded cards, and buttons
+ * with the layered soft shadow (incl. a subtle inset highlight) that gives
+ * that template its feel.
  *
- * Contrast targets (all on --surface-0): --ink-3 ~4.6:1 (AA), --ink-2 ~9:1,
- * semantic colours 5-7:1. The light palette was removed, not shifted -- there
- * is no light theme to fall back to (this product reads as a dark instrument
- * in any environment, same rationale as the old "forced light" comment).
+ * The four evidential colours (admitted, provisional, refuted, unknown)
+ * stay the only saturated hues in the system -- colour still means "how
+ * much can I trust this", never decoration -- and are chosen for AA
+ * contrast on white.
+ *
+ * Type: PP Neue Montreal leads the stack (loaded from the template's Webflow
+ * CDN in index.html); when it is unreachable the system face takes over
+ * silently. PP Mondwest lives at /PPMondwest-Regular.woff2 -- if the file
+ * is absent (commercial licence, not shipped with this repo), the serif
+ * slots fall back to Georgia / system CJK serif; drop the font file into
+ * apps/web/public/ and the full look activates with no code change.
  */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* Surfaces: stepped near-black blue-greys, darkest at the bottom. */
-  --surface-0: #181b22;
-  --surface-1: #1e222b;
-  --surface-2: #252a35;
-  --surface-3: #2e3442;
-  --line: #313849;
-  --line-strong: #48516a;
+  /* Surfaces: white cards on a near-white field (the template is white
+   * throughout; the field gets one step of grey so elevation reads). */
+  --surface-0: #ffffff;
+  --surface-1: #f6f7f8;
+  --surface-2: #eef0f1;
+  --surface-3: #e4e7e8;
+  --line: rgba(5, 26, 36, 0.1);
+  --line-strong: rgba(5, 26, 36, 0.2);
 
-  /* Ink: light-on-dark, stepped by importance. */
-  --ink-1: #e8eaf0;
-  --ink-2: #b3b9c7;
-  --ink-3: #858da0;
-  --ink-4: #5e6678;
+  /* Ink: the template's deep blue-black scale, stepped for hierarchy. */
+  --ink-1: #051a24;
+  --ink-2: #273c46;
+  --ink-3: #4d6370;
+  --ink-4: #7e93a0;
 
-  /* One accent, used for selection and focus only. */
-  --accent: #6f9bff;
-  --accent-soft: rgba(111, 155, 255, 0.16);
+  /* One accent: the template's secondary dark. Links, selection and focus
+   * read through weight, underline and ring rather than a second hue --
+   * the template never mixes a third colour, and neither do we. */
+  --accent: #0d212c;
+  --accent-soft: rgba(13, 33, 44, 0.08);
 
-  /* Evidential state. Hues carried over from the light palette, lifted for
-   * dark-field readability. These are the load-bearing colours. */
-  --admitted: #4cb386;
-  --admitted-soft: rgba(76, 179, 134, 0.16);
-  --provisional: #d9ae54;
-  --provisional-soft: rgba(217, 174, 84, 0.16);
-  --refuted: #e26961;
-  --refuted-soft: rgba(226, 105, 97, 0.16);
-  --unknown: #7e8698;
-  --unknown-soft: rgba(126, 134, 152, 0.16);
+  /* Evidential state. Deep variants chosen for AA contrast on white; the
+   * soft backgrounds are their 8-12% tints. These are the load-bearing
+   * colours. */
+  --admitted: #1a7f37;
+  --admitted-soft: rgba(26, 127, 55, 0.1);
+  --provisional: #9a6700;
+  --provisional-soft: rgba(154, 103, 0, 0.1);
+  --refuted: #cf222e;
+  --refuted-soft: rgba(207, 34, 46, 0.08);
+  --unknown: #6e7781;
+  --unknown-soft: rgba(110, 119, 129, 0.12);
 
-  /* Type. Tracking is size-specific: large text tightens, body sits near 0.
-   * Readex Pro leads the stack for latin/digits (landing page and wordmarks);
-   * CJK glyphs fall back to the system CJK faces, and an offline deployment
-   * without the Google Fonts CDN degrades to the full system stack. */
-  --font: "Readex Pro", system-ui, -apple-system, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* Type. PP Neue Montreal leads (template's body face); CJK falls back to
+   * the system CJK faces. --serif is the accent voice: wordmarks and key
+   * phrases only, never body copy. Tracking is size-specific: large text
+   * tightens, body sits near 0. */
+  --font: "PP Neue Montreal", -apple-system, BlinkMacSystemFont, system-ui,
+    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --serif: "PP Mondwest", Georgia, "Songti SC", "SimSun", serif;
 
   --text-display: 1.75rem;
   --text-title: 1.125rem;
@@ -70,25 +83,34 @@
   --space-6: 2rem;
   --space-7: 3rem;
 
-  --radius-1: 4px;
-  --radius-2: 8px;
-  --radius-3: 12px;
-  --radius-4: 16px;
-  --radius-5: 20px;
+  /* Generously rounded, template-style: inputs and chips at 12px, cards at
+   * 16-22px, hero-ish surfaces at 30px, buttons and pills fully round. */
+  --radius-1: 8px;
+  --radius-2: 12px;
+  --radius-3: 16px;
+  --radius-4: 22px;
+  --radius-5: 30px;
   --radius-pill: 999px;
 
-  /* Shadows go blacker and deeper on a dark field -- the elevation reads
-   * against the dark chrome, not against white. */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.38);
-  /* Floating: the elevated card / active segment / hovered row. Wide, soft,
-   * almost shadow-less at the contact edge. */
-  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.32);
+  /* Template shadows. Cards use the light floating shadow; buttons get the
+   * layered pair -- primary is deep with an inset highlight (critical for
+   * the feel), secondary is white with a hairline ring and a soft float. */
+  --shadow-1: 0 4px 30px rgba(0, 0, 0, 0.08);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-3: 0 1px 2px rgba(5, 26, 36, 0.1), 0 4px 4px rgba(5, 26, 36, 0.09),
+    0 9px 6px rgba(5, 26, 36, 0.05), 0 17px 7px rgba(5, 26, 36, 0.01),
+    0 26px 7px rgba(5, 26, 36, 0), inset 0 2px 8px rgba(255, 255, 255, 0.5);
+  --shadow-button: 0 0 0 0.5px rgba(0, 0, 0, 0.05), 0 4px 30px rgba(0, 0, 0, 0.08);
+
+  /* Translucent chrome: a white frosted material over the content scrolling
+   * underneath. */
+  --chrome-bg: rgba(255, 255, 255, 0.75);
+  --chrome-blur: blur(20px) saturate(180%);
 
   /* Springs. Critically damped by default; bounce is reserved for motion the
    * user's own gesture started, and this product has exactly one such gesture
-   * (panning the map). `--ease-smooth` is the Apple-style ease-out used for
-   * screen transitions and the sliding tab indicator. */
+   * (panning the map). `--ease-smooth` is the ease-out used for screen
+   * transitions and the sliding tab indicator. */
   --ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --duration-fast: 120ms;
@@ -99,10 +121,11 @@
   --sidebar-w: 320px;
 }
 
-/* Reduced transparency: frost becomes solid rather than merely lighter. */
+/* Reduced transparency: the frosted chrome becomes solid white rather than
+ * merely less translucent. */
 @media (prefers-reduced-transparency: reduce) {
   :root {
-    --chrome-bg: var(--surface-0);
+    --chrome-bg: #ffffff;
     --chrome-blur: none;
   }
 }

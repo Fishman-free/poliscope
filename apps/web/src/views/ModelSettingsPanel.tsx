@@ -85,6 +85,16 @@ export function ModelSettingsPanel() {
       title="模型设置"
       subtitle="保存一次，之后创建的任务自动使用"
     >
+      {/* 加载失败也必须可见：错误的、没加载出来的面板不能伪装成「没有
+          面板」。错误信息渲染在表单外层，任何状态都看得到。 */}
+      {error ? (
+        <p className="settings__error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {!loaded && !error ? (
+        <p className="settings__loading">正在载入设置…</p>
+      ) : null}
       {!loaded ? null : (
         <div className="settings__form">
           <label className="settings__field">
@@ -146,11 +156,6 @@ export function ModelSettingsPanel() {
           </div>
 
           {saved ? <p className="settings__ok">已保存 ✓</p> : null}
-          {error ? (
-            <p className="settings__error" role="alert">
-              {error}
-            </p>
-          ) : null}
           <p className="settings__note">
             API Key 只存服务器、任何页面都不会回显；不设置则使用部署方配置的系统默认模型。
           </p>

@@ -18,18 +18,9 @@ body {
   font-size: var(--text-body);
   line-height: 1.55;
   color: var(--ink-1);
-  /* Dark-field base with a whisper of atmosphere: a top-center blue halo,
-   * the same restraint as Apple's product pages -- present, but far too soft
-   * to compete with the evidential colours. The halo is part of the backdrop,
-   * not a decoration layer that could swallow a scroll container. */
-  background:
-    radial-gradient(
-      1200px 420px at 50% -140px,
-      color-mix(in srgb, var(--accent) 12%, transparent),
-      transparent 70%
-    ),
-    var(--surface-1);
-  background-attachment: fixed;
+  /* White throughout, template-style: one step of grey below pure white so
+   * the white cards read their elevation through shadow, not a gradient. */
+  background: var(--surface-1);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -70,6 +61,59 @@ button {
   color: inherit;
 }
 
+/* 按钮语言来自模板：secondary 是白底 + 发丝环 + 软浮起（无描边），
+   primary 是深蓝黑 + 分层阴影（含 inset highlight，模板的视觉关键），
+   全部 pill。Feedback lives on the press: :active 缩放立即生效。 */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-5);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-0);
+  box-shadow: var(--shadow-button);
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--ink-1);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.button:hover {
+  background: var(--surface-2);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 6px 40px rgba(0, 0, 0, 0.1);
+}
+
+/* Feedback on press, not on release. */
+.button:active {
+  transform: scale(0.97);
+  background: var(--surface-3);
+}
+
+.button--primary {
+  background: var(--ink-1);
+  color: #f6fcff;
+  box-shadow: var(--shadow-3);
+}
+
+.button--primary:hover {
+  background: var(--ink-2);
+  box-shadow: var(--shadow-3);
+}
+
+.button--primary:active {
+  background: var(--ink-1);
+}
+
+.button--small {
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--text-micro);
+}
+
 /* Disabled controls are dimmed and inert (shadcn/ui pattern):
    pointer-events:none stops the hover/active surfaces from firing on a button
    that is waiting on network work, opacity signals "not actionable yet". */
@@ -104,8 +148,8 @@ textarea:focus-visible {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* Dark scrollbars: the default light scrollbar against dark chrome is
- * glaring. Firefox via scrollbar-color, Chromium via -webkit-scrollbar. */
+/* Slim scrollbars in the line colour. Firefox via scrollbar-color,
+ * Chromium via -webkit-scrollbar. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
@@ -134,18 +178,20 @@ code,
   letter-spacing: 0;
 }
 
-/* Shared "this is new content" entrance: fade + a 4px settle, not a bounce --
- * tokens.css reserves bounce for the one gesture this product has (panning
- * the map). Any view that hard-swaps content with no transition of its own
- * can opt into this rather than each defining its own identical keyframe. */
+/* Shared "this is new content" entrance: fade + a soft rise (the template's
+ * fade-in-up, tuned for a working surface -- a deeper travel would make a
+ * tool feel slow). Not a bounce: tokens.css reserves bounce for the one
+ * gesture this product has (panning the map). Any view that hard-swaps
+ * content with no transition of its own can opt into this rather than each
+ * defining its own identical keyframe. */
 .fade-in-up {
-  animation: fade-in-up var(--duration-standard) var(--ease-standard);
+  animation: fade-in-up 0.55s var(--ease-smooth) both;
 }
 
 @keyframes fade-in-up {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(20px);
   }
   to {
     opacity: 1;

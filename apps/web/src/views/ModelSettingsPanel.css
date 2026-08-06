@@ -55,6 +55,11 @@
   color: var(--refuted);
 }
 
+.settings__loading {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
 .settings__note {
   font-size: var(--text-micro);
   color: var(--ink-3);

@@ -267,17 +267,4 @@
   gap: var(--space-3);
 }
 
-.button--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--surface-0);
-}
-
-.button--primary:hover {
-  background: color-mix(in srgb, var(--accent) 85%, black);
-}
-
-.button--primary:active {
-  background: color-mix(in srgb, var(--accent) 75%, black);
-  transform: scale(0.98);
-}
+/* 按钮基类与 --primary 已上移 base.css（全站共享的语言）。 */
