@@ -44,10 +44,41 @@ function splitList(value: string): string[] {
     .filter(Boolean);
 }
 
+/** 草稿键：按账号命名空间存本机（多账号共用浏览器时草稿不串）。
+ * 输入即自动保存（防抖 300ms），刷新、切视图、关页面都不丢；
+ * 任务确认开始后清除（那时草稿已完成使命）。 */
+const DRAFT_KEY_PREFIX = "poliscope:newtask-draft:";
+
+interface NewTaskDraft {
+  question: string;
+  populations: string;
+  regions: string;
+  languages: string;
+  priorities: string[];
+  allowPreprints: boolean;
+  wallClockMinutes: number;
+  toolCallLimit: number;
+  sourceLimit: number;
+  knowledgeBaseId: string;
+  selectedSkills: string[];
+}
+
+function loadDraft(key: string): Partial<NewTaskDraft> | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<NewTaskDraft>;
+    return typeof parsed === "object" && parsed !== null ? parsed : null;
+  } catch {
+    return null; // 损坏的草稿不值得让表单崩掉：忽略，从默认值开始。
+  }
+}
+
 export function NewTaskView({
   onCreated,
   onManageKnowledge,
   active = true,
+  draftNamespace = "default",
 }: {
   onCreated: (taskId: string) => void;
   /** Jump to the knowledge-base management view (pasting text, uploading
@@ -56,28 +87,40 @@ export function NewTaskView({
   /** True while this view is the visible home view. The two home views stay
    * mounted side by side, so lists refresh on re-entry, not on mount. */
   active?: boolean;
+  /** 草稿命名空间（用户名）：同一浏览器的不同账号各自保存草稿。 */
+  draftNamespace?: string;
 }) {
-  const [question, setQuestion] = useState("");
+  const draftKey = `${DRAFT_KEY_PREFIX}${draftNamespace}`;
+  const [draft] = useState(() => loadDraft(draftKey));
+  const [question, setQuestion] = useState(draft?.question ?? "");
   const [populations, setPopulations] = useState(
-    DEFAULT_NEW_TASK_OPTIONS.populations.join(", "),
+    draft?.populations ?? DEFAULT_NEW_TASK_OPTIONS.populations.join(", "),
   );
-  const [regions, setRegions] = useState(DEFAULT_NEW_TASK_OPTIONS.regions.join(", "));
-  const [languages, setLanguages] = useState(DEFAULT_NEW_TASK_OPTIONS.languages.join(", "));
+  const [regions, setRegions] = useState(
+    draft?.regions ?? DEFAULT_NEW_TASK_OPTIONS.regions.join(", "),
+  );
+  const [languages, setLanguages] = useState(
+    draft?.languages ?? DEFAULT_NEW_TASK_OPTIONS.languages.join(", "),
+  );
   const [priorities, setPriorities] = useState<string[]>(
-    DEFAULT_NEW_TASK_OPTIONS.evidencePriorities,
+    draft?.priorities ?? DEFAULT_NEW_TASK_OPTIONS.evidencePriorities,
   );
   const [allowPreprints, setAllowPreprints] = useState(
-    DEFAULT_NEW_TASK_OPTIONS.allowPreprints,
+    draft?.allowPreprints ?? DEFAULT_NEW_TASK_OPTIONS.allowPreprints,
   );
   const [wallClockMinutes, setWallClockMinutes] = useState(
-    DEFAULT_NEW_TASK_OPTIONS.wallClockMinutes,
+    draft?.wallClockMinutes ?? DEFAULT_NEW_TASK_OPTIONS.wallClockMinutes,
   );
-  const [toolCallLimit, setToolCallLimit] = useState(DEFAULT_NEW_TASK_OPTIONS.toolCallLimit);
-  const [sourceLimit, setSourceLimit] = useState(DEFAULT_NEW_TASK_OPTIONS.sourceLimit);
+  const [toolCallLimit, setToolCallLimit] = useState(
+    draft?.toolCallLimit ?? DEFAULT_NEW_TASK_OPTIONS.toolCallLimit,
+  );
+  const [sourceLimit, setSourceLimit] = useState(
+    draft?.sourceLimit ?? DEFAULT_NEW_TASK_OPTIONS.sourceLimit,
+  );
   // 知识库（长期记忆）：文档作为 Level A 用户提供源交给议会。模型设置
   // 已移至右侧栏永久设置（保存于服务器，创建任务时自动生效），表单不再收集。
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseSummary[]>([]);
-  const [knowledgeBaseId, setKnowledgeBaseId] = useState<string>("");
+  const [knowledgeBaseId, setKnowledgeBaseId] = useState(draft?.knowledgeBaseId ?? "");
   // 内联新建知识库：研究者在建任务时顺手建库，不必切到知识库页再回来
   // （省跳转，KnowledgeBaseView 的创建表单保留完整字段，这里是轻量版）。
   const [newKbName, setNewKbName] = useState("");
@@ -86,7 +129,50 @@ export function NewTaskView({
   // Skills：账号已下载的技能，默认勾选启用的；提交时携带勾选结果，
   // worker 会将其注入议会 prompt（非正式证据）。
   const [skills, setSkills] = useState<SkillSummary[]>([]);
-  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(
+    new Set(draft?.selectedSkills ?? []),
+  );
+
+  // 自动保存：任何表单字段变化后 300ms 落盘（防抖，避免每次击键写
+  // localStorage）。草稿只存本机，绝不离开浏览器（CLAUDE.md 16）。
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          draftKey,
+          JSON.stringify({
+            question,
+            populations,
+            regions,
+            languages,
+            priorities,
+            allowPreprints,
+            wallClockMinutes,
+            toolCallLimit,
+            sourceLimit,
+            knowledgeBaseId,
+            selectedSkills: Array.from(selectedSkills),
+          } satisfies NewTaskDraft),
+        );
+      } catch {
+        // 存储不可用（隐私模式/配额）时静默放弃：自动保存是便利，不是承诺。
+      }
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [
+    draftKey,
+    question,
+    populations,
+    regions,
+    languages,
+    priorities,
+    allowPreprints,
+    wallClockMinutes,
+    toolCallLimit,
+    sourceLimit,
+    knowledgeBaseId,
+    selectedSkills,
+  ]);
 
   useEffect(() => {
     // 可见时刷新：知识库页可能已增删（两个主页视图同时挂载、各自持列表
@@ -232,6 +318,12 @@ export function NewTaskView({
     setError(null);
     try {
       await confirmClaims(taskId, Array.from(selected));
+      // 任务真正开始：草稿完成使命，从本机清掉，避免下次建任务时串内容。
+      try {
+        localStorage.removeItem(draftKey);
+      } catch {
+        // 存储不可用则忽略——清理是便利，不是承诺。
+      }
       onCreated(taskId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -536,7 +628,8 @@ export function NewTaskView({
       </form>
 
       <p className="newtask__safety">
-        本系统为科研辅助工具，不提供医学诊断或医疗建议。
+        已填写的内容会自动保存在本机浏览器（草稿），切走、刷新都不丢；
+        确认开始研究后清空。本系统为科研辅助工具，不提供医学诊断或医疗建议。
       </p>
     </Panel>
   );

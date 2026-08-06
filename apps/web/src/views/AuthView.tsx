@@ -11,8 +11,17 @@ import { login, register } from "../api/client";
 
 import "./AuthView.css";
 
-export function AuthView({ onAuthed }: { onAuthed: () => void }) {
-  const [mode, setMode] = useState<"login" | "register">("login");
+export function AuthView({
+  onAuthed,
+  initialMode = "login",
+}: {
+  /** 登录/注册成功：把用户名交回 App —— 用户名是草稿命名空间等
+   * 按账号隔离功能的键，注册/登录路径上不能是空串。 */
+  onAuthed: (username: string) => void;
+  /** 落地页等外部入口可以通过 URL ?mode=register 指定初始 tab。 */
+  initialMode?: "login" | "register";
+}) {
+  const [mode, setMode] = useState<"login" | "register">(initialMode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -34,7 +43,7 @@ export function AuthView({ onAuthed }: { onAuthed: () => void }) {
       } else {
         await login(username.trim(), password);
       }
-      onAuthed();
+      onAuthed(username.trim());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

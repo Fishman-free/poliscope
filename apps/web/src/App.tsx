@@ -269,7 +269,17 @@ export function App() {
             <Spinner label="正在验证登录状态…" />
           </main>
         ) : (
-          <AuthView onAuthed={() => setAuth("authed")} />
+          <AuthView
+            onAuthed={(name) => {
+              setUsername(name);
+              setAuth("authed");
+            }}
+            initialMode={
+              new URLSearchParams(window.location.search).get("mode") === "register"
+                ? "register"
+                : "login"
+            }
+          />
         )}
       </div>
     );
@@ -336,6 +346,7 @@ export function App() {
                     onCreated={open}
                     onManageKnowledge={() => switchHome("knowledge")}
                     active={homeView === "newtask"}
+                    draftNamespace={username}
                   />
                 </div>
                 <div

@@ -83,8 +83,9 @@ const PHASES = [
   "报告生成",
 ];
 
-/* 1. HERO：serif logo + mono tagline + 两行主标题（serif 强调词）+ 三段
-   描述 + 双按钮（primary 深蓝黑分层阴影 / secondary 白底发丝环）。 */
+/* 1. HERO：三个错落的全小写大字（brainstorming / researching / mapping，
+   对应七人独立构思、质询、绘制证据图三个环节），外加一行 mono 标签、
+   一句描述与登录/注册入口。宣传语克制 —— 机制靠大字暗示，不靠段落。 */
 function Hero() {
   return (
     <header className="landing__hero">
@@ -119,45 +120,37 @@ function Hero() {
         </a>
       </nav>
 
-      <div className="landing__hero-main">
-        <Reveal delay={0.1}>
+      <Reveal delay={0.1} className="landing__word landing__word--1">
+        <h1>brainstorming</h1>
+      </Reveal>
+      <Reveal delay={0.2} className="landing__word landing__word--2">
+        <h1>researching</h1>
+      </Reveal>
+      <Reveal delay={0.3} className="landing__word landing__word--3">
+        <h1>mapping</h1>
+      </Reveal>
+
+      <div className="landing__hero-foot">
+        <Reveal delay={0.4}>
           <p className="landing__tagline">
             EPISTEMOBRAIN · 七人议会争议证据地图
           </p>
         </Reveal>
-        <Reveal delay={0.2}>
-          <h1 className="landing__heading">
-            让七名 AI 科学家，
-            <br />
-            专门找<span className="landing__serif">科研盲点</span>。
-          </h1>
+        <Reveal delay={0.5}>
+          <p className="landing__hero-desc">
+            七名 AI 科学家独立取证、交叉质询、专门找反例，产出一张可审计的争议证据地图。
+          </p>
         </Reveal>
-        <div className="landing__desc">
-          <Reveal delay={0.3}>
-            <p>
-              Poliscope 为有争议的计算社会科学问题组织 7 名 AI 科学家：
-              独立预承诺、专业取证、交叉质询、盲点悬赏，全程可审计。
-            </p>
-          </Reveal>
-          <Reveal delay={0.4}>
-            <p>
-              每个结论绑定可核验的原文位置；被反驳的观点不删除、仍可追溯；
-              不知道的地方明确说不知道。相关不自动升级为因果。
-            </p>
-          </Reveal>
-          <Reveal delay={0.5}>
-            <p>
-              首版领域：数字行为、社交媒体与心理健康。开源，MIT 许可。
-            </p>
-          </Reveal>
-        </div>
         <Reveal delay={0.6}>
           <div className="landing__hero-actions">
-            <a className="landing__btn landing__btn--primary" href="/workspace">
-              开始研究
+            <a
+              className="landing__btn landing__btn--primary"
+              href="/workspace?mode=register"
+            >
+              注册 · 开始研究
             </a>
-            <a className="landing__btn landing__btn--secondary" href="#protocol">
-              了解议会协议
+            <a className="landing__btn landing__btn--secondary" href="/workspace">
+              登录
             </a>
           </div>
         </Reveal>

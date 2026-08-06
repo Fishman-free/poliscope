@@ -242,14 +242,18 @@
 }
 
 /* Home 视图（新建任务 / 知识库）保持挂载、只做显隐切换，已填内容不丢。
- * display:none 同时让它退出 tab 焦点序列；view-transition-name 重置避免
- * 与激活面板的同名过渡快照冲突。
+ * display:none 是切换的根基 —— 它同时让隐藏面板退出 tab 焦点序列；
+ * view-transition-name 重置避免与激活面板的同名过渡快照冲突。
  *
  * 两个面板持有各自固定的快照名（只在激活时生效，:not(.app__panel--hidden)
  * 保证隐藏面板的名字归零、不参与快照）。固定名是关键：如果两个面板在切换
  * 时共用同一个名字，浏览器会把旧快照配对到新元素上 —— 播放出来就是
  * 「先显示目标页、又闪回来源页、再跳回目标页」的来回跳。独立名字让切换
  * 变成两个互不干扰的过渡：来源页 150ms 淡出、目标页 320ms 滑入，果断。 */
+.app__panel--hidden {
+  display: none;
+  view-transition-name: none;
+}
 .app__panel--home-newtask:not(.app__panel--hidden) {
   view-transition-name: home-newtask;
 }
