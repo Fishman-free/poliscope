@@ -319,9 +319,16 @@ export function App() {
                   提供（withTransition 的快照交叉淡化）；无该 API 的浏览器直接
                   切换。隐藏面板不参与视图过渡捕获（view-transition-name: none）。 */}
               <div className="app__home">
+                {/* 两个面板各自持有固定的 view-transition-name（home-newtask /
+                    home-knowledge，见 App.css）：切换时浏览器把它们当作两个
+                    独立元素各自淡出/淡入，快照不会在元素间转移 —— 那正是
+                    「先跳到知识库、又闪回新建任务、再跳回知识库」的来回跳的
+                    根因（同一个 name 从一个元素转移到另一个元素时，浏览器
+                    的快照配对会错乱）。 */}
                 <div
                   className={
-                    "app__panel" + (homeView === "newtask" ? "" : " app__panel--hidden")
+                    "app__panel app__panel--home-newtask" +
+                    (homeView === "newtask" ? "" : " app__panel--hidden")
                   }
                   aria-hidden={homeView !== "newtask"}
                 >
@@ -333,7 +340,8 @@ export function App() {
                 </div>
                 <div
                   className={
-                    "app__panel" + (homeView === "newtask" ? " app__panel--hidden" : "")
+                    "app__panel app__panel--home-knowledge" +
+                    (homeView === "newtask" ? " app__panel--hidden" : "")
                   }
                   aria-hidden={homeView === "newtask"}
                 >

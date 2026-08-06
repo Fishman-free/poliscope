@@ -243,10 +243,54 @@
 
 /* Home 视图（新建任务 / 知识库）保持挂载、只做显隐切换，已填内容不丢。
  * display:none 同时让它退出 tab 焦点序列；view-transition-name 重置避免
- * 与激活面板的同名过渡快照冲突。 */
-.app__panel--hidden {
-  display: none;
-  view-transition-name: none;
+ * 与激活面板的同名过渡快照冲突。
+ *
+ * 两个面板持有各自固定的快照名（只在激活时生效，:not(.app__panel--hidden)
+ * 保证隐藏面板的名字归零、不参与快照）。固定名是关键：如果两个面板在切换
+ * 时共用同一个名字，浏览器会把旧快照配对到新元素上 —— 播放出来就是
+ * 「先显示目标页、又闪回来源页、再跳回目标页」的来回跳。独立名字让切换
+ * 变成两个互不干扰的过渡：来源页 150ms 淡出、目标页 320ms 滑入，果断。 */
+.app__panel--home-newtask:not(.app__panel--hidden) {
+  view-transition-name: home-newtask;
+}
+
+.app__panel--home-knowledge:not(.app__panel--hidden) {
+  view-transition-name: home-knowledge;
+}
+
+::view-transition-old(home-newtask),
+::view-transition-old(home-knowledge) {
+  animation: vt-home-out 150ms var(--ease-smooth) both;
+}
+
+::view-transition-new(home-newtask),
+::view-transition-new(home-knowledge) {
+  animation: vt-home-in var(--duration-slow) var(--ease-smooth) both;
+}
+
+@keyframes vt-home-out {
+  to {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+@keyframes vt-home-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* root 快照只用于捕获页面背景，不做任何过渡 —— 否则整页默认交叉淡化
+ * 会叠加在面板过渡之上，看起来就像切换时整个界面闪了一下。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
 }
 
 @keyframes panel-in {
