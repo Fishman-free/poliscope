@@ -58,6 +58,30 @@ EDGE_LABELS: dict[str, str] = {
     "TESTS": "检验",
 }
 
+# Evolution View event labels and internal gap strings, mirroring the web
+# workbench's EvolutionView constants. The CLI must not import packages, so
+# these live here (same precedent as SEAT_LABELS). Unknown strings pass
+# through unchanged -- a label map must never guess.
+EVENT_LABELS: dict[str, str] = {
+    "Claim": "主张（含分叉）",
+    "CHALLENGE_RAISED": "提出质询",
+    "DissentCertificate": "异议证书",
+    "CONFIDENCE_UPDATED": "置信度轨迹点",
+    "ACQUISITION:no_tool_provider": "未配置工具网关，无法获取证据",
+    "JOINT_MODELING:no_capsule_fold": "联合建模未形成可折叠的争论胶囊",
+    "FINAL_REJUDGMENT:no_dissent_target": "最终复判未指向异议目标",
+    "resurrection_condition_not_met": "复活条件未满足",
+    "no model provider is connected to the Model Gateway": "模型网关未连接",
+    "acquisition timed out": "证据获取超时",
+    "source budget exhausted": "来源预算已耗尽",
+    "source is retracted": "来源已撤回",
+}
+
+
+def _humanize_event(value: object) -> str:
+    text = str(value)
+    return EVENT_LABELS.get(text, text)
+
 
 def _task_slug(snapshot: dict[str, Any]) -> str:
     """Stable directory name for one task: first 8 chars of the id plus a
@@ -121,7 +145,12 @@ def _render_evidence_md(snapshot: dict[str, Any]) -> str:
 def _render_council_md(snapshot: dict[str, Any]) -> str:
     seats = snapshot.get("seats") or []
     lines = ["# 议会记录（Council Record）", ""]
-    lines.append("## 七位科学家的立场")
+    lines.append("## 七位科学家的立场（并列呈现，非投票裁决）")
+    lines.append("")
+    lines.append(
+        "> 议会不进行多数投票裁决科研真理（CLAUDE.md 4）；以下仅并列每位"
+        "科学家的独立预承诺与最终复判，共识以条件化共识形式呈现。"
+    )
     lines.append("")
     for seat in seats:
         seat_name = str(seat.get("seat") or "")
@@ -155,14 +184,35 @@ def _render_council_md(snapshot: dict[str, Any]) -> str:
         if unavailable:
             lines.append(f"- 缺席阶段：{', '.join(map(str, unavailable))}")
         lines.append("")
+    consensus = snapshot.get("consensus")
+    lines.append("## 条件化共识")
+    lines.append("")
+    if not consensus:
+        lines.append("（联合建模未形成条件化共识）")
+    else:
+        text = consensus.get("conditional_consensus")
+        if isinstance(text, str) and text:
+            lines.append(f"- 条件化共识：{text}")
+        for key, label in (
+            ("boundary_conditions", "边界条件"),
+            ("unresolved_conflicts", "未解决冲突"),
+            ("falsification_conditions", "可证伪条件"),
+        ):
+            values = consensus.get(key)
+            if isinstance(values, list) and values:
+                lines.append(f"- {label}：")
+                for item in values:
+                    lines.append(f"  - {item}")
+    lines.append("")
     lines.append("## 争议演化时间线")
     lines.append("")
     evolution = snapshot.get("evolution") or ()
     if not evolution:
         lines.append("（账本中无争议演化事件）")
     for entry in evolution:
+        event_type = _humanize_event(entry.get("event_type"))
         lines.append(
-            f"- `{entry.get('sequence')}` {entry.get('event_type')}"
+            f"- `{entry.get('sequence')}` {event_type}"
             f"（status={entry.get('status')}）"
         )
     return "\n".join(lines)
@@ -227,6 +277,7 @@ def _render_index_md(
         "",
         "## 文件索引",
         "",
+        "- [最终论文（paper.md）](paper.md)",
         "- [研究简报（brief.md）](brief.md)",
         "- [证据图（evidence.md）](evidence.md)",
         "- [议会记录（council.md）](council.md)",
@@ -254,12 +305,37 @@ def _render_index_md(
     return "\n".join(lines)
 
 
+def _render_paper_stub(snapshot: dict[str, Any]) -> str:
+    """Local honest stub for a task whose paper markdown could not be fetched.
+
+    The CLI never re-serialises the paper itself (the server renders, the
+    client writes -- same philosophy as the brief). When the server's paper
+    endpoint is unreachable, the stub says exactly that and points at the
+    files that do exist, rather than pretending a paper exists.
+    """
+    task = snapshot.get("task") or {}
+    question = task.get("question") or "（未知问题）"
+    return (
+        "# 综合论文未生成\n\n"
+        f"研究问题：{question}\n\n"
+        "论文 Markdown 获取失败（API 不可达）。"
+        "请查看同目录下的 brief.md 与 evidence.md。\n"
+    )
+
+
 def write_task_docs(
     snapshot: dict[str, Any],
     report_markdown: str,
     output_root: Path,
+    paper_markdown: str | None = None,
 ) -> list[Path]:
-    """Write a task's docs under ``output_root/{slug}/``; return the files."""
+    """Write a task's docs under ``output_root/{slug}/``; return the files.
+
+    ``paper_markdown`` is the server-rendered final paper (``/api/reports/
+    {id}/paper?format=markdown``). It is always written -- either the real
+    paper or the server's honest stub; when the fetch itself failed,
+    ``None`` renders a local stub so the file still exists and says so.
+    """
     task_dir = output_root / _task_slug(snapshot)
     scientists_dir = task_dir / "scientists"
     scientists_dir.mkdir(parents=True, exist_ok=True)
@@ -268,6 +344,13 @@ def write_task_docs(
     index = task_dir / "README.md"
     index.write_text(_render_index_md(snapshot, task_dir), encoding="utf-8")
     written.append(index)
+
+    paper = task_dir / "paper.md"
+    paper.write_text(
+        paper_markdown if paper_markdown is not None else _render_paper_stub(snapshot),
+        encoding="utf-8",
+    )
+    written.append(paper)
 
     brief = task_dir / "brief.md"
     brief.write_text(report_markdown, encoding="utf-8")

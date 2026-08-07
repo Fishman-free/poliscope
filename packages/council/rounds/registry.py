@@ -20,7 +20,9 @@ changes no other code.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -453,8 +455,23 @@ class PhaseContext:
         )
 
 
+# A round's whole seat-collection pass must not hold the worker hostage behind
+# a slow or half-open model endpoint. Each seat's call already has the
+# gateway's own deadline (240s stream, then a 300s non-streaming fallback),
+# and with seven seats run serially that sums to ~63 minutes of "thinking…"
+# with no budget check inside the phase -- wall-clock budget is only enforced
+# between phases. This is the hard ceiling that bounds the entire collection,
+# mirroring the acquisition round's ACQUISITION_TOTAL_SECONDS: a seat that
+# would start after the deadline is reported absent with the reason below.
+# CLAUDE.md 10: report the gap, never hang.
+_COLLECT_DEADLINE_SECONDS = 900.0  # 15 minutes for the whole pass
+_COLLECT_DEADLINE_REASON = "phase collection deadline exceeded"
+
+
 async def _collect(
     context: PhaseContext,
+    *,
+    deadline_seconds: float = _COLLECT_DEADLINE_SECONDS,
 ) -> tuple[
     dict[Seat, Mapping[str, object]],
     tuple[str, ...],
@@ -468,13 +485,38 @@ async def _collect(
     endpoint must surface as the actual connection error -- CLAUDE.md 7 does
     not let the system paper over the difference between "no provider
     configured" and "provider rejected us".
+
+    The whole pass is bounded by ``deadline_seconds`` (default 15 minutes):
+    each seat's call is awaited with the time remaining on that deadline, and
+    a seat that could not answer before it is reported absent. This is what
+    makes a slow provider degrade the round instead of stalling it -- the
+    "交叉质询卡死" failure mode where one phase held the task for an hour.
     """
+    deadline = time.monotonic() + deadline_seconds
     outputs: dict[Seat, Mapping[str, object]] = {}
     unfilled: list[str] = []
     absent: set[Seat] = set()
     reasons: dict[Seat, str] = {}
     for seat in context.seats:
-        result = await context.deliberator.deliberate(seat, context.phase, context)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            unfilled.append(f"{context.phase.value}:{seat.value}")
+            absent.add(seat)
+            reasons[seat] = _COLLECT_DEADLINE_REASON
+            continue
+        try:
+            result = await asyncio.wait_for(
+                context.deliberator.deliberate(seat, context.phase, context),
+                timeout=remaining,
+            )
+        except TimeoutError:
+            # The seat's model call did not finish within the phase deadline.
+            # The deliberator's own call was cancelled; the seat is absent and
+            # the reason says exactly that (not "provider down").
+            unfilled.append(f"{context.phase.value}:{seat.value}")
+            absent.add(seat)
+            reasons[seat] = _COLLECT_DEADLINE_REASON
+            continue
         if result is None:
             unfilled.append(f"{context.phase.value}:{seat.value}")
             absent.add(seat)

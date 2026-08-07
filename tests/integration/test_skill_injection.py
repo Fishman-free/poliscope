@@ -109,6 +109,7 @@ def _prompts_for_phase(
         request.messages[1].content
         for request in gateway.calls
         if request.output_schema != "StudyFindingExtraction"
+        and request.output_schema != "FinalPaper"
         and TaskPhase(request.purpose) is phase
     ]
 

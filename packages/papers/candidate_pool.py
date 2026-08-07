@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from packages.council.contracts import Seat
 from packages.tools.adapters.normalization import normalize_doi
+
+# A DOI is a specific shape -- "10.<4-9 digits>/<DOI chars>" -- and seats often
+# paste one in front of a longer justification sentence ("doi:10.xxxx/yyyy：
+# 核对其中是否包含..."). Extracting with a regex instead of a whitespace split
+# keeps the DOI and only the DOI: the old split()[0] grabbed the whole
+# whitespace-free Chinese tail, and the entire sentence was then sent to the
+# provider as a DOI, producing a 404 like
+#   https://api.openalex.org/works/doi:10.1001/...%EF%BC%9A%E6%A0%B8%E6%9F%A5...
+# DOI characters are [0-9A-Za-z._;()/:+-]; anything else (full-width colon,
+# Chinese text) terminates the match, so the suffix sentence is dropped.
+_DOI_RE = re.compile(r"10\.\d{4,9}/[0-9A-Za-z._;()/:+-]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,11 +32,9 @@ class CandidatePool:
 
     async def add(self, seat: Seat, raw_query: str) -> CandidateRequest:
         normalized = None
-        if "10." in raw_query:
-            tail = raw_query.split("10.")[-1].split()[0]
-            normalized = normalize_doi(tail)
-            if not normalized.startswith("10."):
-                normalized = "10." + normalized
+        match = _DOI_RE.search(raw_query)
+        if match is not None:
+            normalized = normalize_doi(match.group(0))
         req = CandidateRequest(
             seat=seat, raw_query=raw_query, normalized_doi=normalized
         )

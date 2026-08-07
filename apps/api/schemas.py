@@ -35,6 +35,13 @@ class WorkspaceSnapshot(ContractModel):
     independent_cluster_count: int
     workspace_version: int
     safety_notice: SafetyNotice
+    # The synthesised final paper (FINAL_PAPER_DRAFTED payload) and the
+    # conditioned consensus (CONSENSUS_DRAFTED payload), or None before they
+    # exist. Both are ledger-derived read-only views; neither is evidence
+    # (the paper is an expression-layer document, the consensus is the joint
+    # modelling round's own text).
+    paper: FrozenDict[str, object] | None = None
+    consensus: FrozenDict[str, object] | None = None
 
 
 class SSEEvent(ContractModel):

@@ -81,6 +81,18 @@ class _ScriptedGateway:
         self._reasoning = reasoning
 
     def _payload(self, request: ModelRequest) -> dict[str, object]:
+        if request.output_schema == "FinalPaper":
+            # The report synthesizer's one-shot call (packages/reports/
+            # synthesis.py) -- request.purpose is "FINAL_SYNTHESIS", not a
+            # TaskPhase value, so this must be checked before the conversion.
+            return {
+                "title": "综合论文",
+                "abstract": "议会证据整合摘要。",
+                "sections": [{"heading": "发现", "paragraphs": ["相关性一致。"]}],
+                "references": [],
+                "limitations": ["样本局限。"],
+                "investigation_process": ["7 席参与"],
+            }
         if request.output_schema == "StudyFindingExtraction":
             # A system-level call from FindingExtractor, not one of the seven
             # seats' phase requests -- request.purpose is "finding_extraction",
@@ -443,8 +455,9 @@ async def test_every_model_call_is_audited(
             .select_from(ModelCallModel)
             .where(ModelCallModel.task_id == task_id)
         )
-    # Seven seats across seven deliberating rounds; reporting asks no one.
-    assert len(gateway.calls) == 7 * 7
+    # Seven seats across seven deliberating rounds plus the report
+    # synthesizer's one paper call.
+    assert len(gateway.calls) == 7 * 7 + 1
     assert audited == len(gateway.calls)
 
 
@@ -484,7 +497,8 @@ async def test_quarantined_output_never_becomes_a_seat_judgment(
     assert result.run.absent_seats == frozenset(Seat)
     assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
     # The calls still happened and are still audited; only the output was refused.
-    assert len(gateway.calls) == 7 * 7
+    # (+1: the report synthesizer's paper call is refused the same way.)
+    assert len(gateway.calls) == 7 * 7 + 1
 
 
 async def test_captured_reasoning_becomes_a_process_only_ledger_event(
@@ -593,7 +607,8 @@ async def test_task_model_config_builds_a_per_task_gateway(
     assert config["base_url"] == "https://api.researcher.example"
     # Every seat call went through the per-task gateway (which forwards to the
     # scripted answerer) -- the worker really did run on the task's endpoint.
-    assert len(scripted.calls) == 7 * 7
+    # +1: the synthesizer's paper call also went through the per-task gateway.
+    assert len(scripted.calls) == 7 * 7 + 1
 
 
 async def test_a_provider_outage_degrades_the_run_instead_of_failing_it(
@@ -622,7 +637,11 @@ async def test_the_prompt_carries_the_question_and_the_confirmed_claims(
 
     await run_task(app_sessions, projector_sessions, task_id, gateway=gateway)
 
-    user_messages = [request.messages[1].content for request in gateway.calls]
+    user_messages = [
+        request.messages[1].content
+        for request in gateway.calls
+        if request.purpose != "FINAL_SYNTHESIS"
+    ]
     assert all(QUESTION in message for message in user_messages)
     assert all(str(claim_id) in message for message in user_messages)
     assert all(claim_id in request.evidence_refs for request in gateway.calls)
@@ -646,7 +665,7 @@ async def test_a_seat_is_given_its_own_recall_and_no_one_elses(
     later = [
         request
         for request in gateway.calls
-        if TaskPhase(request.purpose) is TaskPhase.FINAL_REJUDGMENT
+        if request.purpose == TaskPhase.FINAL_REJUDGMENT.value
     ]
     assert later, "final rejudgment must have asked the seats"
     for request in later:
@@ -660,7 +679,7 @@ async def test_a_seat_is_given_its_own_recall_and_no_one_elses(
     first = [
         request
         for request in gateway.calls
-        if TaskPhase(request.purpose) is TaskPhase.PRECOMMITMENT
+        if request.purpose == TaskPhase.PRECOMMITMENT.value
     ]
     assert all(
         "Your private recall:" in request.messages[1].content for request in first

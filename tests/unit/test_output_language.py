@@ -63,6 +63,41 @@ def test_unknown_language_falls_back_to_english() -> None:
     assert "Output language: English" in prompt
 
 
+def test_acquisition_phase_injects_retrieval_boundaries() -> None:
+    """Round-5 relevance governance: a seat generates free-form retrieval
+    strings in ACQUISITION and once drifted into unrelated fields (power
+    projects, nuclear instrumentation) for an adolescent mental-health
+    question. The phase instruction must be present in exactly that phase's
+    system prompt, and nowhere else."""
+    acquisition = _system_prompt(Seat.THEORY_BUILDER, TaskPhase.ACQUISITION)
+    assert "Evidence-retrieval constraints for this round" in acquisition
+    assert "Never drift outside the question's domain" in acquisition
+    assert "Fewer, stronger requests beat many weak ones" in acquisition
+    # And not in any other phase.
+    for phase in (
+        TaskPhase.PRECOMMITMENT,
+        TaskPhase.CROSS_EXAMINATION,
+        TaskPhase.FINAL_REJUDGMENT,
+    ):
+        prompt = _system_prompt(Seat.THEORY_BUILDER, phase)
+        assert "Evidence-retrieval constraints" not in prompt
+
+
+def test_generic_baseline_prompt_gets_the_same_boundary() -> None:
+    """The Fixed Multi-Agent Debate baseline must obey the same retrieval
+    boundary or the ablation would be confounded by relevance drift."""
+    from packages.council.deliberation import generic_system_prompt
+
+    acquisition = generic_system_prompt(
+        Seat.THEORY_BUILDER, TaskPhase.ACQUISITION
+    )
+    assert "Evidence-retrieval constraints for this round" in acquisition
+    precommitment = generic_system_prompt(
+        Seat.THEORY_BUILDER, TaskPhase.PRECOMMITMENT
+    )
+    assert "Evidence-retrieval constraints" not in precommitment
+
+
 class _CapturingDeliberator:
     """Records the system prompts it was asked with (integration-style check)."""
 

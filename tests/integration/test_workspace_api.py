@@ -29,6 +29,8 @@ WORKSPACE_FIELDS = {
     "independent_cluster_count",
     "workspace_version",
     "safety_notice",
+    "paper",
+    "consensus",
 }
 
 

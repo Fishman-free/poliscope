@@ -185,10 +185,23 @@
   flex-wrap: wrap;
 }
 
-.app__task-id {
+/* Gap detail next to the "{count} 处未完成" badge: names every absent seat
+   and failed/skipped phase in plain words. Long runs collapse to one line
+   with the full list in the tooltip -- the count is never a mystery. */
+.app__task-gaps {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.app__task-gaps-detail {
   font-size: var(--text-micro);
-  color: var(--ink-4);
-  user-select: all;
+  color: var(--ink-3);
+  max-width: 26rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Tab rail with a sliding indicator. The indicator is a positioned bar whose

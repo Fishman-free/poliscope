@@ -18,6 +18,7 @@ nothing but this file's good intentions.
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -63,6 +64,7 @@ from packages.papers.acquisition import KnowledgeDocumentRef, SourceAcquisition
 from packages.papers.bibtex import extract_dois_from_bibtex
 from packages.papers.finding_extraction import FindingExtractor
 from packages.papers.object_store import PrivateObjectStore
+from packages.reports.synthesis import synthesize_paper
 from packages.research.contracts import TaskModelConfig
 from packages.research.language import detect_output_language
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
@@ -73,6 +75,8 @@ from packages.skills.service import SkillsService
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher
 from packages.tools.gateway import AuditedToolGateway
+
+logger = logging.getLogger(__name__)
 
 
 class TaskNotRunnable(Exception):
@@ -556,6 +560,30 @@ async def _deliberate_impl(
     else:
         await repository.set_checkpoint(task_id, None)
     await repository.set_status(task_id, report.final_status)
+
+    # The synthesis step only runs once the council reached a terminal
+    # status: a task parked at the AWAITING_COUNCIL_INPUT checkpoint has not
+    # finished deliberating, and synthesising a paper over a half-run council
+    # would present an incomplete run as complete. It runs inside the same
+    # deliberation transaction (the ledger neither commits nor rolls back on
+    # its own), before the projector admits the round's node events, so the
+    # ledger's sequence reads: ... REPORTING phase events, then
+    # FINAL_PAPER_DRAFTED/FAILED, then the graph. The paper is process-only
+    # history (never a graph node); a failed synthesis is recorded as
+    # FINAL_PAPER_FAILED and never raises the run.
+    if report.final_status in (
+        TaskStatus.COMPLETED,
+        TaskStatus.COMPLETED_WITH_GAPS,
+    ):
+        outcome = await synthesize_paper(
+            session, task_id, gateway, output_language=output_language
+        )
+        if not outcome.available:
+            logger.warning(
+                "paper synthesis unavailable for task %s: %s",
+                task_id,
+                outcome.reason,
+            )
     return report
 
 

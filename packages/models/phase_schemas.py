@@ -267,6 +267,52 @@ STUDY_FINDING_EXTRACTION: Final[dict[str, Any]] = {
     ],
 }
 
+# The report synthesizer's output (packages/reports/synthesis.py). It is not
+# a seat's answer and no round consumes it -- the worker stores the parsed
+# result as FINAL_PAPER_DRAFTED, so the schema's only job is to keep the
+# model honest about the paper's shape. `references[*].id` must name a
+# source/finding id from the materials the synthesizer was given.
+FINAL_PAPER_OUTPUT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "abstract": {"type": "string"},
+        "sections": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "heading": {"type": "string"},
+                    "paragraphs": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["heading", "paragraphs"],
+            },
+        },
+        "references": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "doi": {"type": ["string", "null"]},
+                },
+                "required": ["id", "title"],
+            },
+        },
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "investigation_process": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "title",
+        "abstract",
+        "sections",
+        "references",
+        "limitations",
+        "investigation_process",
+    ],
+}
+
 # Keyed by the exact schema name strings in
 # packages.council.deliberation.PHASE_OUTPUT_SCHEMAS.
 PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
@@ -278,6 +324,10 @@ PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     "JointModelContribution": JOINT_MODEL_CONTRIBUTION,
     "FinalJudgment": FINAL_JUDGMENT,
     "StudyFindingExtraction": STUDY_FINDING_EXTRACTION,
+    # Not a council round: the report synthesizer's one-shot paper output
+    # (packages/reports/synthesis.py). Same repair/quarantine machinery as the
+    # rounds; a paper that cannot be repaired becomes FINAL_PAPER_FAILED.
+    "FinalPaper": FINAL_PAPER_OUTPUT,
 }
 
 __all__ = ["PHASE_OUTPUT_JSON_SCHEMAS"]

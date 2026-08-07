@@ -41,6 +41,7 @@ from packages.kernel.database import canonical_uuid
 from packages.papers.models import SourceModel
 from packages.reports.json_export import to_dict
 from packages.reports.service import ReportService
+from packages.reports.synthesis import FINAL_PAPER_DRAFTED
 from packages.research.repository import ResearchRepository, TaskNotFound
 
 router = APIRouter()
@@ -64,6 +65,32 @@ _EVOLUTION_EVENT_TYPES = (
     EvidenceNodeType.DISSENT_CERTIFICATE.value,
     CONFIDENCE_UPDATED,
 )
+
+
+async def _latest_event_payload(
+    session: AsyncSession,
+    task_id: UUID,
+    event_type: str,
+) -> FrozenDict[str, object] | None:
+    """The most recent ledger event of one type, as its payload, or None.
+
+    Used for the conditioned consensus (CONSENSUS_DRAFTED) and the final
+    paper (FINAL_PAPER_DRAFTED): both are single-document ledger entries the
+    panels want verbatim, not aggregated.
+    """
+    result = await session.execute(
+        select(ScientificEventModel)
+        .where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.event_type == event_type,
+        )
+        .order_by(ScientificEventModel.sequence.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return FrozenDict(dict(row.payload))
 
 
 async def _nodes_of_type(
@@ -334,4 +361,8 @@ async def get_workspace(
         independent_cluster_count=cluster_count,
         workspace_version=version,
         safety_notice=SafetyNotice(),
+        paper=await _latest_event_payload(session, task_id, FINAL_PAPER_DRAFTED),
+        consensus=await _latest_event_payload(
+            session, task_id, "CONSENSUS_DRAFTED"
+        ),
     )

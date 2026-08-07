@@ -209,6 +209,26 @@ class CLIClient:
             raise APIError(response.status_code, _extract_detail(response))
         return response.text
 
+    async def export_paper(self, task_id: str, export_format: str) -> str:
+        """Fetch the synthesised final paper in the requested format.
+
+        Same contract as :meth:`export` but against the paper endpoint. The
+        server always answers (a missing paper is a legal state, not a 404),
+        so a download yields an honest stub rather than an error.
+        """
+        try:
+            response = await self._client.get(
+                f"/api/reports/{task_id}/paper",
+                params={"format": export_format},
+            )
+        except httpx.RequestError as error:
+            raise APIUnreachable(
+                f"cannot reach the Poliscope API at {self.base_url}: {error}"
+            ) from error
+        if response.is_error:
+            raise APIError(response.status_code, _extract_detail(response))
+        return response.text
+
     async def watch(
         self,
         task_id: str,

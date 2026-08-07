@@ -290,6 +290,29 @@ export const BLINDSPOT_KIND_LABELS: Record<string, string> = {
   adversarial_retrieval: "对抗式检索",
 };
 
+/** One section of the synthesised final paper. */
+export interface PaperSection {
+  heading: string;
+  paragraphs: string[];
+}
+
+/** One reference the paper cites. `doi` may be absent (Level-B-only source). */
+export interface PaperReference {
+  id: string;
+  title: string;
+  doi: string | null;
+}
+
+/** The final paper written by the report synthesizer (FINAL_PAPER_DRAFTED). */
+export interface FinalPaper {
+  title: string;
+  abstract: string;
+  sections: PaperSection[];
+  references: PaperReference[];
+  limitations: string[];
+  investigation_process: string[];
+}
+
 export interface WorkspaceSnapshot {
   task: TaskSummary;
   brief: ResearchBrief;
@@ -303,6 +326,10 @@ export interface WorkspaceSnapshot {
   independent_cluster_count: number;
   workspace_version: number;
   safety_notice: SafetyNotice;
+  /** The synthesised final paper, or null before synthesis ran. */
+  paper: FinalPaper | null;
+  /** The conditioned consensus from joint modeling, or null. */
+  consensus: Record<string, unknown> | null;
 }
 
 /** One row of the audit trail, straight off the Scientific Event Ledger. */
@@ -323,6 +350,18 @@ export interface ProcessEvent {
   kind: string;
   payload: Record<string, unknown>;
 }
+
+/** Claim types the council may self-report (phase_schemas.py vocabulary).
+ * Shown on the map's Claim detail panel and used to label a fork's
+ * ``claim_type`` in human terms instead of the raw English enum value. */
+export const CLAIM_TYPE_LABELS: Record<string, string> = {
+  causal: "因果",
+  correlational: "相关",
+  measurement: "测量",
+  boundary: "边界",
+  mechanism: "机制",
+  null_result: "零结果",
+};
 
 export const SEATS = [
   "theory_builder",

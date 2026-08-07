@@ -320,12 +320,140 @@ function SummaryCard({ entry }: { entry: SeatSummary }) {
   );
 }
 
+/** 最终立场汇总：七位科学家的最终复判并排呈现。
+ *
+ * 不是投票。CLAUDE.md 4 禁止多数投票裁决科研真理，所以这里只有每个席位
+ * 自己的预承诺置信度、最终复判与置信度——没有任何聚合分数、没有「多数」、
+ * 没有「胜出」。读者看的是七个人的独立立场，而不是一次表决。 */
+function StanceSummary({ seats }: { seats: SeatSummary[] }) {
+  return (
+    <section className="council__stance">
+      <h4>{t("最终立场汇总")}</h4>
+      <p className="council__stance-note">
+        {t(
+          "本面板仅并列呈现七位科学家的独立立场；议会不进行多数投票裁决，也不产生任何聚合裁决分数。共识以条件化共识呈现（见下）。",
+        )}
+      </p>
+      <ul className="council__stance-grid">
+        {seats.map((entry) => {
+          const pre = entry.precommitment?.confidence;
+          const final = entry.final_judgment?.confidence;
+          return (
+            <li key={entry.seat} className="council__stance-card">
+              <header className="council__stance-head">
+                <span className="council__seat-name">{seatName(entry.seat)}</span>
+                {entry.final_judgment?.has_dissent ? (
+                  <Badge tone="refuted">{t("异议")}</Badge>
+                ) : entry.unavailable_phases.length > 0 ? (
+                  <Badge tone="unknown">{t("部分缺席")}</Badge>
+                ) : null}
+              </header>
+              <dl className="council__stance-meta">
+                <dt>{t("预承诺置信度")}</dt>
+                <dd className="mono">
+                  {pre !== null && pre !== undefined ? String(pre) : t("未记录")}
+                </dd>
+                <dt>{t("最终复判置信度")}</dt>
+                <dd className="mono">
+                  {final !== null && final !== undefined ? String(final) : t("未记录")}
+                </dd>
+              </dl>
+              {entry.final_judgment?.final_judgment ? (
+                <p
+                  className="council__stance-text"
+                  title={entry.final_judgment.final_judgment}
+                >
+                  {entry.final_judgment.final_judgment}
+                </p>
+              ) : (
+                <p className="council__stance-text council__stance-text--missing">
+                  {t("（本轮未产出最终复判）")}
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** 条件化共识：联合建模阶段的产出，作为与「投票」截然不同的共识形态
+ * 呈现（CLAUDE.md 4）。数据来自 workspace 快照的 consensus 字段。 */
+function ConsensusPanel({ consensus }: { consensus: Record<string, unknown> | null }) {
+  const text =
+    typeof consensus?.conditional_consensus === "string"
+      ? consensus.conditional_consensus
+      : null;
+  const boundaries = Array.isArray(consensus?.boundary_conditions)
+    ? (consensus.boundary_conditions as unknown[])
+    : [];
+  const conflicts = Array.isArray(consensus?.unresolved_conflicts)
+    ? (consensus.unresolved_conflicts as unknown[])
+    : [];
+  const falsifiable = Array.isArray(consensus?.falsification_conditions)
+    ? (consensus.falsification_conditions as unknown[])
+    : [];
+
+  if (!text) {
+    return (
+      <section className="council__consensus">
+        <h4>{t("条件化共识")}</h4>
+        <Empty>{t("联合建模未形成条件化共识。")}</Empty>
+      </section>
+    );
+  }
+  return (
+    <section className="council__consensus">
+      <h4>{t("条件化共识")}</h4>
+      <p className="council__consensus-text">{text}</p>
+      {boundaries.length > 0 ? (
+        <>
+          <h5>{t("边界条件")}</h5>
+          <ul className="council__consensus-list">
+            {boundaries.map((item, index) => (
+              <li key={index}>{String(item)}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {conflicts.length > 0 ? (
+        <>
+          <h5>{t("未解决冲突")}</h5>
+          <ul className="council__consensus-list">
+            {conflicts.map((item, index) => (
+              <li key={index}>
+                {String(item)}
+                <span className="council__consensus-hint">
+                  {t("（合并候选，由研究者裁决）")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {falsifiable.length > 0 ? (
+        <>
+          <h5>{t("可证伪条件")}</h5>
+          <ul className="council__consensus-list">
+            {falsifiable.map((item, index) => (
+              <li key={index}>{String(item)}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 export function CouncilView({
   seats,
   events,
+  consensus,
 }: {
   seats: SeatSummary[];
   events: LedgerEvent[];
+  consensus?: Record<string, unknown> | null;
 }) {
   const timeline = useMemo(() => timelineBySeat(events), [events]);
   const phases = useMemo(() => ranPhases(events), [events]);
@@ -335,6 +463,8 @@ export function CouncilView({
       title={t("七人议会")}
       subtitle={t("每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判，原始模型推理在对应轮次下展开（过程数据，非正式证据）。")}
     >
+      <StanceSummary seats={seats} />
+      <ConsensusPanel consensus={consensus ?? null} />
       {seats.length === 0 ? (
         <Empty>{t("尚未收到任何席位事件。任务可能仍在队列中。")}</Empty>
       ) : (
