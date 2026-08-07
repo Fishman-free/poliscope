@@ -478,8 +478,8 @@ export function fetchSkills(): Promise<SkillSummary[]> {
   return getJson<SkillSummary[]>("/api/skills");
 }
 
-export function addSkill(githubUrl: string): Promise<SkillSummary> {
-  return postJson<SkillSummary>("/api/skills", { github_url: githubUrl });
+export function addSkill(githubUrl: string): Promise<SkillSummary[]> {
+  return postJson<SkillSummary[]>("/api/skills", { github_url: githubUrl });
 }
 
 export function setSkillEnabled(

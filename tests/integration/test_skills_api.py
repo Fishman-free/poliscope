@@ -46,11 +46,11 @@ async def test_skill_crud_lifecycle(
     session = await _register(api_client, "skills-owner")
     headers = _bearer(session["token"])
 
-    async def fake_fetch(client: Any, url: str) -> tuple[str, str]:
-        return "testing-skill", SKILL_MARKDOWN
+    async def fake_fetch(client: Any, url: str) -> tuple[tuple[str, str], ...]:
+        return (("testing-skill", SKILL_MARKDOWN),)
 
     monkeypatch.setattr(
-        "packages.skills.service.fetch_skill_markdown", fake_fetch
+        "packages.skills.service.fetch_skills_from_repo", fake_fetch
     )
 
     added = await api_client.post(
@@ -60,9 +60,10 @@ async def test_skill_crud_lifecycle(
     )
     assert added.status_code == 201, added.text
     body = added.json()
-    assert body["name"] == "testing-skill"
-    assert body["enabled"] is True
-    skill_id = body["id"]
+    assert isinstance(body, list) and len(body) == 1
+    assert body[0]["name"] == "testing-skill"
+    assert body[0]["enabled"] is True
+    skill_id = body[0]["id"]
 
     listing = await api_client.get(SKILLS_PATH, headers=headers)
     assert listing.status_code == 200
@@ -96,11 +97,11 @@ async def test_duplicate_skill_url_is_409(
     session = await _register(api_client, "duplicate-skill-owner")
     headers = _bearer(session["token"])
 
-    async def fake_fetch(client: Any, url: str) -> tuple[str, str]:
-        return "dup-skill", SKILL_MARKDOWN
+    async def fake_fetch(client: Any, url: str) -> tuple[tuple[str, str], ...]:
+        return (("dup-skill", SKILL_MARKDOWN),)
 
     monkeypatch.setattr(
-        "packages.skills.service.fetch_skill_markdown", fake_fetch
+        "packages.skills.service.fetch_skills_from_repo", fake_fetch
     )
     url = "https://github.com/owner/dup-skill"
 
@@ -121,13 +122,13 @@ async def test_skill_fetch_failure_is_honest_422(
     session = await _register(api_client, "failed-skill-owner")
     headers = _bearer(session["token"])
 
-    async def fake_fetch(client: Any, url: str) -> tuple[str, str]:
+    async def fake_fetch(client: Any, url: str) -> tuple[tuple[str, str], ...]:
         from packages.skills.github import SkillFetchError
 
         raise SkillFetchError("no SKILL.md found in the repository")
 
     monkeypatch.setattr(
-        "packages.skills.service.fetch_skill_markdown", fake_fetch
+        "packages.skills.service.fetch_skills_from_repo", fake_fetch
     )
     response = await api_client.post(
         SKILLS_PATH,
@@ -159,18 +160,18 @@ async def test_task_creation_stores_skill_ids(
     session = await _register(api_client, "task-skill-owner")
     headers = _bearer(session["token"])
 
-    async def fake_fetch(client: Any, url: str) -> tuple[str, str]:
-        return "task-skill", SKILL_MARKDOWN
+    async def fake_fetch(client: Any, url: str) -> tuple[tuple[str, str], ...]:
+        return (("task-skill", SKILL_MARKDOWN),)
 
     monkeypatch.setattr(
-        "packages.skills.service.fetch_skill_markdown", fake_fetch
+        "packages.skills.service.fetch_skills_from_repo", fake_fetch
     )
     added = await api_client.post(
         SKILLS_PATH,
         json={"github_url": "https://github.com/owner/task-skill"},
         headers=headers,
     )
-    skill_id = added.json()["id"]
+    skill_id = added.json()[0]["id"]
 
     from tests.factories import make_research_contract
 

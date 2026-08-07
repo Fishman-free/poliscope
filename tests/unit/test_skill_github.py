@@ -302,3 +302,49 @@ async def test_fetch_still_fails_honestly_without_assistant() -> None:
             await fetch_skill_markdown(
                 client, "https://github.com/owner/skill-name"
             )
+
+
+async def test_fetch_collection_returns_all_skills() -> None:
+    """A skill *collection* (several SKILL.md files) installs every skill as
+    its own entry -- round-4 request: when the model cannot pick one, all are
+    downloaded instead of failing."""
+    names = ["academic-paper-reviewer", "academic-paper", "deep-research"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        # Only the conventional candidates miss; tree-found SKILL.md files
+        # must reach the download branch below.
+        if any(
+            path.endswith(fixed)
+            for fixed in (
+                "contents/SKILL.md",
+                "contents/skills/SKILL.md",
+                "contents/.claude/skills/SKILL.md",
+            )
+        ):
+            return _json_response({"message": "not found"}, status=404)
+        if "git/trees" in path:
+            return _json_response(
+                _tree_payload(
+                    [f"{name}/SKILL.md" for name in names] + ["README.md"]
+                )
+            )
+        if "contents/" in path:
+            for name in names:
+                if path.endswith(f"{name}/SKILL.md"):
+                    return _json_response(
+                        _file_payload(
+                            f"---\nname: {name}\n---\n# {name}\nInstructions."
+                        )
+                    )
+        return _json_response({"message": "not found"}, status=404)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        from packages.skills.github import fetch_skills_from_repo
+
+        skills = await fetch_skills_from_repo(
+            client, "https://github.com/owner/skill-collection"
+        )
+
+    assert [name for name, _markdown in skills] == names
+    assert all("Instructions." in markdown for _name, markdown in skills)

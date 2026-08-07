@@ -76,12 +76,15 @@ async def add_skill(
     request: SkillAddRequest,
     session: SessionDep,
     current_user: CurrentUserDep,
-) -> dict[str, Any]:
-    """Download a GitHub skill and remember it for the caller's account."""
+) -> list[dict[str, Any]]:
+    """Download a GitHub skill (or every skill of a collection repository)
+    and remember them for the caller's account. A collection installs all of
+    its SKILL.md files as separate skills (round-4 request); skills already
+    present are skipped and the response lists what is now available."""
     service = SkillsService(session)
     llm_assistant = await _llm_assistant_for(session, current_user.id)
     try:
-        skill = await service.add_from_url(
+        skills = await service.add_from_url(
             current_user.id, request.github_url, llm_assistant=llm_assistant
         )
     except (SkillFetchError, SkillLLMError) as error:
@@ -95,7 +98,7 @@ async def add_skill(
             detail="this skill is already added",
         ) from error
     await session.commit()
-    return _skill_dto(skill)
+    return [_skill_dto(skill) for skill in skills]
 
 
 @router.get("")

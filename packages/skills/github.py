@@ -19,7 +19,6 @@ the repository tree. Resolution order:
 
 from __future__ import annotations
 
-import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -304,27 +303,32 @@ SkillAssistant = Callable[
 ]
 
 
-async def fetch_skill_markdown(
+async def fetch_skills_from_repo(
     client: httpx.AsyncClient,
     url: str,
     llm_assistant: SkillAssistant | None = None,
-) -> tuple[str, str]:
-    """Download a skill, returning ``(name, markdown)``.
+) -> tuple[tuple[str, str], ...]:
+    """Download every skill a repository carries, ``((name, markdown), ...)``.
 
-    The name is the frontmatter ``name:`` when present, else the repository
-    name -- honest, and stable for the worker's per-account directory.
+    A repo with a single SKILL.md returns one entry; a skill *collection*
+    (several SKILL.md files, none at the root) returns **all** of them as
+    separate skills -- round-4 request: when the model cannot pick one, every
+    skill is installed rather than failing. The name is the frontmatter
+    ``name:`` when present, else the repository name -- honest, and stable
+    for the worker's per-account directory.
 
-    Resolution order: conventional paths -> any ``**/SKILL.md`` in the tree ->
-    (optionally) the LLM assistant's pick or synthesis. The assistant's
-    returned object is duck-typed to ``{selected_path, name, markdown}`` so
-    the packages/skills.llm_assist implementation and a test fake can both
-    satisfy it without a shared schema import.
+    Resolution order: conventional paths -> every ``**/SKILL.md`` in the tree
+    -> (only when the tree has no SKILL.md at all) the LLM assistant's pick
+    or synthesis. The assistant's returned object is duck-typed to
+    ``{selected_path, name, markdown}`` so the packages/skills.llm_assist
+    implementation and a test fake can both satisfy it without a shared
+    schema import.
     """
     location = parse_skill_url(url)
 
     for candidate in _candidate_paths(location):
         try:
-            return await _fetch_file_markdown(client, location, candidate)
+            return (await _fetch_file_markdown(client, location, candidate),)
         except SkillFetchError as error:
             if "not found" not in error.reason:
                 raise
@@ -333,47 +337,19 @@ async def fetch_skill_markdown(
     # Conventional paths all missed; scan the whole tree for SKILL.md files.
     skill_paths = await _tree_skill_paths(client, location)
     if skill_paths:
-        if len(skill_paths) == 1 or "/" not in skill_paths[0]:
-            # A single skill, or a root-level one outranking nested copies:
-            # install it directly.
-            for path in skill_paths:
-                try:
-                    return await _fetch_file_markdown(client, location, path)
-                except SkillFetchError as error:
-                    if "not found" not in error.reason:
-                        raise
-        elif llm_assistant is not None:
-            # A skill *collection* (several SKILL.md files, none at the
-            # root): let the model pick which one the researcher wants. The
-            # candidates carry each skill's own first ~2 KB (frontmatter +
-            # description), which is exactly what a choice needs.
-            snippets = await asyncio.gather(
-                *(_peek_markdown(client, location, path) for path in skill_paths)
-            )
-            files = [
-                {"path": path, "snippet": snippet}
-                for path, snippet in zip(skill_paths, snippets, strict=True)
-                if snippet
-            ]
-            choice = await llm_assistant(client, location, files)
-            selected = getattr(choice, "selected_path", None)
-            if isinstance(selected, str) and selected:
-                try:
-                    return await _fetch_file_markdown(client, location, selected)
-                except SkillFetchError as error:
-                    if "not found" not in error.reason:
-                        raise
-            raise SkillFetchError(
-                "the repository contains several skills "
-                f"({', '.join(skill_paths)}); the model did not pick one"
-            )
-        else:
-            raise SkillFetchError(
-                "the repository contains several skills "
-                f"({', '.join(skill_paths)}); enable the smart install path "
-                "(configure a model in settings) or paste a URL pointing at "
-                "one of them"
-            )
+        # Every SKILL.md in the tree becomes its own skill, shallowest first.
+        # The rare root-level SKILL.md alongside nested copies still comes
+        # first (the tree scan sorts by depth), so a single-skill install
+        # keeps working through the compatibility wrapper below.
+        fetched: list[tuple[str, str]] = []
+        for path in skill_paths:
+            try:
+                fetched.append(await _fetch_file_markdown(client, location, path))
+            except SkillFetchError as error:
+                if "not found" not in error.reason:
+                    raise
+        if fetched:
+            return tuple(fetched)
 
     # No SKILL.md anywhere. An LLM assistant (when configured) may still
     # install the repo: pick the markdown file that actually carries the
@@ -385,7 +361,9 @@ async def fetch_skill_markdown(
             selected = getattr(choice, "selected_path", None)
             if isinstance(selected, str) and selected:
                 try:
-                    return await _fetch_file_markdown(client, location, selected)
+                    return (
+                        await _fetch_file_markdown(client, location, selected),
+                    )
                 except SkillFetchError as error:
                     if "not found" not in error.reason:
                         raise
@@ -394,13 +372,29 @@ async def fetch_skill_markdown(
                 name = str(getattr(choice, "name", "") or location.repo)
                 if len(generated.encode("utf-8")) > MAX_SKILL_BYTES:
                     raise SkillFetchError("skill exceeds the 2 MB limit")
-                return name, generated
+                return (name, generated),
 
     raise SkillFetchError(
         "no SKILL.md found in the repository (looked at root, skills/, "
         ".claude/skills/, the whole file tree, and no LLM assistant could "
         "pick one)"
     )
+
+
+async def fetch_skill_markdown(
+    client: httpx.AsyncClient,
+    url: str,
+    llm_assistant: SkillAssistant | None = None,
+) -> tuple[str, str]:
+    """Download the *primary* skill of a repository, ``(name, markdown)``.
+
+    Compatibility wrapper over :func:`fetch_skills_from_repo` returning the
+    first entry (conventional-path install, the shallowest SKILL.md, or the
+    LLM assistant's pick). Used by re-download paths where the skill is
+    already known to be single.
+    """
+    fetched = await fetch_skills_from_repo(client, url, llm_assistant)
+    return fetched[0]
 
 
 def _decode_content(payload: object) -> str:

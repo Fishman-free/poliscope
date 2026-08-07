@@ -22,10 +22,14 @@ from packages.kernel.database import Base
 class SkillModel(Base):
     __tablename__ = "skills"
 
-    # One skill per account per GitHub URL -- adding the same repository
-    # twice would just duplicate the download.
+    # One skill per account per (URL, name) -- a *collection* repository
+    # carries several SKILL.md files, each installed as its own row under the
+    # same URL (migration 0018); adding the same repository+name twice would
+    # just duplicate the download.
     __table_args__ = (
-        UniqueConstraint("user_id", "github_url", name="uq_skills_user_url"),
+        UniqueConstraint(
+            "user_id", "github_url", "name", name="uq_skills_user_name"
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
