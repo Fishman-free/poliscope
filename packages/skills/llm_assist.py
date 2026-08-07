@@ -22,6 +22,7 @@ directly for connection probing, and this keeps the same bounded shape.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -96,11 +97,15 @@ async def chat_once(
     messages: list[dict[str, str]],
     client: httpx.AsyncClient | None = None,
     max_tokens: int = LLM_MAX_TOKENS,
-) -> str:
-    """One small non-streaming chat/completions call, returning the answer text.
+) -> tuple[str, str]:
+    """One small non-streaming chat/completions call.
 
-    Errors are classified and raised as :class:`SkillLLMError`; the API key is
-    never part of any message.
+    Returns ``(content, reasoning_content)``. Thinking-mode models (DeepSeek
+    V4-family) often spend their output budget on ``reasoning_content`` and
+    leave ``content`` empty or truncated -- the caller falls back to the
+    reasoning text when it carries the answer. Errors are classified and
+    raised as :class:`SkillLLMError`; the API key is never part of any
+    message.
     """
     owns_client = client is None
     if client is None:
@@ -118,14 +123,12 @@ async def chat_once(
         )
         response.raise_for_status()
         payload = response.json()
-        content = (
-            (payload.get("choices") or [{}])[0]
-            .get("message", {})
-            .get("content")
-        )
+        message = (payload.get("choices") or [{}])[0].get("message", {})
+        content = message.get("content")
+        reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
         if not isinstance(content, str) or not content.strip():
             raise SkillLLMError("模型没有返回可用的回答")
-        return content
+        return content, str(reasoning)
     except SkillLLMError:
         raise
     except Exception as error:
@@ -135,16 +138,57 @@ async def chat_once(
             await client.aclose()
 
 
-def _parse_choice(raw: str, repo: str) -> SkillChoice:
-    """Parse the model's JSON answer, tolerating stray prose around it."""
-    start = raw.find("{")
-    end = raw.rfind("}")
+def _extract_json_object(raw: str) -> dict[str, object] | None:
+    """Pull a JSON object out of model prose, tolerating markdown fences.
+
+    ``None`` when the text carries no brace-delimited JSON object at all.
+    """
+    text = raw.strip()
+    # Strip ```json ... ``` fences before hunting for braces.
+    if text.startswith("```"):
+        text = text.split("```", 2)[1] if text.count("```") >= 2 else text
+    start = text.find("{")
+    end = text.rfind("}")
     if start == -1 or end <= start:
-        raise SkillLLMError("模型没有返回 JSON 格式的选择结果")
-    try:
-        data = json.loads(raw[start : end + 1])
-    except ValueError as error:
-        raise SkillLLMError("模型返回的 JSON 无法解析") from error
+        return None
+    candidates = [text[start : end + 1]]
+    # Trailing commas are the model's most common JSON blemish: strip the
+    # comma just before the closing brace and try again.
+    cleaned = re.sub(r",\s*}", "}", candidates[0])
+    if cleaned != candidates[0]:
+        candidates.append(cleaned)
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    # A length-truncated tail: try the largest prefix that parses, so the
+    # answer's first field still lands.
+    for cut in range(end, start, -1):
+        try:
+            data = json.loads(text[start : cut + 1])
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _parse_choice(raw: str, repo: str) -> SkillChoice:
+    """Parse the model's JSON answer, tolerating prose, fences, and truncation.
+
+    Raises :class:`SkillLLMError` with a bounded excerpt of the model's own
+    output so the researcher can see what actually came back -- never the API
+    key (CLAUDE.md 16).
+    """
+    data = _extract_json_object(raw)
+    if data is None:
+        excerpt = raw.strip().replace("\n", " ")[:200]
+        raise SkillLLMError(
+            f"模型没有返回 JSON 格式的选择结果（模型输出：{excerpt or '（空）'}）"
+        )
     selected = data.get("selected_path")
     if isinstance(selected, str) and selected:
         return SkillChoice(
@@ -207,14 +251,32 @@ async def analyze_repo_for_skill(
             "请先在模型设置中配置模型"
         )
     repo = f"{location.owner}/{location.repo}"
-    raw = await chat_once(
-        base_url=base_url,
-        api_key=api_key,
-        model_name=model_name,
-        messages=_build_messages(repo, files),
-        client=client,
-    )
-    return _parse_choice(raw, repo)
+    # The model is a thinking-mode flash model: it may put the JSON in
+    # ``reasoning_content`` and leave ``content`` empty, or answer truncated.
+    # Retry once with a fresh call before giving up -- a single flaky answer
+    # must not fail the whole install (round-4 incident: intermittent
+    # "模型没有返回 JSON 格式的选择结果").
+    last_error: SkillLLMError | None = None
+    for attempt in range(2):
+        content, reasoning = await chat_once(
+            base_url=base_url,
+            api_key=api_key,
+            model_name=model_name,
+            messages=_build_messages(repo, files),
+            client=client,
+        )
+        candidates = [content]
+        if "{" not in content:
+            candidates.append(reasoning)
+        for raw in candidates:
+            try:
+                return _parse_choice(raw, repo)
+            except SkillLLMError as error:
+                last_error = error
+        if attempt == 0:
+            continue
+    assert last_error is not None
+    raise last_error
 
 
 __all__ = ["SkillChoice", "SkillLLMError", "analyze_repo_for_skill", "chat_once"]
