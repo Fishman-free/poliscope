@@ -204,6 +204,102 @@ function seatStreams(
 const SEAT_STUCK_WARN_SECONDS = 60;
 const SEAT_STUCK_CRITICAL_SECONDS = 300;
 
+/** 检索等待的时间阈值。WARN 对齐后端每查询上限 45s（acquisition.py 的
+ * ACQUISITION_PER_QUERY_SECONDS）；CRITICAL 对齐整轮上限 600s。超过即
+ * 警示「将超时」，让等待有界可见，而不是看起来永久卡住。 */
+const TOOL_STUCK_WARN_SECONDS = 45;
+const TOOL_STUCK_CRITICAL_SECONDS = 300;
+
+/** 未命中原因里的 URL（OpenAlex 的 404 地址、Mozilla 文档页等），提取
+ * 出来作为可点击链接 —— 原始原因整段塞进卡片会撑破方框，且那一串
+ * repr 对读者没有意义。 */
+const REASON_URL_RE = /https?:\/\/[^\s"')]+/g;
+
+/** 未命中原因里可能带上的 DOI（模型常把 "doi:10.xxxx 请核对其中是否…"
+ * 粘在一起；lookup 失败时 reason 里残留这段），提取出来生成一个真正
+ * 有用的跳转 —— doi.org 解析页 —— 而不是只给一个 404 地址。 */
+const REASON_DOI_RE = /10\.\d{4,9}\/[0-9A-Za-z._;()/:+-]+/g;
+
+/** 方框内一行内放得下的原因文本长度。完整原因保留在 title 里。 */
+const REASON_MAX_CHARS = 80;
+
+/** 把一次未命中的原始原因压缩成可读的一行：剥离 URL，正文截断到
+ * REASON_MAX_CHARS，URL 与 DOI 单独返回供渲染成链接。CLAUDE.md 11 只让
+ * 界面展示结构化内容 —— 一屏报错栈不算。 */
+function compactReason(reason: string): {
+  text: string;
+  urls: string[];
+  dois: string[];
+} {
+  const urls = Array.from(new Set(reason.match(REASON_URL_RE) ?? []));
+  const dois = Array.from(new Set(reason.match(REASON_DOI_RE) ?? []));
+  const stripped = reason.replace(REASON_URL_RE, " ").replace(/\s+/g, " ").trim();
+  const text =
+    stripped.length > REASON_MAX_CHARS
+      ? `${stripped.slice(0, REASON_MAX_CHARS)}…`
+      : stripped;
+  return { text, urls, dois };
+}
+
+/** 未命中原因行：一行压缩文本 + 可点击的 doi.org / 原始 URL 链接。
+ * 完整原因在 title 中，悬停可审计 —— 卡片永不被长文本撑破。 */
+function MissReason({ reason }: { reason?: string }) {
+  if (!reason) return null;
+  const { text, urls, dois } = compactReason(reason);
+  return (
+    <span className="live__tool-miss" title={reason}>
+      {text ? <span className="live__tool-miss-text">（{text}）</span> : null}
+      {dois.map((doi) => (
+        <a
+          key={`doi:${doi}`}
+          className="live__tool-link"
+          href={`https://doi.org/${doi}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t("查看该文献 ↗")}
+        </a>
+      ))}
+      {urls.map((url) => (
+        <a
+          key={url}
+          className="live__tool-link"
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {t("错误详情 ↗")}
+        </a>
+      ))}
+    </span>
+  );
+}
+
+/** 检索卡片「等待结果…」：显示已等待秒数（由每秒 tick 驱动），并在越过
+ * 服务端每查询超时阈值后警示。服务端有 45s/600s 硬上限与 watchdog，这里
+ * 只是把「卡住」变成可读的倒计时。 */
+function ToolPending({ group }: { group: { startedAt: number } }) {
+  const elapsed = Math.max(0, Math.floor((performance.now() - group.startedAt) / 1000));
+  const critical = elapsed >= TOOL_STUCK_CRITICAL_SECONDS;
+  const warn = elapsed >= TOOL_STUCK_WARN_SECONDS;
+  return (
+    <p
+      className={
+        "live__tool-empty" +
+        (critical
+          ? " live__tool-empty--critical"
+          : warn
+            ? " live__tool-empty--warn"
+            : "")
+      }
+    >
+      {critical
+        ? t("检索长时间未返回（已等待 {0}s），系统将自动中断", elapsed)
+        : t("等待结果… 已等待 {0}s", elapsed)}
+    </p>
+  );
+}
+
 export function LiveView({
   events,
   processEvents,
@@ -223,18 +319,13 @@ export function LiveView({
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
   const streams = useMemo(() => seatStreams(processEvents), [processEvents]);
-  // 每秒重渲染一次，让「思考中… 已等待 Ns」的秒数走动。只在还有席位
-  // running 时启动定时器，空闲时不空转。
+  // 每秒重渲染一次，让「思考中… 已等待 Ns」与检索卡片的秒数走动。只在
+  // 还有席位 running 或有检索 pending 时启动定时器，空闲时不空转。
   const [, setTick] = useState(0);
   const anyRunning = useMemo(
     () => Object.values(streams).some((entry) => entry.running),
     [streams],
   );
-  useEffect(() => {
-    if (!anyRunning) return;
-    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [anyRunning]);
   const actions = useMemo(
     () =>
       events
@@ -250,14 +341,26 @@ export function LiveView({
   // 属于同一个动作——把结果拆散成独立条目会让「这次检索找到了什么」
   // 无法从布局上直接读出。citation_count 是权威度信号（检索按被引量
   // 排序），缺失时显示为 undefined，卡片不渲染徽标。
+  // 卡死感知：pending 组（只有 tool_call 没有 tool_result）显示已等待秒数
+  // ——检索有 45s 每查询 / 600s 整轮的服务端硬上限，前端把「等待」变成
+  // 可见的倒计时，而不是一片死寂的「等待结果…」；miss 结果带 reason 时
+  // 说明这次检索为什么没命中（超时/预算/撤回），而不是让读者自己猜。
+  interface ToolGroup {
+    kind: string;
+    query: string;
+    seats: string[];
+    startedAt: number;
+    results: {
+      url: string | null;
+      title: string;
+      miss: boolean;
+      reason?: string;
+      citationCount?: number;
+    }[];
+  }
   const toolGroups = useMemo(() => {
-    const groups: {
-      kind: string;
-      query: string;
-      seats: string[];
-      results: { url: string | null; title: string; miss: boolean; citationCount?: number }[];
-    }[] = [];
-    let current: (typeof groups)[number] | null = null;
+    const groups: ToolGroup[] = [];
+    let current: ToolGroup | null = null;
     for (const event of processEvents) {
       const payload = event.payload as Record<string, unknown>;
       if (event.kind === "tool_call") {
@@ -267,6 +370,9 @@ export function LiveView({
           seats: Array.isArray(payload.seats)
             ? payload.seats.map(String)
             : [],
+          // performance.now() is monotonic (unaffected by clock jumps), so a
+          // resumed session's elapsed can't go negative or jump.
+          startedAt: performance.now(),
           results: [],
         };
         groups.push(current);
@@ -279,12 +385,25 @@ export function LiveView({
           url: typeof payload.url === "string" ? payload.url : null,
           title: String(payload.title ?? payload.doi ?? ""),
           miss: payload.miss === true,
+          reason: typeof payload.reason === "string" ? payload.reason : undefined,
           citationCount,
         });
       }
     }
     return groups;
-  }, [processEvents]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processEvents, t]);
+
+  // 检索 pending 时也驱动每秒 tick（与席位 running 并列的第二种等待）。
+  const anyToolPending = useMemo(
+    () => toolGroups.some((group) => group.results.length === 0),
+    [toolGroups],
+  );
+  useEffect(() => {
+    if (!anyRunning && !anyToolPending) return;
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [anyRunning, anyToolPending]);
 
   const scrollRef = useRef<Record<string, HTMLDivElement | null>>({});
   useEffect(() => {
@@ -433,10 +552,11 @@ export function LiveView({
                           ) : null}
                         </div>
                         {group.results.length === 0 ? (
-                          <p className="live__tool-empty">{t("等待结果…")}</p>
+                          <ToolPending group={group} />
                         ) : group.results.every((result) => result.miss) ? (
                           <p className="live__tool-empty live__tool-empty--miss">
                             {t("未命中")}
+                            <MissReason reason={group.results[0]?.reason} />
                           </p>
                         ) : (
                           <ul className="live__tool-results">
@@ -482,9 +602,10 @@ export function LiveView({
                   </div>
                 )}
               </section>
-            </div>
 
-            <div className="live__side">
+              {/* 议会动作：不再挤在 340px 右栏 —— 放在检索与文献下方全宽
+                  展开，预承诺/质询/复判的完整正文才有编排空间（用户要求：
+                  议会动作放到检索文献板块下面，其他板块相应增宽）。 */}
               <section className="live__actions" aria-label={t("议会动作")}>
                 <h3>{t("议会动作")}</h3>
                 {actions.length === 0 ? (

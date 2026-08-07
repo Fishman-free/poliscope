@@ -140,12 +140,14 @@ invocation, which is fine for occasional calls but wasteful in a tight loop.
    ```
 
    This creates `docs/poliscope/{task-slug}/` with `README.md` (index),
-   `brief.md` (server-rendered research brief), `evidence.md` (evidence map:
-   nodes and edges with paper/cluster counts), `council.md` (precommitments,
-   challenges, final judgments, evolution timeline), and `scientists/` (one
-   file per seat). Every fact comes from the API snapshot -- nothing is
-   re-serialised or invented by the CLI. Point the user at the directory in
-   your final summary.
+   `paper.md` (the synthesised final paper: abstract, sections, references,
+   limitations, investigation process -- server-rendered), `brief.md`
+   (server-rendered research brief), `evidence.md` (evidence map: nodes and
+   edges with paper/cluster counts), `council.md` (precommitments, challenges,
+   final judgments, conditioned consensus, evolution timeline with Chinese
+   labels), and `scientists/` (one file per seat). Every fact comes from the
+   API snapshot -- nothing is re-serialised or invented by the CLI. Point the
+   user at the directory in your final summary.
 
 ## Hard constraints (design spec 8.7, non-negotiable)
 

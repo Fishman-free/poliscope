@@ -125,6 +125,35 @@ PHASE_MODEL_CLASSES: dict[TaskPhase, ModelClass] = {
 }
 
 
+# Per-phase standing instructions, injected into the system prompt ahead of
+# "Current round: ...". Only phases whose rounds need a hard behavioural bound
+# get an entry (YAGNI); the rest stay empty.
+#
+# ACQUISITION is the one phase where a seat generates free-form retrieval
+# strings, and drift is real: a seat asked for evidence on adolescent
+# self-harm once produced requests about power-project bid evaluation and
+# nuclear-plant instrument reliability. The round retrieves whatever the
+# seat asks for, so relevance has to be enforced where the requests are born.
+PHASE_INSTRUCTIONS: dict[TaskPhase, str] = {
+    TaskPhase.ACQUISITION: (
+        "Evidence-retrieval constraints for this round:\n"
+        "1. Every request must bear directly on the research question or a "
+        "confirmed atomic claim; you must be able to state in one sentence how "
+        "the requested work would bear on the claim.\n"
+        "2. Fewer, stronger requests beat many weak ones: 1-3 requests per "
+        "claim, never a scatter of tangentially related topics.\n"
+        "3. Never drift outside the question's domain. A request from an "
+        "unrelated field is invalid even if it shares a keyword.\n"
+        "4. Each request must be a usable academic search string: a DOI "
+        "(doi:...), an exact title, or a specific search phrase -- not an "
+        "essay, not a research agenda, and no justification sentence attached "
+        "to a DOI.\n"
+        "5. An empty requests list is correct when you need no further "
+        "evidence; never invent requests to fill the schema.\n"
+    ),
+}
+
+
 # The language directive injected into every seat's system prompt (round-4
 # language following): a Chinese question must be answered in Chinese, an
 # English one in English. Deliberately part of the *system* prompt so it
@@ -152,6 +181,7 @@ OUTPUT_LANGUAGE_DIRECTIVES: dict[str, str] = {
 def _system_prompt(seat: Seat, phase: TaskPhase, output_language: str = "en") -> str:
     spec = ROLE_SPECS[seat]
     directive = OUTPUT_LANGUAGE_DIRECTIVES.get(output_language, OUTPUT_LANGUAGE_DIRECTIVES["en"])  # noqa: E501
+    phase_instruction = PHASE_INSTRUCTIONS.get(phase, "")
     return (
         f"You are the {spec.display_name} on a seven seat research council. "
         f"Your expertise: {', '.join(spec.expertise)}.\n"
@@ -160,6 +190,7 @@ def _system_prompt(seat: Seat, phase: TaskPhase, output_language: str = "en") ->
         "evidence does not support an answer; an admitted gap is a correct "
         "answer and a confident guess is not.\n"
         f"{directive}\n"
+        f"{phase_instruction}"
         f"Current round: {phase.value}. Reply only with the requested schema."
     )
 
@@ -241,6 +272,7 @@ def generic_system_prompt(
     directive = OUTPUT_LANGUAGE_DIRECTIVES.get(
         output_language, OUTPUT_LANGUAGE_DIRECTIVES["en"]
     )
+    phase_instruction = PHASE_INSTRUCTIONS.get(phase, "")
     return (
         "You are a research assistant debating a contested empirical question "
         "alongside several other copies of yourself. No individual area of "
@@ -249,6 +281,7 @@ def generic_system_prompt(
         "evidence does not support an answer; an admitted gap is a correct "
         "answer and a confident guess is not.\n"
         f"{directive}\n"
+        f"{phase_instruction}"
         f"Current round: {phase.value}. Reply only with the requested schema."
     )
 
@@ -521,6 +554,7 @@ def deliberator_for(
 
 
 __all__ = [
+    "PHASE_INSTRUCTIONS",
     "PHASE_MODEL_CLASSES",
     "PHASE_OUTPUT_SCHEMAS",
     "SEAT_INSTRUCTIONS",

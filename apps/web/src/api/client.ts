@@ -279,6 +279,17 @@ export async function fetchReportMarkdown(taskId: string): Promise<string> {
   return response.text();
 }
 
+export async function fetchPaperMarkdown(taskId: string): Promise<string> {
+  const response = await fetch(
+    `${BASE}/api/reports/${taskId}/paper?format=markdown`,
+    { headers: authHeaders() },
+  );
+  if (!response.ok) {
+    throw new ApiError(response.status, response.statusText);
+  }
+  return response.text();
+}
+
 /** Submit (or decline) the researcher's advisory steer at the
  * AWAITING_COUNCIL_INPUT checkpoint.
  *
@@ -295,7 +306,7 @@ export async function submitCouncilGuidance(
   try {
     response = await fetch(`${BASE}/api/tasks/${taskId}/council-guidance`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...authHeaders() },
       body: JSON.stringify({ guidance_text: guidanceText }),
     });
   } catch (cause) {

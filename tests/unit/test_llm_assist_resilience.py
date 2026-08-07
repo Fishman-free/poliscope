@@ -9,12 +9,15 @@ one retry before the honest error.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import cast
 from uuid import uuid4
 
+import httpx as httpx_module
 import pytest
+from httpx import AsyncClient
 
 from packages.kernel.contracts import FrozenDict
-from packages.models.contracts import ModelRequest, ModelResult, SchemaStatus
+from packages.models.contracts import ModelResult, SchemaStatus
 from packages.skills.llm_assist import (
     SkillChoice,
     SkillLLMError,
@@ -42,7 +45,7 @@ def _choice(**overrides: object) -> SkillChoice:
         selected_path=None,
         name="x",
         markdown="",
-        **overrides,
+        **overrides,  # type: ignore[arg-type]
     )
 
 
@@ -93,7 +96,8 @@ def test_extract_json_object_returns_none_without_braces() -> None:
 
 def test_parse_choice_accepts_prose_around_json() -> None:
     choice = _parse_choice(
-        'Here is my pick: {"selected_path": "deep-research/SKILL.md", "name": "deep-research", "markdown": ""}',
+        'Here is my pick: {"selected_path": "deep-research/SKILL.md", '
+        '"name": "deep-research", "markdown": ""}',
         REPO,
     )
     assert choice.selected_path == "deep-research/SKILL.md"
@@ -113,13 +117,17 @@ async def test_analyze_falls_back_to_reasoning_content(
         [
             (
                 "",
-                'The JSON answer is {"selected_path": "a/SKILL.md", "name": "a", "markdown": ""}',
+                'The JSON answer is {"selected_path": "a/SKILL.md", '
+                '"name": "a", "markdown": ""}',
             )
         ]
     )
     monkeypatch.setattr("packages.skills.llm_assist.chat_once", stub)
     choice = await analyze_repo_for_skill(
-        object(), _FakeLocation(), [{"path": "README.md", "snippet": "x"}], MC
+        cast(AsyncClient, object()),
+        _FakeLocation(),
+        [{"path": "README.md", "snippet": "x"}],
+        MC,
     )
     assert choice.selected_path == "a/SKILL.md"
     assert stub.calls == 1
@@ -177,7 +185,13 @@ async def test_chat_once_rejects_both_empty() -> None:
             200,
             json={
                 "choices": [
-                    {"message": {"role": "assistant", "content": "", "reasoning_content": ""}}
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "reasoning_content": "",
+                        }
+                    }
                 ]
             },
         )
@@ -207,7 +221,10 @@ async def test_analyze_retries_once_then_succeeds(
     )
     monkeypatch.setattr("packages.skills.llm_assist.chat_once", stub)
     choice = await analyze_repo_for_skill(
-        object(), _FakeLocation(), [{"path": "README.md", "snippet": "x"}], MC
+        cast(AsyncClient, object()),
+        _FakeLocation(),
+        [{"path": "README.md", "snippet": "x"}],
+        MC,
     )
     assert choice.selected_path == "b/SKILL.md"
     assert stub.calls == 2
@@ -221,11 +238,16 @@ async def test_analyze_fails_honestly_after_retry(
     monkeypatch.setattr("packages.skills.llm_assist.chat_once", stub)
     with pytest.raises(SkillLLMError, match="模型没有返回 JSON"):
         await analyze_repo_for_skill(
-            object(), _FakeLocation(), [{"path": "README.md", "snippet": "x"}], MC
+            cast(AsyncClient, object()),
+            _FakeLocation(),
+            [{"path": "README.md", "snippet": "x"}],
+            MC,
         )
     assert stub.calls == 2
 
 
 async def test_analyze_requires_model_config() -> None:
     with pytest.raises(SkillLLMError, match="未配置模型"):
-        await analyze_repo_for_skill(object(), _FakeLocation(), [], None)
+        await analyze_repo_for_skill(
+            cast(AsyncClient, object()), _FakeLocation(), [], None
+        )

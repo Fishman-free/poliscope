@@ -31,8 +31,9 @@ import "./MapView.css";
 
 import type { EvidenceGraph, GraphNode } from "../api/types";
 import { EDGE_TYPE_LABELS, NODE_TYPE_LABELS } from "../api/types";
-import { Badge, Empty, STATUS_LABELS, toneForStatus } from "../components/primitives";
+import { Badge, Empty, toneForStatus } from "../components/primitives";
 import { t } from "../i18n";
+import { MapNodeDetail } from "./MapNodeDetail";
 
 /** Relations that mean "this weakens that". Dashed and red so the meaning
  * survives both greyscale printing and colour-blindness. */
@@ -179,22 +180,13 @@ export function MapView({ graph }: { graph: EvidenceGraph }) {
         <div className="map__inspector">
           <h3>{t("节点详情")}</h3>
           {selected === null ? (
-            <Empty>{t("点击任一节点查看其类型、状态与原始载荷。")}</Empty>
+            <Empty>{t("点击任一节点查看其类型、状态与可读详情；文献节点可跳转原文。")}</Empty>
           ) : (
-            <>
-              <p className="map__inspector-type">
-                {NODE_TYPE_LABELS[selected.node_type] ?? selected.node_type}
-                <Badge tone={toneForStatus(selected.status)}>
-                  {STATUS_LABELS[selected.status] ?? selected.status}
-                </Badge>
-              </p>
-              <p className="map__inspector-id mono">{selected.id}</p>
-              {/* Raw payload, unformatted on purpose: CLAUDE.md 2 separates the
-                  original record from any AI rendering of it. */}
-              <pre className="map__payload">
-                {JSON.stringify(selected.payload, null, 2)}
-              </pre>
-            </>
+            <MapNodeDetail
+              node={selected}
+              graph={graph}
+              onSelect={setSelected}
+            />
           )}
         </div>
       </aside>

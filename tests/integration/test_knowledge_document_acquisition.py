@@ -411,6 +411,7 @@ async def test_knowledge_search_hits_reach_later_phase_prompts(
         request.messages[1].content
         for request in gateway.calls
         if request.output_schema != "StudyFindingExtraction"
+        and request.output_schema != "FinalPaper"
         and TaskPhase(request.purpose) is TaskPhase.FINAL_REJUDGMENT
     ]
     assert later_prompts
@@ -423,6 +424,7 @@ async def test_knowledge_search_hits_reach_later_phase_prompts(
         request.messages[1].content
         for request in gateway.calls
         if request.output_schema != "StudyFindingExtraction"
+        and request.output_schema != "FinalPaper"
         and TaskPhase(request.purpose) is TaskPhase.PRECOMMITMENT
     ]
     assert all("研究者知识库检索命中" not in prompt for prompt in precommitment_prompts)
@@ -449,6 +451,7 @@ async def test_knowledge_search_miss_records_nothing(
         request.messages[1].content
         for request in gateway.calls
         if request.output_schema != "StudyFindingExtraction"
+        and request.output_schema != "FinalPaper"
         and TaskPhase(request.purpose) is TaskPhase.FINAL_REJUDGMENT
     ]
     assert all("研究者知识库检索命中" not in prompt for prompt in later_prompts)

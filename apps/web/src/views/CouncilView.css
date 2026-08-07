@@ -196,3 +196,114 @@
   line-height: 1.55;
   color: var(--ink-2);
 }
+
+/* 最终立场汇总：七位科学家独立复判并排，非投票裁决（CLAUDE.md 4）。 */
+.council__stance {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+}
+
+.council__stance-note {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  line-height: 1.5;
+  margin: var(--space-1) 0 var(--space-3);
+}
+
+.council__stance-grid {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.council__stance-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+}
+
+.council__stance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.council__stance-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-2);
+  margin: 0;
+  font-size: var(--text-micro);
+}
+
+.council__stance-meta dt {
+  color: var(--ink-3);
+}
+
+.council__stance-meta dd {
+  margin: 0;
+  text-align: right;
+}
+
+.council__stance-text {
+  font-size: var(--text-small);
+  line-height: 1.5;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.council__stance-text--missing {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+/* 条件化共识：联合建模阶段的产出（CLAUDE.md 4 的共识形态）。 */
+.council__consensus {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3);
+}
+
+.council__consensus-text {
+  line-height: 1.65;
+  margin: var(--space-2) 0;
+}
+
+.council__consensus h5 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-micro);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.council__consensus-list {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.council__consensus-list li {
+  margin-bottom: var(--space-1);
+}
+
+.council__consensus-hint {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  margin-left: var(--space-2);
+}

@@ -651,3 +651,56 @@ async def test_uploaded_pdf_produces_a_source_and_a_study_finding(
     )
     assert len(finding_events) == 1
     assert finding_events[0].payload["exact_quote"] == UPLOAD_QUOTE
+
+
+async def test_a_refused_doi_closes_its_process_card_with_a_reason(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """The live view's tool card must not sit on "等待结果…" forever.
+
+    Round-5 regression: a DOI whose lookup was refused (retracted here) used
+    to emit a SOURCE_REFUSED ledger event but no ``tool_result`` process
+    event, so the front-end card that paired the ``tool_call`` stayed pending
+    forever. Every refused query now closes its card with ``miss: true`` and
+    the honest reason (CLAUDE.md 10).
+    """
+    task_id = await _seed(app_sessions)
+
+    process_rows: list[tuple[str, object]] = []
+    from packages.papers.acquisition import SourceAcquisition
+
+    # Drive acquisition directly (not through run_task) so the process
+    # callback is ours to capture; the ledger/DB side is the same machinery
+    # the worker uses.
+    async with app_sessions() as session:
+        from packages.epistemo.budget import BudgetTracker, ResearchBudget
+
+        acquirer = SourceAcquisition(
+            session,
+            _ProviderGateway(),
+            task_id,
+            BudgetTracker(
+                limits=ResearchBudget(
+                    wall_clock_minutes=60,
+                    model_cost_usd=Decimal("10.0000"),
+                    tool_call_limit=100,
+                    source_limit=50,
+                )
+            ),
+            on_process=lambda kind, payload: process_rows.append((kind, payload)),
+        )
+        result = await acquirer.acquire(
+            [(Seat.CAUSAL_SCIENTIST, f"doi {RETRACTED_DOI}")]
+        )
+        await session.commit()
+
+    assert result.acquired == ()
+    tool_calls = [row for row in process_rows if row[0] == "tool_call"]
+    tool_results = [row for row in process_rows if row[0] == "tool_result"]
+    assert len(tool_calls) == 1
+    assert len(tool_results) == 1
+    payload = tool_results[0][1]
+    assert isinstance(payload, dict)
+    assert payload["miss"] is True
+    assert payload["reason"] == "source is retracted"

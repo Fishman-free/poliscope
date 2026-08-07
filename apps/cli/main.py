@@ -432,6 +432,14 @@ async def _cmd_export_docs(client: CLIClient, args: argparse.Namespace) -> int:
     try:
         snapshot = await client.workspace(args.task_id)
         report = await client.export(args.task_id, "markdown")
+        try:
+            paper = await client.export_paper(args.task_id, "markdown")
+        except APIError:
+            # A paper fetch failing must not break the rest of the docs: the
+            # writer falls back to a stub rendered from the snapshot. The
+            # server only errors here on transport/parsing failures -- a
+            # missing paper answers 200 with the stub itself.
+            paper = None
     except httpx.HTTPStatusError as error:
         detail = error.response.text[:300]
         print(
@@ -443,7 +451,7 @@ async def _cmd_export_docs(client: CLIClient, args: argparse.Namespace) -> int:
     output_root = Path(args.output)
     try:
         written = write_task_docs(
-            dict(snapshot), report, output_root
+            dict(snapshot), report, output_root, paper_markdown=paper
         )
     except OSError as error:
         print(f"poliscope: cannot write under {output_root}: {error}", file=sys.stderr)

@@ -50,17 +50,14 @@
   }
 }
 
+/* Single full-width column (round-5 layout): the seat streams and the
+   literature cards now span the whole workspace, and the council action log
+   sits below them at full width instead of a cramped 340px side rail. */
 .live__grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
-  align-items: start;
-}
-
-@media (max-width: 1100px) {
-  .live__grid {
-    grid-template-columns: 1fr;
-  }
+  min-width: 0;
 }
 
 .live__seats {
@@ -173,16 +170,8 @@
   line-height: 1.6;
 }
 
-/* 左侧主列：席位思考流（上）+ 检索与文献（下）。 */
+/* 主列：席位思考流（上）→ 检索与文献（中）→ 议会动作（下），全部全宽。 */
 .live__main {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-width: 0;
-}
-
-/* 右侧栏：议会动作。 */
-.live__side {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -399,4 +388,33 @@
 
 .live__tool-empty--miss {
   color: var(--refuted);
+}
+
+/* 未命中原因行：压缩文本与可点击链接并排，一行内放下；完整原因在
+   title 里（悬停可审计），卡片永不被整段报错撑破。 */
+.live__tool-miss {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.live__tool-miss-text {
+  overflow-wrap: anywhere;
+}
+
+.live__tool-miss .live__tool-link {
+  flex: none;
+}
+
+/* 检索等待态：把服务端的 45s/600s 硬上限变成可见的倒计时（卡死感知）。 */
+.live__tool-empty--warn {
+  color: var(--provisional);
+  font-weight: 500;
+}
+
+.live__tool-empty--critical {
+  color: var(--refuted);
+  font-weight: 600;
 }

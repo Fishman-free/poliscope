@@ -73,22 +73,53 @@ SNAPSHOT: dict[str, object] = {
     "evolution": (
         {"sequence": 1, "event_type": "CHALLENGE_RAISED", "status": "admitted"},
     ),
+    "consensus": {
+        "conditional_consensus": "关系存在，但需纵向设计确认方向",
+        "boundary_conditions": ["仅适用于中国大陆学龄群体"],
+        "unresolved_conflicts": ["测量偏差是否被低估"],
+        "falsification_conditions": ["一项注册纵向队列发现零效应"],
+    },
 }
 
 REPORT_MD = "# Research Brief\n\n结论与局限并排显示。\n"
+PAPER_MD = "# 综合论文\n\n整合七位科学家立场。\n"
 
 
 def test_write_task_docs_creates_expected_layout(tmp_path: Path) -> None:
     written = write_task_docs(SNAPSHOT, REPORT_MD, tmp_path)
 
-    assert len(written) == 6  # README + brief + evidence + council + 2 scientists
+    # README + paper + brief + evidence + council + 2 scientists
+    assert len(written) == 7
     task_dir = tmp_path / "e13b4d00-中国大陆地区青少年自杀率和学习成绩是否具有显著关系"
     assert (task_dir / "README.md").is_file()
+    assert (task_dir / "paper.md").is_file()
     assert (task_dir / "brief.md").is_file()
     assert (task_dir / "evidence.md").is_file()
     assert (task_dir / "council.md").is_file()
     assert (task_dir / "scientists" / "theory_builder.md").is_file()
     assert (task_dir / "scientists" / "evidence_auditor.md").is_file()
+
+
+def test_paper_md_is_written_verbatim_when_fetched(tmp_path: Path) -> None:
+    written = write_task_docs(SNAPSHOT, REPORT_MD, tmp_path, paper_markdown=PAPER_MD)
+    paper = next(p for p in written if p.name == "paper.md")
+    assert paper.read_text(encoding="utf-8") == PAPER_MD
+
+
+def test_paper_md_falls_back_to_a_honest_stub(tmp_path: Path) -> None:
+    """A paper fetch failure must still produce a file that says so."""
+    written = write_task_docs(SNAPSHOT, REPORT_MD, tmp_path)
+    paper = next(p for p in written if p.name == "paper.md")
+    text = paper.read_text(encoding="utf-8")
+    assert "综合论文未生成" in text
+    assert "API 不可达" in text
+
+
+def test_readme_index_lists_the_paper(tmp_path: Path) -> None:
+    written = write_task_docs(SNAPSHOT, REPORT_MD, tmp_path)
+    readme = next(p for p in written if p.name == "README.md")
+    text = readme.read_text(encoding="utf-8")
+    assert "[最终论文（paper.md）](paper.md)" in text
 
 
 def test_evidence_md_lists_nodes_and_edges(tmp_path: Path) -> None:
@@ -110,7 +141,16 @@ def test_council_md_lists_positions_and_evolution(tmp_path: Path) -> None:
     assert "反向因果未被排除" in text
     assert "最终复判：关系存在但方向存疑" in text
     assert "缺席阶段：BLINDSPOT_BOUNTY" in text
-    assert "CHALLENGE_RAISED" in text
+    # 事件类型用中文标签呈现，而不是原样英文。
+    assert "提出质询" in text
+    assert "CHALLENGE_RAISED" not in text
+    # 条件化共识四字段。
+    assert "条件化共识：关系存在，但需纵向设计确认方向" in text
+    assert "边界条件" in text
+    assert "未解决冲突" in text
+    assert "可证伪条件" in text
+    # 立场并列呈现的声明（CLAUDE.md 4）。
+    assert "非投票裁决" in text
 
 
 def test_scientist_files_render_each_position(tmp_path: Path) -> None:

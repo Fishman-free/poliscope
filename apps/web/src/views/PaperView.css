@@ -1,0 +1,89 @@
+.paper {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.paper__abstract p {
+  line-height: 1.65;
+}
+
+.paper__process ul,
+.paper__limits,
+.paper__references {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.paper__process li,
+.paper__limits li {
+  margin-bottom: var(--space-2);
+}
+
+/* 正文段落走报纸式排印：更宽的阅读行长、段落间距明显。 */
+.paper__section p {
+  margin-bottom: var(--space-4);
+  line-height: 1.7;
+  max-width: 68ch;
+}
+
+.paper__section h3 {
+  margin-bottom: var(--space-3);
+}
+
+.paper__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+
+@media (max-width: 900px) {
+  .paper__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.paper__references {
+  list-style: none;
+  padding-left: 0;
+}
+
+.paper__references li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.paper__references li:last-child {
+  border-bottom: none;
+}
+
+.paper__ref-index {
+  color: var(--ink-3);
+  font-size: var(--text-small);
+  flex-shrink: 0;
+}
+
+.paper__ref-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.paper__ref-link {
+  font-size: var(--text-small);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.paper__empty-actions {
+  margin-top: var(--space-4);
+}
+
+.paper__ai-notice {
+  color: var(--ink-3);
+  font-size: var(--text-small);
+  line-height: 1.5;
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-3);
+}

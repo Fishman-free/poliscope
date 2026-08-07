@@ -18,7 +18,9 @@
 import { flushSync } from "react-dom";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { clearToken, fetchMe, fetchReportMarkdown, getToken, logout } from "./api/client";
+import { clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, getToken, logout } from "./api/client";
+import type { ResearchBrief } from "./api/types";
+import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
 import { Badge, Spinner, TASK_STATUS_TONE } from "./components/primitives";
 import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "./i18n";
@@ -34,6 +36,7 @@ import { LiveView } from "./views/LiveView";
 import { MapView } from "./views/MapView";
 import { ModelSettingsPanel } from "./views/ModelSettingsPanel";
 import { NewTaskView } from "./views/NewTaskView";
+import { PaperView } from "./views/PaperView";
 import { SessionHistory } from "./views/SessionHistory";
 import { SkillsPanel } from "./views/SkillsPanel";
 
@@ -47,6 +50,7 @@ type Tab =
   | "radar"
   | "evolution"
   | "audit"
+  | "paper"
   | "knowledge";
 
 /** No-task home has two screens behind a small segmented control. */
@@ -63,6 +67,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "radar", label: "Blindspot Radar", hint: "影响 x 可调查性" },
   { id: "evolution", label: "Evolution View", hint: "主张分叉与异议时间线" },
   { id: "audit", label: "Audit Trail", hint: "事件账本与拒绝记录" },
+  { id: "paper", label: "最终论文", hint: "整合结论与参考文献" },
   { id: "knowledge", label: "知识库", hint: "长期记忆与检索" },
 ];
 
@@ -92,12 +97,44 @@ const PHASE_TAB: Record<string, Tab> = {
   REPORTING: "live",
 };
 
-/** Terminal ledger events -> the brief is what a finished task has to offer. */
+/** Terminal ledger events -> the paper is what a finished task has to offer. */
 const TERMINAL_TABS: Record<string, Tab> = {
-  TASK_COMPLETED: "brief",
-  TASK_COMPLETED_WITH_GAPS: "brief",
-  TASK_FAILED: "brief",
+  TASK_COMPLETED: "paper",
+  TASK_COMPLETED_WITH_GAPS: "paper",
+  TASK_FAILED: "paper",
 };
+
+/** Phase ids -> Chinese labels for the header's gap detail line. Mirrors the
+ * PHASES list in LiveView; kept as a small local table so the shell does not
+ * import a view module. */
+const PHASE_LABELS: Record<string, string> = {
+  PRECOMMITMENT: "独立预承诺",
+  ACQUISITION: "专业取证",
+  EVIDENCE_EXCHANGE: "证据交换",
+  CROSS_EXAMINATION: "交叉质询",
+  BLINDSPOT_BOUNTY: "盲点悬赏",
+  JOINT_MODELING: "联合建模",
+  FINAL_REJUDGMENT: "最终复判",
+  REPORTING: "报告生成",
+};
+
+/** Every concrete gap behind the header's gap count, as full sentences.
+ * The "{count} 处未完成" badge names no subject, so a researcher could never
+ * tell a missing seat from a failed round -- this line says exactly which
+ * seats and which phases, in the same vocabulary as the council views. */
+function gapDetails(brief: ResearchBrief): string[] {
+  const details: string[] = [];
+  for (const seat of new Set(brief.absent_seats)) {
+    details.push(`${SEAT_LABELS[seat as Seat] ?? seat}缺席`);
+  }
+  for (const phase of new Set(brief.skipped_phases)) {
+    details.push(`${PHASE_LABELS[phase] ?? phase}未执行`);
+  }
+  for (const phase of new Set(brief.failed_phases)) {
+    details.push(`${PHASE_LABELS[phase] ?? phase}失败`);
+  }
+  return details;
+}
 
 /** Read the task id from ?task=, so a researcher can share a link to exactly
  * the workspace they are looking at. */
@@ -218,15 +255,18 @@ export function App() {
 
   // 打开任务后按状态定初始视图：排队中 / 运行中 / 停在检查点的任务落在
   // 「实时进展」（思考链路是这类任务唯一有内容可看的地方，尤其是从外部
-  // 链接直达时 —— 没有新事件驱动 follow，不显式切换就会停在 brief）；
-  // 终态任务没有新事件、留在 brief（有内容可读的是 Research Brief）。
+  // 链接直达时 —— 没有新事件驱动 follow，不显式切换就会停在初始 tab）；
+  // 终态任务没有新事件、落在「最终论文」（有完整可读内容的是整合论文，
+  // Research Brief 仍可手动查看）。
   useEffect(() => {
     if (!follow || !snapshot) return;
     const terminal =
       snapshot.task.status === "COMPLETED" ||
       snapshot.task.status === "COMPLETED_WITH_GAPS" ||
       snapshot.task.status === "FAILED";
-    if (terminal) setTab("brief");
+    if (terminal) setTab("paper");
+    // The shell's initial tab is "brief"; a still-running task must move the
+    // researcher to the live view, not leave them reading an empty brief.
     else if (tab === "brief") setTab("live");
   }, [follow, snapshot, tab]);
 
@@ -270,15 +310,34 @@ export function App() {
     });
   }
 
-  async function exportMarkdown() {
+  /** Blob-download any server-rendered markdown document under a given name.
+   * The filename carries a short task id so two downloads don't collide, and
+   * the full id stays in the URL bar for a researcher who needs it. */
+  async function downloadMarkdown(
+    fetch: () => Promise<string>,
+    basename: string,
+  ) {
     if (!taskId) return;
-    const markdown = await fetchReportMarkdown(taskId);
+    const markdown = await fetch();
     const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
     const anchor = document.createElement("a");
     anchor.href = URL.createObjectURL(blob);
-    anchor.download = `poliscope-brief-${taskId}.md`;
+    anchor.download = `${basename}-${taskId.slice(0, 8)}.md`;
     anchor.click();
     URL.revokeObjectURL(anchor.href);
+  }
+
+  function exportBriefMarkdown() {
+    if (!taskId) return;
+    void downloadMarkdown(
+      () => fetchReportMarkdown(taskId),
+      "poliscope-brief",
+    );
+  }
+
+  function exportPaperMarkdown() {
+    if (!taskId) return;
+    void downloadMarkdown(() => fetchPaperMarkdown(taskId), "poliscope-paper");
   }
 
   const brief = snapshot?.brief;
@@ -410,16 +469,21 @@ export function App() {
                     ) : null}
                     {/* The gap count is on the header of every tab. A researcher
                         must not be able to read a conclusion without seeing how
-                        much of the protocol did not run. */}
-                    {gapCount > 0 ? (
-                      <Badge
-                        tone="refuted"
-                        title={t("缺席席位、未执行轮次与失败轮次的合计")}
-                      >
-                        {t("{count} 处未完成", gapCount)}
-                      </Badge>
+                        much of the protocol did not run. The badge counts; the
+                        detail line names every concrete gap (which seats were
+                        absent, which phases did not run or failed), so the
+                        number is never a mystery. */}
+                    {gapCount > 0 && brief ? (
+                      <span className="app__task-gaps">
+                        <Badge tone="refuted">{t("{0} 处未完成", gapCount)}</Badge>
+                        <span
+                          className="app__task-gaps-detail"
+                          title={gapDetails(brief).join("；")}
+                        >
+                          {gapDetails(brief).join("、")}
+                        </span>
+                      </span>
                     ) : null}
-                    <span className="app__task-id mono">{taskId}</span>
                   </div>
                 </div>
 
@@ -500,21 +564,36 @@ export function App() {
                         brief={brief}
                         safety={snapshot.safety_notice}
                         graph={snapshot.graph}
-                        onExport={exportMarkdown}
+                        onExport={exportBriefMarkdown}
                       />
                     ) : null}
                     {tab === "map" ? <MapView graph={snapshot.graph} /> : null}
                     {tab === "council" ? (
-                      <CouncilView seats={snapshot.seats} events={events} />
+                      <CouncilView
+                        seats={snapshot.seats}
+                        events={events}
+                        consensus={snapshot.consensus}
+                      />
                     ) : null}
                     {tab === "radar" ? (
                       <BlindspotRadarView blindspots={snapshot.blindspots} />
                     ) : null}
                     {tab === "evolution" ? (
-                      <EvolutionView entries={snapshot.evolution} />
+                      <EvolutionView
+                        entries={snapshot.evolution}
+                        claims={brief.confirmed_claims}
+                        graph={snapshot.graph}
+                      />
                     ) : null}
                     {tab === "audit" ? (
                       <AuditView events={events} streamOpen={stream === "open"} />
+                    ) : null}
+                    {tab === "paper" ? (
+                      <PaperView
+                        paper={snapshot.paper}
+                        onExport={exportPaperMarkdown}
+                        onViewBrief={() => selectTab("brief")}
+                      />
                     ) : null}
                     {tab === "knowledge" ? <KnowledgeBaseView /> : null}
                   </div>

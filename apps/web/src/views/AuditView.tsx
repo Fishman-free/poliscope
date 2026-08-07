@@ -58,6 +58,8 @@ const KIND_LABELS: Record<string, string> = {
   BOUNTY_ASSIGNED: "盲点悬赏分派",
   CONSENSUS_DRAFTED: "条件化共识草案",
   FINAL_JUDGMENT: "最终独立复判",
+  FINAL_PAPER_DRAFTED: "最终论文已生成",
+  FINAL_PAPER_FAILED: "综合论文生成失败",
 };
 
 /** Kinds that record something the system refused or could not do. */
@@ -163,7 +165,10 @@ export function AuditView({
                 REFUSALS.has(event.kind) ? "audit__row audit__row--refusal" : "audit__row"
               }
             >
-              <span className="audit__seq mono">
+              <span
+                className="audit__seq mono"
+                title={t("账本事件序号，与事件流重放顺序一致")}
+              >
                 #{event.workspace_version}
               </span>
               <Badge tone={KIND_TONE[event.kind] ?? "unknown"}>

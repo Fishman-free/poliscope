@@ -268,9 +268,27 @@ class SourceAcquisition:
                 continue
             if not self._spend():
                 refused.append(RefusedCandidate(doi, "source budget exhausted"))
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {
+                            "query": doi,
+                            "miss": True,
+                            "reason": "source budget exhausted",
+                        },
+                    )
                 continue
             if time.monotonic() >= deadline:
                 refused.append(RefusedCandidate(doi, "acquisition timed out"))
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {
+                            "query": doi,
+                            "miss": True,
+                            "reason": "acquisition timed out",
+                        },
+                    )
                 continue
             if self._on_process is not None:
                 self._on_process(
@@ -287,13 +305,37 @@ class SourceAcquisition:
                     timeout=ACQUISITION_PER_QUERY_SECONDS,
                 )
             except Exception as error:
-                refused.append(RefusedCandidate(doi, f"lookup failed: {error!r}"))
+                reason = (
+                    "acquisition timed out"
+                    if isinstance(error, TimeoutError)
+                    else f"lookup failed: {error!r}"
+                )
+                refused.append(RefusedCandidate(doi, reason))
+                # The live view pairs tool_call/tool_result into one card; a
+                # refused DOI used to send no tool_result at all, so the card
+                # sat on "等待结果…" forever even though the query had already
+                # failed. Every refused query now closes its card with a miss
+                # and the honest reason (CLAUDE.md 10).
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {"query": doi, "miss": True, "reason": reason},
+                    )
                 continue
             if normalized.retracted:
                 # A retracted paper is refused here as well as at the gate. The
                 # gate is the guarantee; this keeps it out of `sources`, where it
                 # would otherwise inflate the paper count.
                 refused.append(RefusedCandidate(doi, "source is retracted"))
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {
+                            "query": doi,
+                            "miss": True,
+                            "reason": "source is retracted",
+                        },
+                    )
                 continue
             if self._on_process is not None:
                 self._on_process(
@@ -391,7 +433,11 @@ class SourceAcquisition:
                 if self._on_process is not None:
                     self._on_process(
                         "tool_result",
-                        {"query": text, "miss": True},
+                        {
+                            "query": text,
+                            "miss": True,
+                            "reason": "acquisition timed out",
+                        },
                     )
                 continue
             if resolved is None:
@@ -400,7 +446,11 @@ class SourceAcquisition:
                 if self._on_process is not None:
                     self._on_process(
                         "tool_result",
-                        {"query": text, "miss": True},
+                        {
+                            "query": text,
+                            "miss": True,
+                            "reason": "no provider returned a result",
+                        },
                     )
                 unresolvable.append(text)
                 continue
