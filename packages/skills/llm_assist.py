@@ -126,9 +126,15 @@ async def chat_once(
         message = (payload.get("choices") or [{}])[0].get("message", {})
         content = message.get("content")
         reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
-        if not isinstance(content, str) or not content.strip():
+        # A thinking-mode model can spend its whole budget on reasoning and
+        # leave content empty -- that is still an answer the caller may use
+        # (the JSON often lives in the reasoning text). Only when both are
+        # empty is the call genuinely unproductive.
+        if (
+            not isinstance(content, str) or not content.strip()
+        ) and not str(reasoning).strip():
             raise SkillLLMError("模型没有返回可用的回答")
-        return content, str(reasoning)
+        return (content if isinstance(content, str) else ""), str(reasoning)
     except SkillLLMError:
         raise
     except Exception as error:

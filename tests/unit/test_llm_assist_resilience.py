@@ -125,6 +125,76 @@ async def test_analyze_falls_back_to_reasoning_content(
     assert stub.calls == 1
 
 
+async def test_chat_once_accepts_empty_content_with_reasoning() -> None:
+    """The real chat_once must not reject an empty content when the reasoning
+    text carries the answer -- round-4 incident: thinking-mode flash spent its
+    budget on reasoning and content came back empty, failing the whole
+    install with '模型没有返回可用的回答' before the fallback could run."""
+    import httpx as httpx_module
+
+    from packages.skills.llm_assist import chat_once
+
+    def handler(request: httpx_module.Request) -> httpx_module.Response:
+        return httpx_module.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "reasoning_content": (
+                                'pick: {"selected_path": "deep-research/SKILL.md", '
+                                '"name": "deep-research", "markdown": ""}'
+                            ),
+                        }
+                    }
+                ]
+            },
+        )
+
+    async with httpx_module.AsyncClient(
+        transport=httpx_module.MockTransport(handler)
+    ) as client:
+        content, reasoning = await chat_once(
+            base_url="https://api.example.test/v1",
+            api_key="sk-test",
+            model_name="flash",
+            messages=[{"role": "user", "content": "pick"}],
+            client=client,
+        )
+    assert content == ""
+    assert "selected_path" in reasoning
+
+
+async def test_chat_once_rejects_both_empty() -> None:
+    import httpx as httpx_module
+
+    from packages.skills.llm_assist import SkillLLMError, chat_once
+
+    def handler(request: httpx_module.Request) -> httpx_module.Response:
+        return httpx_module.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"role": "assistant", "content": "", "reasoning_content": ""}}
+                ]
+            },
+        )
+
+    async with httpx_module.AsyncClient(
+        transport=httpx_module.MockTransport(handler)
+    ) as client:
+        with pytest.raises(SkillLLMError, match="没有返回可用的回答"):
+            await chat_once(
+                base_url="https://api.example.test/v1",
+                api_key="sk-test",
+                model_name="flash",
+                messages=[{"role": "user", "content": "pick"}],
+                client=client,
+            )
+
+
 async def test_analyze_retries_once_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
