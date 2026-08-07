@@ -13,6 +13,12 @@ Two constraints from CLAUDE.md 5.3 are enforced here and nowhere else:
 * refuted, quarantined, and folded nodes must never be physically deleted, so
   DELETE and TRUNCATE are granted to no role at all on those tables.
 
+One documented exception exists: migration 0019 grants the app role DELETE on
+the graph tables (and every other task-child table) so the API can destroy a
+whole session at the researcher's explicit request -- a task-lifecycle
+operation, decided at request time, not an evidence-pipeline deletion (see
+that migration's docstring for the reasoning).
+
 Code can be bypassed by the next contributor. A missing grant cannot.
 """
 

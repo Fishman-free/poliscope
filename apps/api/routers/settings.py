@@ -42,11 +42,14 @@ def _dto(
 ) -> dict[str, Any]:
     # The key itself never leaves the server (CLAUDE.md 16); the client only
     # learns whether one is configured, so the form can show "已配置" without
-    # ever being able to display or leak the secret.
+    # ever being able to display or leak the secret. ``usable`` is the same
+    # condition task creation applies when inheriting: both URL and key must
+    # be present, or the saved settings are never applied to any task.
     return {
         "base_url": base_url,
         "model_name": model_name,
         "has_api_key": has_api_key,
+        "usable": bool(base_url and has_api_key),
     }
 
 
@@ -163,6 +166,22 @@ async def put_model_settings(
     repository = ModelSettingsRepository(session)
     current = await repository.get(current_user.id)
     base_url, api_key, model_name, _ = _resolve_inputs(request, current)
+
+    # A key without a URL is a configuration that would never be used: task
+    # creation inherits the saved settings only when both a base URL and a key
+    # are present (apps/api/routers/tasks.py), so saving the half-set would
+    # show "已保存 ✓" while every new task silently runs the deployment
+    # default. Refuse it with the reason instead of a silent no-op. The one
+    # way back to the default is clearing the key (which also drops the URL).
+    if base_url is None and api_key and not request.clear_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "有 API Key 但 Base URL 为空：任务创建时只继承同时包含"
+                " Base URL 与 Key 的配置，这样保存不会作用于任何任务。"
+                "请填写 Base URL；若要回到系统默认配置，请使用「清除 Key」。"
+            ),
+        )
 
     if base_url is not None and not request.clear_api_key:
         if not api_key:

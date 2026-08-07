@@ -36,6 +36,12 @@ import type {
 import { NODE_TYPE_LABELS } from "../api/types";
 import { Badge, Empty, Panel, toneForStatus } from "../components/primitives";
 import { t } from "../i18n";
+import {
+  INTERNAL_LABELS,
+  buildClaimLabels,
+  claimLabel,
+  humanizeText,
+} from "./claimLabels";
 
 import "./EvolutionView.css";
 
@@ -44,22 +50,6 @@ const EVENT_LABELS: Record<string, string> = {
   CHALLENGE_RAISED: "提出质询",
   DissentCertificate: "异议证书",
   CONFIDENCE_UPDATED: "置信度轨迹点",
-};
-
-/** Internal gap/absence strings the ledger may carry; shown to the reader in
- * Chinese because a raw English identifier like
- * ``JOINT_MODELING:no_capsule_fold`` means nothing. Unknown strings stay
- * as-is -- a label map must never guess. */
-const INTERNAL_LABELS: Record<string, string> = {
-  "ACQUISITION:no_tool_provider": "未配置工具网关，无法获取证据",
-  "JOINT_MODELING:no_capsule_fold": "联合建模未形成可折叠的争论胶囊",
-  "JOINT_MODELING:missing_fields": "联合建模输出缺少必需字段",
-  "FINAL_REJUDGMENT:no_dissent_target": "最终复判未指向异议目标",
-  resurrection_condition_not_met: "复活条件未满足",
-  "no model provider is connected to the Model Gateway": "模型网关未连接",
-  "acquisition timed out": "证据获取超时",
-  "source budget exhausted": "来源预算已耗尽",
-  "source is retracted": "来源已撤回",
 };
 
 /** Label the event type: known event kinds, then known internal strings
@@ -75,44 +65,6 @@ function humanize(value: string): string {
 
 function labelEvent(eventType: string): string {
   return humanize(eventType);
-}
-
-/** Replace every internal identifier found in a sentence with its Chinese
- * label, so a payload that carries one still reads in the interface
- * language. Unknown fragments are left untouched. */
-function humanizeText(text: string): string {
-  let result = text;
-  for (const [raw, label] of Object.entries(INTERNAL_LABELS)) {
-    result = result.split(raw).join(label);
-  }
-  return result;
-}
-
-/** Build claim_id -> readable label, preferring confirmed claims, then graph
- * Claim nodes (forks and challenged claims live there, not in the brief). */
-function buildClaimLabels(
-  claims: ConfirmedClaim[],
-  graph: EvidenceGraph,
-): Map<string, string> {
-  const labels = new Map<string, string>();
-  for (const claim of claims) {
-    labels.set(claim.claim_id, `主张：${claim.statement}`);
-  }
-  for (const node of graph.nodes) {
-    if (node.node_type !== "Claim") continue;
-    if (labels.has(node.id)) continue;
-    const statement = node.payload.statement;
-    if (typeof statement === "string" && statement.trim()) {
-      labels.set(node.id, `主张：${statement}`);
-    }
-  }
-  return labels;
-}
-
-function claimLabel(claimId: string, labels: Map<string, string>): string {
-  const label = labels.get(claimId);
-  if (label) return label.length > 60 ? `${label.slice(0, 58)}…` : label;
-  return t("主张（未命名）");
 }
 
 /** Best-effort one-line text out of whatever this event type actually

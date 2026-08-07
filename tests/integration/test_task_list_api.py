@@ -84,5 +84,16 @@ async def test_task_list_row_shape(
     assert row["status"] == "QUEUED"
     assert row["created_by"] == "list_test"
     assert row["created_at"] is not None
-    # The list is summaries only -- no evidence payloads on the wire.
-    assert set(row) == {"task_id", "question", "status", "created_by", "created_at"}
+    # The list is summaries only -- no evidence payloads on the wire. The
+    # model-endpoint summary (round-6: "did my settings take effect?") and
+    # the last-update timestamp (queue panel) ride along, never the key.
+    assert set(row) == {
+        "task_id",
+        "question",
+        "status",
+        "created_by",
+        "created_at",
+        "updated_at",
+        "effective_model_config",
+    }
+    assert "api_key" not in row["effective_model_config"]

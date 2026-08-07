@@ -137,6 +137,9 @@ export function ModelSettingsPanel() {
   const canTest = Boolean(baseUrl.trim()) && !busy;
   // 保存必须建立在本组值通过连接测试之上——这是硬门控。
   const canSave = verified && !busy;
+  // round-6「填了 Key 和模型名但任务仍走系统默认」的根因：没有 Base URL
+  // 的配置永远不会被任务继承（后端同样拒绝保存，这里在输入时就讲清楚）。
+  const urlMissingWithKey = !baseUrl.trim() && (Boolean(apiKey.trim()) || hasApiKey);
 
   return (
     <Panel
@@ -200,6 +203,17 @@ export function ModelSettingsPanel() {
               spellCheck={false}
             />
           </label>
+
+          {/* 有 Key 无 URL 是半套配置：任务创建时只继承同时包含 Base URL
+              与 Key 的设置，这样保存「成功」也不会作用于任何任务——必须
+              在输入时就警告，而不是让用户事后发现。 */}
+          {urlMissingWithKey ? (
+            <p className="settings__warn" role="alert">
+              {t(
+                "未填写 Base URL：此配置不会被任何任务使用（任务只继承同时有 Base URL 与 API Key 的设置）。请补上端点地址，或清除 Key 使用系统默认。",
+              )}
+            </p>
+          ) : null}
 
           {/* 连接测试结果：成功给延迟与纠正说明，失败给出可操作的原因。 */}
           {testResult ? (
@@ -266,7 +280,11 @@ export function ModelSettingsPanel() {
               {t("修改后需先「测试连接」通过，才能保存设置。")}
             </p>
           ) : null}
-          {saved ? <p className="settings__ok">{t("已保存 ✓")}</p> : null}
+          {saved ? (
+            <p className="settings__ok">
+              {t("已保存 ✓ · 将用于之后创建的新任务（不影响已有任务）")}
+            </p>
+          ) : null}
           <p className="settings__note">
             {t(
               "API Key 只存服务器、任何页面都不会回显；不设置则使用部署方配置的系统默认模型。",

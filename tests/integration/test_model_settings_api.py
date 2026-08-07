@@ -133,7 +133,10 @@ async def test_clear_api_key_is_deliberate_and_removes_it(
     app_sessions: async_sessionmaker[AsyncSession],
     account: dict[str, Any],
 ) -> None:
-    await api_client.put(SETTINGS_PATH, json={"api_key": "sk-temp"})
+    await api_client.put(
+        SETTINGS_PATH,
+        json={"base_url": "https://a.example", "api_key": "sk-temp"},
+    )
     cleared = await api_client.put(SETTINGS_PATH, json={"clear_api_key": True})
     assert cleared.status_code == 200
     assert cleared.json()["has_api_key"] is False
@@ -407,6 +410,67 @@ async def test_put_requires_an_api_key(
     )
     assert response.status_code == 422
     assert "API Key" in response.json()["detail"]
+
+
+async def test_put_refuses_a_key_without_a_base_url(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+) -> None:
+    """Round-6 fix: a key without a URL is a configuration no task would
+    ever inherit -- task creation copies the saved settings only when both
+    are present. Saving it would show "已保存 ✓" while every new task ran
+    the deployment default, so the server refuses with the reason."""
+    refused = await api_client.put(
+        SETTINGS_PATH, json={"api_key": "sk-orphan", "model_name": "m"}
+    )
+    assert refused.status_code == 422
+    assert "Base URL" in refused.json()["detail"]
+
+    async with app_sessions() as session:
+        row = await session.scalar(
+            select(AppSettingsModel).where(
+                AppSettingsModel.user_id == UUID(account["id"]),
+                AppSettingsModel.id == 1,
+            )
+        )
+    # The half-set configuration must not be stored (row may exist from an
+    # earlier test in the shared session -- the orphan key is the thing that
+    # must never land).
+    assert row is None or row.model_api_key != "sk-orphan"
+
+    # The deliberate way back to the deployment default (clear the key) is
+    # still allowed, and a complete save still works.
+    saved = await api_client.put(
+        SETTINGS_PATH,
+        json={"base_url": "https://a.example", "api_key": "sk-ok"},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["usable"] is True
+    cleared = await api_client.put(SETTINGS_PATH, json={"clear_api_key": True})
+    assert cleared.status_code == 200
+    assert cleared.json()["usable"] is False
+
+
+async def test_get_reports_usable_only_for_complete_configurations(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """``usable`` answers the round-6 question "did my settings take effect"
+    up front: it is the same both-present condition task creation applies
+    when inheriting."""
+    initial = (await api_client.get(SETTINGS_PATH)).json()
+    assert initial["usable"] is False
+
+    saved = await api_client.put(
+        SETTINGS_PATH,
+        json={
+            "base_url": "https://a.example",
+            "api_key": "sk-ok",
+        },
+    )
+    assert saved.json()["usable"] is True
+    again = (await api_client.get(SETTINGS_PATH)).json()
+    assert again["usable"] is True
 
 
 async def test_clear_api_key_skips_the_probe(

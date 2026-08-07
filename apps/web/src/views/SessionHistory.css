@@ -142,3 +142,123 @@
   font-size: var(--text-small);
   color: var(--refuted);
 }
+
+/* Round-6 删除能力：行内悬停显示的删除钮 + 两段式确认。删除是破坏性
+   操作，视觉上必须与「打开会话」区分开：危险按钮用 refuted 色，确认
+   文本讲清不可恢复。 */
+.session__row-wrap {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.session__row-wrap .session__row {
+  flex: 1;
+  min-width: 0;
+}
+
+.session__delete {
+  flex: none;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--text-micro);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-smooth),
+    color var(--duration-fast) var(--ease-smooth),
+    background-color var(--duration-fast) var(--ease-smooth);
+}
+
+.session__row-wrap:hover .session__delete,
+.session__delete:focus-visible {
+  opacity: 1;
+}
+
+.session__delete:hover {
+  color: var(--refuted);
+  background: color-mix(in srgb, var(--refuted) 10%, transparent);
+}
+
+.session__confirm,
+.session__clear-confirm {
+  font-size: var(--text-micro);
+  color: var(--ink-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.session__confirm {
+  position: absolute;
+  inset: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-0);
+  border: 1px solid var(--refuted);
+  border-radius: var(--radius-2);
+}
+
+.session__danger,
+.session__cancel {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-2);
+  font: inherit;
+  font-size: var(--text-micro);
+  cursor: pointer;
+}
+
+.session__danger {
+  border: 1px solid var(--refuted);
+  background: color-mix(in srgb, var(--refuted) 12%, transparent);
+  color: var(--refuted);
+}
+
+.session__danger:hover {
+  background: var(--refuted);
+  color: #fff;
+}
+
+.session__cancel {
+  border: 1px solid var(--line);
+  background: none;
+  color: var(--ink-2);
+}
+
+.session__cancel:hover {
+  background: var(--surface-2);
+}
+
+.session__clear-all {
+  flex: none;
+  align-self: flex-end;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: none;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--text-micro);
+  cursor: pointer;
+}
+
+.session__clear-all:hover {
+  color: var(--refuted);
+  border-color: var(--refuted);
+}
+
+.session__clear-confirm {
+  padding: var(--space-2);
+  border: 1px solid var(--refuted);
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--refuted) 6%, transparent);
+}

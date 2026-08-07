@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -301,10 +302,9 @@ async def test_create_with_model_config_stores_it_and_never_echoes_it(
     assert row.model_config["api_key"] == "sk-task-secret"
     assert row.model_config["model_name"] == "deepseek-chat"
 
-    # 不回显：任何读端点都不出现密钥
+    # 不回显：任何读端点都不出现密钥值（has_api_key 布尔字段允许存在）
     response = await api_client.get(f"/api/tasks/{task_id}")
     assert response.status_code == 200
-    assert "api_key" not in response.text
     assert "sk-task-secret" not in response.text
 
 
@@ -437,3 +437,114 @@ async def test_upload_accepts_a_valid_pdf_and_attaches_it(
             )
         ).scalar_one()
     assert row.user_evidence["pdf_object_ids"] == [object_id]
+
+
+async def test_list_reports_effective_model_config(
+    api_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-6 fix: a task without explicit config reports `source: default`;
+    once the account saves a full endpoint, newly created tasks report the
+    saved endpoint as `source: saved` -- the researcher can finally verify
+    their settings actually take effect."""
+    async def _create_task() -> str:
+        body = await _create(api_client)
+        return body["task_id"]
+
+    plain_task = await _create_task()
+    listing = (await api_client.get("/api/tasks")).json()
+    plain_entry = next(t for t in listing if t["task_id"] == plain_task)
+    assert plain_entry["effective_model_config"]["source"] == "default"
+    assert plain_entry["effective_model_config"]["has_api_key"] is False
+    assert "api_key" not in plain_entry["effective_model_config"]
+
+    # 保存被连接门控：测试环境到不了真实端点，先 stub 探测成功再 PUT。
+    from packages.models.endpoint_config import ProbeResult
+
+    async def _ok(
+        *,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        client: object | None = None,
+    ) -> ProbeResult:
+        return ProbeResult(True, "连接成功（1 ms）", 1)
+
+    monkeypatch.setattr("apps.api.routers.settings.probe_endpoint", _ok)
+
+    save = await api_client.put(
+        "/api/settings/model",
+        json={
+            "base_url": "https://api.deepseek.com",
+            "api_key": "sk-account",
+            "model_name": "deepseek-chat",
+        },
+    )
+    assert save.status_code == 200, save.text
+
+    saved_task = await _create_task()
+    listing = (await api_client.get("/api/tasks")).json()
+    saved_entry = next(t for t in listing if t["task_id"] == saved_task)
+    config = saved_entry["effective_model_config"]
+    assert config["source"] == "saved"
+    assert config["base_url"] == "https://api.deepseek.com"
+    assert config["model_name"] == "deepseek-chat"
+    assert config["has_api_key"] is True
+    assert "sk-account" not in str(listing)
+
+    # 详情接口同样带上生效配置。
+    detail = (await api_client.get(f"/api/tasks/{saved_task}")).json()
+    assert detail["effective_model_config"]["source"] == "saved"
+    assert detail["effective_model_config"]["base_url"] == "https://api.deepseek.com"
+
+
+async def test_delete_task_removes_the_task_and_its_records(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Round-6 session management: deleting a session must remove the task row
+    and every child record (claims, ledger events, process stream, graph...),
+    and only the owner may delete."""
+    from packages.evidence.models import ScientificEventModel
+
+    created = await _create(api_client)
+    task_id = created["task_id"]
+
+    async with app_sessions() as session:
+        session.add(
+            ScientificEventModel(
+                id=uuid4(),
+                task_id=task_id,
+                event_type="PHASE_STARTED",
+                payload={"phase": "PRECOMMITMENT"},
+                idempotency_key="test:delete:1",
+                sequence=1,
+                status="accepted",
+            )
+        )
+        await session.commit()
+
+    deleted = await api_client.delete(f"/api/tasks/{task_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == task_id
+
+    async with app_sessions() as session:
+        row = await session.scalar(
+            select(ResearchTaskModel).where(
+                ResearchTaskModel.task_id == task_id
+            )
+        )
+        assert row is None
+        events = await session.scalar(
+            select(ScientificEventModel).where(
+                ScientificEventModel.task_id == task_id
+            )
+        )
+        assert events is None
+
+    gone = await api_client.get(f"/api/tasks/{task_id}")
+    assert gone.status_code == 404
+
+    # 删除不存在的任务 → 404，绝不误删别人的任务。
+    unknown = await api_client.delete(f"/api/tasks/{uuid4()}")
+    assert unknown.status_code == 404

@@ -81,6 +81,18 @@ export interface SafetyNotice {
   limitations: string;
 }
 
+/** The model endpoint a task actually runs with, resolved server-side
+ * (round-6: "my settings never took effect" could not be verified because
+ * this was invisible). `source: "saved"` means the researcher's own saved
+ * settings or the task's explicit config; `"default"` means the deployment
+ * default. The key itself never leaves the server -- only its presence. */
+export interface EffectiveModelConfig {
+  source: "saved" | "default";
+  base_url: string | null;
+  model_name: string | null;
+  has_api_key: boolean;
+}
+
 export interface TaskSummary {
   task_id: string;
   question: string;
@@ -89,6 +101,10 @@ export interface TaskSummary {
   /** Present on `GET /api/tasks` (session history), absent on workspace
    * snapshot tasks -- the history panel sorts by it. */
   created_at?: string | null;
+  /** Last update time; the queue panel uses it to say how long a RUNNING
+   * task has been going. */
+  updated_at?: string | null;
+  effective_model_config?: EffectiveModelConfig | null;
 }
 
 /** One claim the council suggested from the raw question, straight off
@@ -166,6 +182,9 @@ export interface ModelSettings {
   base_url: string | null;
   model_name: string | null;
   has_api_key: boolean;
+  /** Whether the saved settings would actually be applied to new tasks
+   * (task creation inherits only when both URL and key are present). */
+  usable: boolean;
 }
 
 /** `POST /api/auth/register` / `login` -- the bearer token is handed to the

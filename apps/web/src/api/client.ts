@@ -407,6 +407,26 @@ export function fetchTasks(): Promise<TaskSummary[]> {
   return getJson<TaskSummary[]>("/api/tasks");
 }
 
+/** Permanently delete a task and all its records (server confirms the task
+ * is owned by the caller). The UI must confirm with the researcher before
+ * calling -- this cannot be undone. */
+export async function deleteTask(taskId: string): Promise<{ deleted: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/api/tasks/${taskId}`, {
+      method: "DELETE",
+      headers: { accept: "application/json", ...authHeaders() },
+    });
+  } catch (cause) {
+    throw new ApiError(0, `无法连接 API：${String(cause)}`);
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+  return (await response.json()) as { deleted: string };
+}
+
 /** The permanent model endpoint. `has_api_key` is all the server ever tells
  * the browser about the key -- the key itself never leaves the server
  * (CLAUDE.md 16). */

@@ -40,7 +40,7 @@ async def _has_privilege(
 
 
 @pytest.mark.parametrize("table", GRAPH_TABLES)
-@pytest.mark.parametrize("privilege", ("INSERT", "UPDATE", "DELETE", "TRUNCATE"))
+@pytest.mark.parametrize("privilege", ("INSERT", "UPDATE", "TRUNCATE"))
 async def test_app_role_cannot_write_the_evidence_graph(
     admin_engine: AsyncEngine,
     table: str,
@@ -48,6 +48,18 @@ async def test_app_role_cannot_write_the_evidence_graph(
 ) -> None:
     """The council reaches the graph only through the projector."""
     assert not await _has_privilege(admin_engine, "poliscope_app", table, privilege)
+
+
+@pytest.mark.parametrize("table", GRAPH_TABLES)
+async def test_app_role_delete_on_graph_tables_is_the_session_lifecycle_exception(
+    admin_engine: AsyncEngine,
+    table: str,
+) -> None:
+    """Migration 0019 grants the app role DELETE on the graph tables so the
+    API can destroy a whole session at the researcher's explicit request --
+    the one documented exception to "no role deletes graph rows". DELETE
+    without INSERT/UPDATE means the exception cannot grow into write access."""
+    assert await _has_privilege(admin_engine, "poliscope_app", table, "DELETE")
 
 
 @pytest.mark.parametrize("table", GRAPH_TABLES)
@@ -61,32 +73,54 @@ async def test_app_role_can_still_read_the_evidence_graph(
 
 @pytest.mark.parametrize("table", GRAPH_TABLES)
 @pytest.mark.parametrize("privilege", ("DELETE", "TRUNCATE"))
-@pytest.mark.parametrize("role", ("poliscope_app", "poliscope_projector"))
-async def test_no_role_can_physically_delete_graph_rows(
+async def test_projector_role_cannot_physically_delete_graph_rows(
     admin_engine: AsyncEngine,
-    role: str,
     table: str,
     privilege: str,
 ) -> None:
     """A node that loses an argument changes status; it never disappears.
 
-    Granting DELETE to nobody means even a bug in the projector cannot destroy
-    the dissent record that CLAUDE.md 4 requires to stay traceable.
+    The projector -- the evidence pipeline's own writer -- holds no DELETE,
+    so even a bug in the projection machinery cannot destroy the dissent
+    record that CLAUDE.md 4 requires to stay traceable. (The app role's
+    session-lifecycle DELETE from migration 0019 is the deliberate exception
+    covered by test_app_role_delete_on_graph_tables_*.)
     """
-    assert not await _has_privilege(admin_engine, role, table, privilege)
+    assert not await _has_privilege(
+        admin_engine, "poliscope_projector", table, privilege
+    )
+
+
+@pytest.mark.parametrize("table", GRAPH_TABLES)
+async def test_app_role_cannot_truncate_graph_rows(
+    admin_engine: AsyncEngine,
+    table: str,
+) -> None:
+    """Truncate stays forbidden for everyone: bulk-destroying every node of a
+    task bypasses the per-row session deletion entirely."""
+    assert not await _has_privilege(admin_engine, "poliscope_app", table, "TRUNCATE")
 
 
 async def test_app_role_cannot_rewrite_the_event_ledger(
     admin_engine: AsyncEngine,
 ) -> None:
-    """Events are append-only so that a replay reproduces the same graph."""
+    """Events are append-only so that a replay reproduces the same graph.
+
+    DELETE is the migration-0019 session-lifecycle exception (destroying a
+    session removes its ledger rows together with everything else); UPDATE
+    and TRUNCATE stay forbidden -- the ledger must never be rewritten or
+    bulk-wiped outside an explicit per-session deletion.
+    """
     assert await _has_privilege(
         admin_engine, "poliscope_app", "scientific_events", "INSERT"
     )
     assert await _has_privilege(
         admin_engine, "poliscope_app", "scientific_events", "SELECT"
     )
-    for privilege in ("UPDATE", "DELETE", "TRUNCATE"):
+    assert await _has_privilege(
+        admin_engine, "poliscope_app", "scientific_events", "DELETE"
+    )
+    for privilege in ("UPDATE", "TRUNCATE"):
         assert not await _has_privilege(
             admin_engine, "poliscope_app", "scientific_events", privilege
         )

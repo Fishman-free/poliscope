@@ -144,6 +144,10 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 | 方向性检查点（`AWAITING_COUNCIL_INPUT`）Web 端提交与「不干预，直接继续」 | E2E 实测：提交后任务从检查点回到 `QUEUED` 并由 Worker 续跑；此前一个缺失认证头的 bug 曾让所有提交 401、任务卡死在检查点前 |
 | 卡死感知：阶段级 deadline（超时席位记缺席+原因）、检索等待倒计时与 45s/300s 警示、未命中卡片压缩显示（一行截断 + DOI / 错误详情可点击链接） | 单元测试 + E2E 断言 miss 卡片不溢出、带 `doi.org` 跳转 |
 | 检索相关性治理：ACQUISITION 阶段检索意图的强相关/少而精边界指令；「DOI + 中文说明」混合串的正则提取（修复 OpenAlex 404 整串查询） | 单元测试覆盖中文混合串、URL 内 DOI、无 DOI 走自由文本三条路径 |
+| 模型设置的**真实生效可见性**：任务列表/详情返回每个任务实际使用的模型配置（你保存的配置 / 系统默认，`effective_model_config`）；保存端拒绝「有 API Key 无 Base URL」的半套配置（此前会「保存成功」但任务永不继承）；面板输入时就警告不填 URL 的后果 | 集成测试断言两种 `source` 与拒绝落库；浏览器 E2E 断言「系统默认」徽章与输入时警告 |
+| **队列可见性**：QUEUED 任务不再只有一句「等待 Worker 认领」——实时进展页显示前面还有几个任务、Worker 正在跑哪个任务（问题 + 已运行分钟数），并提示可在会话历史中删除排队任务 | E2E 断言排队面板说出「前面还有 1 个任务」（此前用户报告「已入队后迟迟无响应」——队列里别的任务占满单 Worker，前端却什么都不说） |
+| **会话删除**：`DELETE /api/tasks/{id}` 物理删除任务及全部子记录（账本、过程流、证据图、审计行），会话历史面板支持行内两段式删除与「清空全部」；迁移 0019 为此授予应用角色 DELETE（唯一的权限模型例外，见「设计上的五个硬约束」第 2 条） | 集成测试断言子记录级联清理与 404；E2E 断言两段确认删除成功 |
+| **盲点雷达可读化**：点击盲点显示「这个盲点是什么」的通俗解释——statement 中 UUID 解析为可读主张标签、影响/可调查性/不确定性按评分区间翻译成刻度与「轻信的后果」；裸 JSON 收进折叠的「原始记录（可审计）」（CLAUDE.md 2） | E2E 断言 UUID 被替换为主张标签、无裸 JSON 直接展示、未评分盲点单独列出 |
 | Docker Compose 一键部署（postgres / migrate / api / worker / web / caddy） | `docker compose up --build` 后真实提交一个任务，走完整 CLI → API → Worker → 图投影路径，再经 Caddy → web 容器 nginx 反代验证 |
 | Claude Code / Codex Skill（薄封装：生成待确认 Contract → 调用 CLI），`login` 后即可访问已部署实例 | 手工跑通一次 `start`/`confirm-claims`/`watch`/`export` 全链路，见[Agent Skill 集成细节](#agent-skill-集成细节) |
 
@@ -163,8 +167,8 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 **1. 科学家不能写证据图。**
 7 个席位只能向科研事件账本追加事件。只有 Graph Projector 能写 `graph_nodes` / `graph_edges`，而这一点由 PostgreSQL 的 `GRANT`/`REVOKE` 保证——不是靠代码自律。应用身份即使有 bug 也碰不到证据图。
 
-**2. 任何东西都不物理删除。**
-被反驳、被隔离、被撤回的节点只改 `status`。所有角色都没有 `DELETE` 权限。研究者放弃的原子主张标记为 `DISCARDED` 而非删除。
+**2. 证据管线任何东西都不物理删除——但研究者可以销毁自己的会话。**
+被反驳、被隔离、被撤回的节点只改 `status`；证据管线（含投影器）没有任何角色拥有 `DELETE` 权限。研究者放弃的原子主张标记为 `DISCARDED` 而非删除。**唯一的例外**是迁移 `0019_session_deletion_grants`：应用角色获得任务全部子表（含证据图）的 `DELETE`，使 `DELETE /api/tasks/{id}` 能在研究者明确请求下销毁整个会话——这是任务生命周期操作（同一请求同时删除账本与任务行，证据图不能成为孤儿），与证据治理的「节点不得物理删除」不同层；该角色仍无图的 `INSERT`/`UPDATE`/`TRUNCATE`，投影器角色完全未动。
 
 **3. 相关不自动升级为因果。**
 `CausalUpgradePolicy` 在证据门第六阶段拦截「横截面设计 + 因果主张」，事件被隔离并留下审计记录。
@@ -716,6 +720,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 7. **快照 / 暂停 / 恢复的范围比字面意思窄——是「暂停认领」，不是「打断在跑的议会」。** `deliberate()`（`apps/worker/jobs.py`）把一个任务的完整 8 阶段议会跑在一次未提交事务里，`CouncilMemory` 每次调用都现造一个全新的 `InMemoryMemoryAdapter()`，没有任何跨调用持久化状态可供跑到一半时快照。能诚实交付的是队列层面：`poliscope pause`/`resume` 和对应的 `POST /api/tasks/{id}/pause`/`resume` 端点把任务在 `QUEUED`⇄`PAUSED` 间搬动——一个被暂停的任务在恢复之前永远不会被 worker 认领（`test_a_paused_task_is_never_claimed_until_resumed` 端到端验证），但**不能**打断一个已经在跑的议会。这与本版新增的 JOINT_MODELING 前人类引导检查点（`AWAITING_COUNCIL_INPUT`，见 CLAUDE.md 第 4.1 节、设计规格第 4.5 节）是两回事——那是一个**唯一、固定**的暂停点，只出现在 BLINDSPOT_BOUNTY 与 JOINT_MODELING 之间；真正的「议会任意时点打断再续跑」需要重构 `CouncilOrchestrator` 的阶段循环与事务边界、并接一个持久化的快照列，是编排器层面的改动，仍不在本版范围内。
 8. **Evolution View 只有定性的连续阶段轨迹，没有数值化的置信度曲线。** 关键阶段边界（证据交换、交叉质询、联合建模、最终复判结束时）现在都会为受影响的 `Claim` 追加一条 `CONFIDENCE_UPDATED` 过程事件（`_confidence_marker()`，`registry.py:345-376`），`_evolution()`（`workspace.py:238-291`）读取后能画出跨越全部四个阶段的连续轨迹点——这不再是生产编排本身的空白。但每条事件只携带一段文字说明（`confidence_delta_note`），从不产出精确数值置信度：这是刻意设计，不是尚未实现——CLAUDE.md 第 16 条禁止用模型置信度替代统计不确定性，因此这里做的是定性变化轨迹，不是可绘制数值曲线的量化分数。
 9. **域名接入 HTTPS 未做真实端到端验证。** `deploy/caddy/` 的域名切换逻辑（把 `POLISCOPE_SITE_ADDRESS` 改成真实域名即自动签发证书）依赖的是 Caddy 自身广泛验证过的行为，配置本身经过语法与拓扑核查（`docker compose config`），但本仓库开发环境没有可用的真实域名，因此没有跑过一次真实的证书签发流程。第一次接入真实域名时按 Caddy 官方文档的期望行为发生，但这一步本身尚未被亲眼验证过。
+10. **模型设置按「任务创建时刻」快照生效，改设置不影响已创建任务。** 任务级 `model_config` 在创建时从账号永久设置（`app_settings`）复制一份（`apps/api/routers/tasks.py`），此后任务永远用这份快照——这是刻意的隔离（研究者可以把不同任务指向不同端点），但意味着「我在面板换了 Key/模型名，旧任务不变」是预期行为而非 bug；面板保存成功文案与任务行徽章（「你保存的配置 / 系统默认」）已把这条语义讲清楚。若未来要支持「对在跑任务热切换端点」，需要 worker 在每轮读取最新设置而非任务快照，涉及编排器改动，不在本版范围。
 
 ---
 
