@@ -632,3 +632,37 @@ async def test_extract_uploaded_dataset_identifier_detected_and_written_back(
     assert len(session.executed) == 3
     params = session.executed[-1].compile().params
     assert params["dataset_id"] == "ICPSR:37183"
+
+
+async def test_extract_injects_researcher_skill_into_system_prompt() -> None:
+    """Round-5 request: an enabled skill instructs *every* process that calls
+    a model, extraction included -- not just the council. The skill text is
+    rendered into the extraction request's system prompt with the same
+    non-evidence labelling as the council's rendering."""
+    quote = "We found a significant association between screen time and anxiety."
+    session = _FakeSession()
+    tools = _FakeToolGateway(url="https://example.test/paper.pdf")
+    model = _FakeModelGateway(_valid_payload(quote))
+    extractor = FindingExtractor(
+        session,
+        tools,
+        model,
+        uuid4(),
+        fulltext_fetcher=_fetcher(_pdf_bytes(quote)),
+        researcher_skills=(
+            (
+                "measurement-deep-dive",
+                "Always report the exact measurement instrument.",
+            ),
+        ),
+    )
+
+    result = await extractor.extract(uuid4(), "10.1234/example")
+
+    assert result.ok is True
+    assert len(model.calls) == 1
+    system_content = model.calls[0].messages[0].content
+    # Same non-evidence labelling as the council's rendering, so a skill can
+    # never be mistaken for a source that supports a claim.
+    assert "技能指令（非正式证据，来源：measurement-deep-dive）" in system_content
+    assert "Always report the exact measurement instrument." in system_content

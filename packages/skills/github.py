@@ -5,29 +5,45 @@ repository root, under a conventional skills directory, or at any depth of
 the repository tree. Resolution order:
 
 1. The conventional paths (root / ``skills/`` / ``.claude/skills/``) are
-   tried first -- the fast path for well-formed skill repos.
+   tried first via raw.githubusercontent.com -- the fast path for
+   well-formed skill repos, and it spends no GitHub API quota.
 2. The whole file tree is then listed recursively and any ``**/SKILL.md``
    wins, so a skill repo that nests its skill under an arbitrary directory
-   still installs.
+   still installs. The tree listing uses the API; when the API answers 403
+   (anonymous quota exhausted -- the server container shares one egress IP),
+   the whole repository tarball is downloaded and scanned locally instead,
+   so a rate-limited install does not fail.
 3. Only when the tree contains no SKILL.md at all does an *LLM assistant*
    (optional, provided by the caller) get a say: it reads the candidate
    markdown files (README etc.) and either selects one to install as the
    skill or synthesises a skill summary from them. A repo with no installable
    content still fails with a reason (CLAUDE.md 7), never with a fabricated
    "skill".
+
+An optional ``POLISCOPE_GITHUB_TOKEN`` environment variable lifts the API
+quota to 5000/hour and unlocks private repositories.
 """
 
 from __future__ import annotations
 
+import io
+import os
 import re
+import tarfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from urllib.parse import quote
 
 import httpx
 
 from packages.kernel.http_retry import send_with_retry
 
 MAX_SKILL_BYTES = 2 * 1024 * 1024
+
+# Whole-repo tarball fallback (see ``_tree_skill_paths``): the recursive
+# scan needs the file list, and the tarball delivers it without spending any
+# GitHub API quota. A skill collection is small; 25 MB is a generous cap.
+MAX_REPO_TARBALL_BYTES = 25 * 1024 * 1024
 
 # A repo may contain many markdown files (docs/, translations, ...); the
 # LLM-assist path only looks at the root-level markdown and one level of
@@ -85,6 +101,19 @@ def parse_skill_url(url: str) -> SkillLocation:
     )
 
 
+def _github_token() -> str | None:
+    """Optional Personal Access Token for the GitHub API calls.
+
+    Anonymous API access is capped at 60 requests/hour per egress IP -- the
+    server container shares one IP, so several installs can exhaust the
+    window and every subsequent install would 403. A token lifts that to
+    5000/hour and is also required for private repositories. Set
+    ``POLISCOPE_GITHUB_TOKEN`` in the deployment's environment.
+    """
+    token = os.environ.get("POLISCOPE_GITHUB_TOKEN")
+    return token or None
+
+
 def _frontmatter_name(markdown: str) -> str | None:
     """The ``name:`` field of a SKILL.md frontmatter block, if present."""
     if not markdown.startswith("---"):
@@ -132,15 +161,19 @@ async def _get_contents(
     failure. ``send_with_retry`` raises on 4xx before the status can be read,
     so the response is turned back into a value for those checks to own.
     """
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "poliscope-skills",
+    }
+    token = _github_token()
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
     try:
         response, _retries = await send_with_retry(
             lambda: client.get(
                 f"https://api.github.com/repos/{location.owner}/{location.repo}"
                 f"{api_path}",
-                headers={
-                    "Accept": "application/vnd.github+json",
-                    "User-Agent": "poliscope-skills",
-                },
+                headers=headers,
             )
         )
         return response
@@ -154,8 +187,9 @@ def _checked_response(
     """Turn a contents/tree response into its JSON payload or a fetch error."""
     if response.status_code == 403:
         raise SkillFetchError(
-            "GitHub API rate limit or access denied; "
-            "check the repository's visibility"
+            "GitHub API rate limit or access denied; check the "
+            "repository's visibility, or set POLISCOPE_GITHUB_TOKEN "
+            "to lift the anonymous 60/hour quota"
         )
     if response.status_code != 200:
         raise SkillFetchError(
@@ -168,25 +202,108 @@ def _checked_response(
     return payload
 
 
+def _raw_url(location: SkillLocation, path: str) -> str:
+    """raw.githubusercontent.com URL for one file.
+
+    Raw downloads do not count against the GitHub API quota, so every file
+    fetch goes through here -- only the tree listing and directory listings
+    still use the API (and fall back when it is rate limited).
+    """
+    branch = quote(location.branch, safe="")
+    safe_path = quote(path, safe="/")
+    return (
+        f"https://raw.githubusercontent.com/{location.owner}/"
+        f"{location.repo}/{branch}/{safe_path}"
+    )
+
+
 async def _fetch_file_markdown(
     client: httpx.AsyncClient,
     location: SkillLocation,
     path: str,
 ) -> tuple[str, str]:
-    """Download one file via the contents API, returning ``(name, markdown)``."""
-    response = await _get_contents(
-        client, location, f"/contents/{path}?ref={location.branch}"
-    )
+    """Download one file via raw.githubusercontent.com (no API quota),
+    returning ``(name, markdown)``."""
+    try:
+        response, _retries = await send_with_retry(
+            lambda: client.get(_raw_url(location, path))
+        )
+    except httpx.HTTPStatusError as error:
+        response = error.response
     if response.status_code == 404:
         raise SkillFetchError(f"file {path} not found in the repository")
-    payload = _checked_response(response, location)
-    try:
-        markdown = _decode_content(payload)
-    except (ValueError, KeyError) as error:
-        raise SkillFetchError("GitHub response was not a readable file") from error
+    if response.status_code != 200:
+        raise SkillFetchError(
+            f"GitHub raw download returned HTTP {response.status_code} for "
+            f"{location.owner}/{location.repo}; check the repository's "
+            "visibility, or set POLISCOPE_GITHUB_TOKEN"
+        )
+    markdown = response.text
     if len(markdown.encode("utf-8")) > MAX_SKILL_BYTES:
         raise SkillFetchError("skill exceeds the 2 MB limit")
     return _frontmatter_name(markdown) or location.repo, markdown
+
+
+async def _tree_skill_paths_via_tarball(
+    client: httpx.AsyncClient,
+    location: SkillLocation,
+) -> tuple[str, ...]:
+    """Recursive scan via the codeload tarball -- no API quota spent.
+
+    The tree API is the cheap scan when the quota is available; when the
+    API answers 403 (anonymous 60/hour per egress IP -- the server container
+    shares one), the whole repository tarball is downloaded and scanned
+    locally instead. codeload.github.com is not part of the API rate limit,
+    so a rate-limited install keeps working instead of failing.
+    """
+    if location.branch == "HEAD":
+        tarball_url = (
+            f"https://codeload.github.com/{location.owner}/"
+            f"{location.repo}/tar.gz/HEAD"
+        )
+    else:
+        tarball_url = (
+            f"https://codeload.github.com/{location.owner}/"
+            f"{location.repo}/tar.gz/refs/heads/{quote(location.branch, safe='')}"
+        )
+    try:
+        async with client.stream(
+            "GET", tarball_url, follow_redirects=True
+        ) as response:
+            if response.status_code == 404:
+                return ()
+            if response.status_code != 200:
+                raise SkillFetchError(
+                    f"GitHub tarball returned HTTP {response.status_code} for "
+                    f"{location.owner}/{location.repo}"
+                )
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_REPO_TARBALL_BYTES:
+                    raise SkillFetchError(
+                        "repository tarball exceeds the 25 MB limit"
+                    )
+                chunks.append(chunk)
+    except httpx.TransportError as error:
+        raise SkillFetchError(
+            f"repository tarball could not be downloaded: {error}"
+        ) from error
+    try:
+        with tarfile.open(
+            fileobj=io.BytesIO(b"".join(chunks)), mode="r:gz"
+        ) as archive:
+            paths: list[str] = []
+            for member in archive.getmembers():
+                if not member.isfile():
+                    continue
+                parts = member.name.split("/", 1)
+                if len(parts) == 2 and parts[1].endswith("SKILL.md"):
+                    paths.append(parts[1])
+    except tarfile.TarError as error:
+        raise SkillFetchError("repository tarball could not be read") from error
+    return tuple(sorted(set(paths), key=lambda path: (path.count("/"), path)))
 
 
 async def _tree_skill_paths(
@@ -197,13 +314,17 @@ async def _tree_skill_paths(
 
     The ``git/trees`` API returns the whole tree in one call; ``truncated``
     means the response hit its size limit, which for our purposes is refused
-    rather than silently partial (a huge repo is not a skill repo).
+    rather than silently partial (a huge repo is not a skill repo). A 403
+    (API quota exhausted) transparently falls back to the tarball scan, so a
+    rate-limited install is not a failed install.
     """
     response = await _get_contents(
         client,
         location,
         f"/git/trees/{location.branch}?recursive=1",
     )
+    if response.status_code == 403:
+        return await _tree_skill_paths_via_tarball(client, location)
     if response.status_code == 404:
         return ()
     payload = _checked_response(response, location)
@@ -243,6 +364,15 @@ async def _candidate_md_files(
     response = await _get_contents(
         client, location, f"/contents/{location.subpath}?ref={location.branch}"
     )
+    if response.status_code == 403:
+        # API quota exhausted: the assistant still gets the README (raw
+        # download, no quota), so a rate-limited install keeps its last
+        # resolution tier instead of failing early.
+        root = f"{location.subpath}/" if location.subpath else ""
+        snippet = await _peek_markdown(client, location, f"{root}README.md")
+        if snippet is None:
+            return []
+        return [{"path": f"{root}README.md", "snippet": snippet}]
     if response.status_code == 404:
         return []
     payload = _checked_response(response, location)
@@ -286,15 +416,15 @@ async def _peek_markdown(
     path: str,
 ) -> str | None:
     """First ~2 KB of a markdown file, or None when it cannot be read."""
-    response = await _get_contents(
-        client, location, f"/contents/{path}?ref={location.branch}"
-    )
+    try:
+        response, _retries = await send_with_retry(
+            lambda: client.get(_raw_url(location, path))
+        )
+    except httpx.HTTPStatusError as error:
+        response = error.response
     if response.status_code != 200:
         return None
-    try:
-        return _decode_content(response.json())[:2000]
-    except (SkillFetchError, ValueError, KeyError):
-        return None
+    return response.text[:2000]
 
 
 SkillAssistant = Callable[
@@ -395,22 +525,6 @@ async def fetch_skill_markdown(
     """
     fetched = await fetch_skills_from_repo(client, url, llm_assistant)
     return fetched[0]
-
-
-def _decode_content(payload: object) -> str:
-    """Decode a GitHub contents API file payload (base64 body)."""
-    if not isinstance(payload, dict):
-        raise SkillFetchError("GitHub response was not a JSON object")
-    encoding = payload.get("encoding")
-    body = payload.get("content")
-    if encoding != "base64" or not isinstance(body, str):
-        raise SkillFetchError("GitHub response had no base64 content")
-    import base64
-
-    try:
-        return base64.b64decode(body).decode("utf-8")
-    except (ValueError, UnicodeDecodeError) as error:
-        raise SkillFetchError("skill file is not valid UTF-8") from error
 
 
 __all__ = [

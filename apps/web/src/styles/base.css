@@ -18,9 +18,10 @@ body {
   font-size: var(--text-body);
   line-height: 1.55;
   color: var(--ink-1);
-  /* White throughout, template-style: one step of grey below pure white so
-   * the white cards read their elevation through shadow, not a gradient. */
-  background: var(--surface-1);
+  /* Apple DESIGN.md: the parchment canvas (#f5f5f7) carries pure-white
+   * cards, so cards read their elevation through surface contrast, not a
+   * gradient. */
+  background: var(--surface-parchment);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -61,19 +62,18 @@ button {
   color: inherit;
 }
 
-/* 按钮语言来自模板：secondary 是白底 + 发丝环 + 软浮起（无描边），
-   primary 是深蓝黑 + 分层阴影（含 inset highlight，模板的视觉关键），
-   全部 pill。Feedback lives on the press: :active 缩放立即生效。 */
+/* 按钮语言（Apple DESIGN.md）：primary 是 Action Blue 胶囊 —— 系统中
+   唯一的交互色；secondary 是白底 + 发丝环的珍珠白胶囊；press 反馈即时
+   （:active 缩放）。无分层装饰阴影。 */
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-5);
-  border: none;
+  border: 1px solid var(--line);
   border-radius: var(--radius-pill);
   background: var(--surface-0);
-  box-shadow: var(--shadow-button);
   font-size: var(--text-small);
   font-weight: 500;
   color: var(--ink-1);
@@ -84,8 +84,7 @@ button {
 }
 
 .button:hover {
-  background: var(--surface-2);
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 6px 40px rgba(0, 0, 0, 0.1);
+  background: var(--surface-parchment);
 }
 
 /* Feedback on press, not on release. */
@@ -95,18 +94,17 @@ button {
 }
 
 .button--primary {
-  background: var(--ink-1);
-  color: #f6fcff;
-  box-shadow: var(--shadow-3);
+  background: var(--accent);
+  border-color: transparent;
+  color: #ffffff;
 }
 
 .button--primary:hover {
-  background: var(--ink-2);
-  box-shadow: var(--shadow-3);
+  background: var(--accent-focus);
 }
 
 .button--primary:active {
-  background: var(--ink-1);
+  background: var(--accent);
 }
 
 .button--small {
@@ -130,9 +128,10 @@ textarea:disabled {
 }
 
 /* Focus is never removed, only replaced. A researcher auditing a long trail
- * navigates by keyboard, and an invisible focus ring makes that impossible. */
+ * navigates by keyboard, and an invisible focus ring makes that impossible.
+ * Apple DESIGN.md reserves the brighter Focus Blue for the keyboard ring. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
   border-radius: var(--radius-1);
 }

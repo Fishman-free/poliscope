@@ -465,6 +465,10 @@ async def _deliberate_impl(
             on_process=None if process is None else process.emit,
             on_flush=None if process is None else process.flush,
         )
+    # Resolved before the components below so an enabled skill's instructions
+    # reach every model call of the run -- the council's prompts and the
+    # finding extractor alike (round-5 request).
+    skills = await _skills_context(session, task)
     orchestrator = CouncilOrchestrator(
         ledger=SqlEventLedger(session),
         budget=budget,
@@ -499,6 +503,7 @@ async def _deliberate_impl(
                 budget,
                 fulltext_fetcher=fulltext_fetcher,
                 object_store=object_store,
+                researcher_skills=skills,
             )
         ),
     )
@@ -507,7 +512,6 @@ async def _deliberate_impl(
         if task.council_checkpoint is None
         else CouncilCheckpoint.model_validate(task.council_checkpoint)
     )
-    skills = await _skills_context(session, task)
     # Legacy rows created before migration 0017 carry "auto": resolve it from
     # the question here so no pre-existing task is left without a language.
     output_language = task.output_language or "auto"

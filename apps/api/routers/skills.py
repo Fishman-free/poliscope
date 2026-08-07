@@ -112,6 +112,7 @@ async def list_skills(
 
 
 @router.patch("/{skill_id}")
+@router.put("/{skill_id}")
 async def toggle_skill(
     skill_id: UUID,
     request: SkillToggleRequest,

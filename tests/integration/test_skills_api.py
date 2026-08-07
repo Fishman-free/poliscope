@@ -69,8 +69,9 @@ async def test_skill_crud_lifecycle(
     assert listing.status_code == 200
     assert [skill["id"] for skill in listing.json()] == [skill_id]
 
-    # Toggle off, then on.
-    off = await api_client.patch(
+    # Toggle off via PUT (what the web client sends -- the 405 the round-5
+    # bug report surfaced), then on via PATCH.
+    off = await api_client.put(
         f"{SKILLS_PATH}/{skill_id}",
         json={"enabled": False},
         headers=headers,

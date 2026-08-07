@@ -1,52 +1,53 @@
 /* Design tokens.
  *
  * CLAUDE.md 11 asks for the look of a scientific instrument and an evidence
- * review tool -- not a cockpit. The instrument is a white one, in the
- * visual language of the Viktor Oddy studio template the researcher chose:
- * white paper throughout, ink in the deep blue-black scale (#051A24 ->
- * #7E93A0), one serif accent face (PP Mondwest) reserved for wordmarks and
- * key phrases, mono for metadata, generously rounded cards, and buttons
- * with the layered soft shadow (incl. a subtle inset highlight) that gives
- * that template its feel.
+ * review tool -- not a cockpit. The instrument is a white one. Since
+ * round-5 the surfaces follow the Apple design language
+ * (scripts/apple_design.md, VoltAgent/awesome-design-md): pure-white and
+ * parchment (#f5f5f7) canvases, near-black ink (#1d1d1f), a *single* Action
+ * Blue accent (#0066cc) carrying every interactive element -- links, pill
+ * CTAs, the focus ring -- hairline card borders, negative letter-spacing on
+ * display text, and no decorative gradients or chrome shadows.
  *
  * The four evidential colours (admitted, provisional, refuted, unknown)
- * stay the only saturated hues in the system -- colour still means "how
- * much can I trust this", never decoration -- and are chosen for AA
+ * stay the only other saturated hues in the system -- colour still means
+ * "how much can I trust this", never decoration -- and are chosen for AA
  * contrast on white.
  *
- * Type: PP Neue Montreal leads the stack (loaded from the template's Webflow
- * CDN in index.html); when it is unreachable the system face takes over
- * silently. PP Mondwest lives at /PPMondwest-Regular.woff2 -- if the file
- * is absent (commercial licence, not shipped with this repo), the serif
- * slots fall back to Georgia / system CJK serif; drop the font file into
- * apps/web/public/ and the full look activates with no code change.
+ * Type: SF Pro leads the stack (Apple's own face resolves on
+ * macOS/iOS/Safari); system-ui and the CJK faces take over elsewhere.
+ * PP Mondwest (the earlier template serif) remains reserved for the
+ * wordmark; mono stays for metadata.
  */
 
 :root {
   color-scheme: light;
 
-  /* Surfaces: white throughout, template-style. Cards, field and wells are
-   * all pure white; elevation reads through shadow and hairline only, so the
-   * instrument never turns grey. Grey exists solely on interactive states
-   * (hover/active wells). */
+  /* Surfaces: white canvas + the signature Apple parchment, plus the
+   * pearl button fill. Elevation reads through hairline and a single soft
+   * shadow; the instrument never turns grey except on interactive wells. */
   --surface-0: #ffffff;
   --surface-1: #ffffff;
   --surface-2: #fafafa;
   --surface-3: #f0f1f2;
-  --line: rgba(5, 26, 36, 0.1);
-  --line-strong: rgba(5, 26, 36, 0.2);
+  --surface-parchment: #f5f5f7;
+  --surface-pearl: #fafafc;
+  --line: rgba(0, 0, 0, 0.09);
+  --line-strong: rgba(0, 0, 0, 0.16);
 
-  /* Ink: the template's deep blue-black scale, stepped for hierarchy. */
-  --ink-1: #051a24;
-  --ink-2: #273c46;
-  --ink-3: #4d6370;
-  --ink-4: #7e93a0;
+  /* Ink: Apple's near-black scale, stepped for hierarchy. */
+  --ink-1: #1d1d1f;
+  --ink-2: #333333;
+  --ink-3: #6e6e73;
+  --ink-4: #86868b;
 
-  /* One accent: the template's secondary dark. Links, selection and focus
-   * read through weight, underline and ring rather than a second hue --
-   * the template never mixes a third colour, and neither do we. */
-  --accent: #0d212c;
-  --accent-soft: rgba(13, 33, 44, 0.08);
+  /* One accent: Apple's Action Blue -- the single interactive colour in the
+   * system. Focus ring uses the brighter Focus Blue; on dark surfaces links
+   * switch to Sky Link Blue. */
+  --accent: #0066cc;
+  --accent-focus: #0071e3;
+  --accent-on-dark: #2997ff;
+  --accent-soft: rgba(0, 102, 204, 0.08);
 
   /* Evidential state. Deep variants chosen for AA contrast on white; the
    * soft backgrounds are their 8-12% tints. These are the load-bearing
@@ -60,19 +61,19 @@
   --unknown: #6e7781;
   --unknown-soft: rgba(110, 119, 129, 0.12);
 
-  /* Type. PP Neue Montreal leads (template's body face); CJK falls back to
-   * the system CJK faces. --serif is the accent voice: wordmarks and key
-   * phrases only, never body copy. Tracking is size-specific: large text
-   * tightens, body sits near 0. */
-  --font: "PP Neue Montreal", -apple-system, BlinkMacSystemFont, system-ui,
-    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
-    sans-serif;
+  /* Type. SF Pro leads (Apple's face, resolves on Apple platforms);
+   * system-ui and CJK faces take over elsewhere. --serif stays reserved
+   * for the wordmark only. Tracking: display sizes tighten (the Apple
+   * signature), body sits at 17px. */
+  --font: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+    system-ui, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   --serif: "PP Mondwest", Georgia, "Songti SC", "SimSun", serif;
 
-  --text-display: 1.75rem;
+  --text-display: 2.5rem;
   --text-title: 1.125rem;
-  --text-body: 0.9375rem;
+  --text-body: 1.0625rem;
   --text-small: 0.8125rem;
   --text-micro: 0.75rem;
 
@@ -94,15 +95,13 @@
   --radius-5: 30px;
   --radius-pill: 999px;
 
-  /* Template shadows. Cards use the light floating shadow; buttons get the
-   * layered pair -- primary is deep with an inset highlight (critical for
-   * the feel), secondary is white with a hairline ring and a soft float. */
-  --shadow-1: 0 4px 30px rgba(0, 0, 0, 0.08);
-  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-3: 0 1px 2px rgba(5, 26, 36, 0.1), 0 4px 4px rgba(5, 26, 36, 0.09),
-    0 9px 6px rgba(5, 26, 36, 0.05), 0 17px 7px rgba(5, 26, 36, 0.01),
-    0 26px 7px rgba(5, 26, 36, 0), inset 0 2px 8px rgba(255, 255, 255, 0.5);
-  --shadow-button: 0 0 0 0.5px rgba(0, 0, 0, 0.05), 0 4px 30px rgba(0, 0, 0, 0.08);
+  /* Apple-style elevation: whisper-soft, used only where a card needs to
+   * breathe. No layered chrome shadows on buttons -- elevation is a
+   * property of surfaces holding content, never of the UI chrome. */
+  --shadow-1: 0 8px 30px rgba(0, 0, 0, 0.06);
+  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.05);
+  --shadow-3: 0 1px 1px rgba(0, 0, 0, 0.04), 0 4px 8px rgba(0, 0, 0, 0.05);
+  --shadow-button: 0 1px 1px rgba(0, 0, 0, 0.04);
 
   /* Translucent chrome: a white frosted material over the content scrolling
    * underneath. */

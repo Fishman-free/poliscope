@@ -56,6 +56,12 @@ services:
       dockerfile: apps/api/Dockerfile
     environment:
       POLISCOPE_APP_DATABASE_URL: "postgresql+asyncpg://poliscope_app:${POLISCOPE_APP_DATABASE_PASSWORD:?set in .env}@postgres:5432/${POLISCOPE_DB_NAME:-poliscope}"
+      # Optional: a GitHub Personal Access Token lifts the skill-install API
+      # quota from 60/hour to 5000/hour and unlocks private repositories.
+      # Without it, installs still work -- raw/tarball downloads carry no
+      # quota -- only the recursive tree scan is rate limited (and falls
+      # back to the tarball transparently).
+      POLISCOPE_GITHUB_TOKEN: "${POLISCOPE_GITHUB_TOKEN:-}"
     # No `ports:` here on purpose: `caddy` is the only service allowed to
     # bind a host port (see its comment below), so the shared password at
     # the edge cannot be routed around by hitting this container directly.

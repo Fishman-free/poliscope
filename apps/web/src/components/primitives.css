@@ -13,7 +13,9 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--line);
-  background: var(--surface-1);
+  /* Apple: the card header recedes into the parchment canvas, so the white
+   * body of the card reads as the surface holding the content. */
+  background: var(--surface-parchment);
 }
 
 .panel__subtitle {

@@ -188,6 +188,7 @@ class FindingExtractor:
         *,
         fulltext_fetcher: FullTextFetcher | None = None,
         object_store: PrivateObjectStore | None = None,
+        researcher_skills: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self._session = session
         self._tools = tools
@@ -196,6 +197,18 @@ class FindingExtractor:
         self._budget = budget
         self._fetcher = fulltext_fetcher or FullTextFetcher.from_env()
         self._object_store = object_store or PrivateObjectStore.from_env()
+        # Round-5 request: an enabled skill instructs *every* process that
+        # calls a model -- extraction included -- not just the council. Same
+        # non-evidence labelling as the council's rendering: a skill steers
+        # how the extraction is performed, it never supports a claim.
+        self._skill_instructions = "".join(
+            (
+                f"\n【研究者提供的技能指令（非正式证据，来源：{name}）】{markdown}"
+                if markdown.strip()
+                else ""
+            )
+            for name, markdown in researcher_skills
+        )
 
     async def extract(
         self,
@@ -560,7 +573,10 @@ class FindingExtractor:
             purpose="finding_extraction",
             model_class=ModelClass.MEDIUM,
             messages=(
-                ModelMessage(role="system", content=_SYSTEM_PROMPT),
+                ModelMessage(
+                    role="system",
+                    content=_SYSTEM_PROMPT + self._skill_instructions,
+                ),
                 ModelMessage(role="user", content=_render_pages(pages)),
             ),
             output_schema="StudyFindingExtraction",
