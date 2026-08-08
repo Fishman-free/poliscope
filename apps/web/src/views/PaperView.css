@@ -87,3 +87,80 @@
   border-top: 1px solid var(--line);
   padding-top: var(--space-3);
 }
+
+/* 审查报告（round-7）：复述论文观点、列出不严谨/证据不足/改进建议。
+   视觉上延续全站科研仪器风格：hairline 分隔、发丝线卡片、唯一交互色。 */
+.paper__subsection {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.paper__review-claims {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.paper__review-claims li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+}
+
+.paper__review-claim-statement {
+  font-size: var(--text-body);
+  color: var(--ink-1);
+}
+
+.paper__review-claim-evidence {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
+.paper__review-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.paper__review-list li {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+}
+
+.paper__review-issue {
+  font-size: var(--text-body);
+  color: var(--ink-1);
+}
+
+.paper__review-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.paper__conclusion {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-body);
+  color: var(--ink-1);
+  line-height: 1.6;
+}

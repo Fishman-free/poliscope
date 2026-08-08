@@ -94,6 +94,8 @@ async def test_task_list_row_shape(
         "created_by",
         "created_at",
         "updated_at",
+        "task_type",
         "effective_model_config",
     }
+    assert row["task_type"] == "deep_research"
     assert "api_key" not in row["effective_model_config"]

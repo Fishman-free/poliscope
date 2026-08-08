@@ -85,6 +85,14 @@ class ResearchTaskModel(Base):
     output_language: Mapped[str] = mapped_column(
         String(16), nullable=False, default="auto"
     )
+    # Task mode (migration 0020): "deep_research" (a controversy question,
+    # the original flow) or "paper_review" (the researcher uploads a paper
+    # for the council to critique). The worker reads it to decide whether to
+    # run the paper-understanding step and which prompt shape to use; the
+    # synthesizer reads it to decide which report shape to emit.
+    task_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="deep_research"
+    )
 
 
 class ResearchScopeModel(Base):

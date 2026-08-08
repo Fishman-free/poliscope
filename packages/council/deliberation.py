@@ -244,6 +244,43 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
             lines.append(
                 f"【研究者提供的技能指令（非正式证据，来源：{name}）】{markdown}"
             )
+    # Round-7 paper-review tasks: the machine's reading of the uploaded paper
+    # (see packages/papers/understanding.py), injected so the seven seats
+    # critique the paper's actual claims and evidence. Explicitly labelled as
+    # non-evidence process context, exactly like the knowledge-base hits and
+    # skills above: the paper's own extracted text is the Level A evidence
+    # (acquired via acquire_uploaded), this summary only orients the seats.
+    if context.paper_understanding:
+        understanding = context.paper_understanding
+        lines.append(
+            "【论文理解（研究者上传论文的机器摘要，非正式证据；"
+            "论文全文已按 Level A 进入证据图）】"
+        )
+        paper_title = understanding.get("title")
+        if isinstance(paper_title, str) and paper_title:
+            lines.append(f"标题：{paper_title}")
+        paper_question = understanding.get("research_question")
+        if isinstance(paper_question, str) and paper_question:
+            lines.append(f"论文研究问题：{paper_question}")
+        main_claims = understanding.get("main_claims")
+        if isinstance(main_claims, (list, tuple)):
+            for claim in main_claims:
+                if not isinstance(claim, Mapping):
+                    continue
+                statement = str(claim.get("statement", "?"))
+                support = claim.get("supporting_evidence")
+                if isinstance(support, (list, tuple)) and support:
+                    evidence = "；".join(str(item) for item in support)
+                    lines.append(f"- 观点：{statement}（论文佐证：{evidence}）")
+                else:
+                    lines.append(f"- 观点：{statement}（论文未提供可辨识佐证）")
+        unverifiable = understanding.get("unverifiable")
+        if isinstance(unverifiable, (list, tuple)) and unverifiable:
+            lines.append(
+                "无法从文本核验的部分：" + "；".join(str(item) for item in unverifiable)
+            )
+        if understanding.get("truncated") is True:
+            lines.append("（注意：上传文本过长已被截断，分析可能未覆盖全文）")
     # Plan phase 8.3: the human's advisory steer from the BLINDSPOT_BOUNTY ->
     # JOINT_MODELING checkpoint, rendered only in this one phase and clearly
     # labelled as non-scientific. CLAUDE.md 4/8 forbid a human vote from

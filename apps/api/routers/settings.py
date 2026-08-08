@@ -30,9 +30,39 @@ from packages.models.endpoint_config import (
     normalize_base_url,
     probe_endpoint,
 )
+from packages.models.free_trial import (
+    FREE_TRIAL_API_KEY_ENV,
+    FREE_TRIAL_BASE_URL,
+    FREE_TRIAL_EXHAUSTED_MESSAGE,
+    FREE_TRIAL_LIMIT,
+    FREE_TRIAL_MODEL_NAME,
+    FREE_TRIAL_UNAVAILABLE_MESSAGE,
+)
 from packages.models.settings import ModelSettingsRepository, StoredModelSettings
 
 router = APIRouter()
+
+
+def _free_trial_block(
+    saved: StoredModelSettings,
+) -> dict[str, Any]:
+    """The free-trial status the client may see.
+
+    ``enabled`` means the deployment operator has configured the free-trial
+    vendor (an env key exists -- the key itself never leaves the server);
+    ``available`` adds the quota check; ``active`` says the account's current
+    saved endpoint IS the free trial. No key, no quota arithmetic the client
+    could exploit -- the server enforces both.
+    """
+    configured = bool(os.environ.get(FREE_TRIAL_API_KEY_ENV))
+    return {
+        "enabled": configured,
+        "active": saved.is_free_trial,
+        "used": saved.free_trial_used,
+        "limit": FREE_TRIAL_LIMIT,
+        "remaining": saved.free_trial_remaining,
+        "available": configured and saved.free_trial_remaining > 0,
+    }
 
 
 def _dto(
@@ -96,11 +126,14 @@ async def get_model_settings(
     current_user: CurrentUserDep,
 ) -> dict[str, Any]:
     settings = await ModelSettingsRepository(session).get(current_user.id)
-    return _dto(
-        base_url=settings.model_base_url,
-        model_name=settings.model_name,
-        has_api_key=settings.has_api_key,
-    )
+    return {
+        **_dto(
+            base_url=settings.model_base_url,
+            model_name=settings.model_name,
+            has_api_key=settings.has_api_key,
+        ),
+        "free_trial": _free_trial_block(settings),
+    }
 
 
 @router.post("/model/test")
@@ -204,15 +237,86 @@ async def put_model_settings(
                 detail=f"连接测试未通过，未保存：{result.message}",
             )
 
+    # A manual save is a deliberate switch back to the researcher's own
+    # endpoint -- whatever the free trial was, it is no longer active. The
+    # consumed quota stays consumed (it is a per-account record of trial
+    # usage, not a state that can be undone by switching endpoints).
     saved = await repository.save(
         current_user.id,
         base_url=base_url,
         api_key=api_key,
         model_name=model_name,
+        is_free_trial=False,
     )
     await session.commit()
-    return _dto(
-        base_url=saved.model_base_url,
-        model_name=saved.model_name,
-        has_api_key=saved.has_api_key,
+    return {
+        **_dto(
+            base_url=saved.model_base_url,
+            model_name=saved.model_name,
+            has_api_key=saved.has_api_key,
+        ),
+        "free_trial": _free_trial_block(saved),
+    }
+
+
+@router.post("/model/free-trial")
+async def activate_free_trial(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Save the deployment's free-trial endpoint as this account's settings.
+
+    One slot per account (``FREE_TRIAL_LIMIT``), enforced server-side: the
+    count lives in ``app_settings.free_trial_used`` and is consumed by
+    ``confirm-claims`` when a trial-flagged task actually starts (see
+    apps/api/routers/tasks.py) -- activating here only *saves* the endpoint,
+    it never consumes a slot. The deployment key comes from the operator's
+    environment and is stored like any other saved key: never echoed back.
+    """
+    repository = ModelSettingsRepository(session)
+    current = await repository.get(current_user.id)
+
+    api_key = os.environ.get(FREE_TRIAL_API_KEY_ENV)
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{FREE_TRIAL_UNAVAILABLE_MESSAGE}（部署方未配置免费模型服务）",
+        )
+    if current.free_trial_used >= FREE_TRIAL_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=FREE_TRIAL_EXHAUSTED_MESSAGE,
+        )
+
+    # Same connection gate as a manual save: only a free-trial endpoint that
+    # actually answers may become this account's setting. A failing probe
+    # (bad deployment key, vendor outage) refuses the activation with the
+    # reason instead of saving a configuration that would send every seat
+    # absent.
+    result: ProbeResult = await probe_endpoint(
+        base_url=FREE_TRIAL_BASE_URL,
+        api_key=api_key,
+        model_name=FREE_TRIAL_MODEL_NAME,
     )
+    if not result.ok:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{FREE_TRIAL_UNAVAILABLE_MESSAGE}：{result.message}",
+        )
+
+    saved = await repository.save(
+        current_user.id,
+        base_url=FREE_TRIAL_BASE_URL,
+        api_key=api_key,
+        model_name=FREE_TRIAL_MODEL_NAME,
+        is_free_trial=True,
+    )
+    await session.commit()
+    return {
+        **_dto(
+            base_url=saved.model_base_url,
+            model_name=saved.model_name,
+            has_api_key=saved.has_api_key,
+        ),
+        "free_trial": _free_trial_block(saved),
+    }

@@ -422,6 +422,12 @@ class PhaseContext:
     # treated as evidence a later phase's Evidence Gate/Claim/DissentCertificate
     # logic can read.
     guidance: str | None = None
+    # The paper-understanding summary for a paper_review task (round-7), or
+    # None for a deep_research task. Rendered into every phase's prompt as
+    # explicitly non-evidence context -- the machine's reading of the uploaded
+    # paper, so the seats critique the paper's actual claims (the paper's own
+    # text is the Level A evidence via the acquisition pass).
+    paper_understanding: dict[str, object] | None = None
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase.

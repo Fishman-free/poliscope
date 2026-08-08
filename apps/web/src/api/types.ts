@@ -104,6 +104,9 @@ export interface TaskSummary {
   /** Last update time; the queue panel uses it to say how long a RUNNING
    * task has been going. */
   updated_at?: string | null;
+  /** Task mode: "deep_research" (a controversy question) or "paper_review"
+   * (the council critiques an uploaded paper). Absent on old snapshots. */
+  task_type?: string;
   effective_model_config?: EffectiveModelConfig | null;
 }
 
@@ -185,6 +188,18 @@ export interface ModelSettings {
   /** Whether the saved settings would actually be applied to new tasks
    * (task creation inherits only when both URL and key are present). */
   usable: boolean;
+  /** Free-trial status (round-7): the deployment's qwen3.8-max trial. The
+   * server owns the quota; the client only displays it. */
+  free_trial?: {
+    /** Deployment operator configured the free-trial vendor. */
+    enabled: boolean;
+    /** This account's current saved endpoint IS the free trial. */
+    active: boolean;
+    used: number;
+    limit: number;
+    remaining: number;
+    available: boolean;
+  };
 }
 
 /** `POST /api/auth/register` / `login` -- the bearer token is handed to the
@@ -332,6 +347,50 @@ export interface FinalPaper {
   investigation_process: string[];
 }
 
+/** One claim the reviewed paper makes, with the paper's own support for it. */
+export interface ReviewClaim {
+  statement: string;
+  supporting_evidence: string[];
+}
+
+/** One identified weakness in the reviewed paper. */
+export interface ReviewIssue {
+  claim_ref: string | null;
+  issue: string;
+  severity?: string | null;
+}
+
+/** One conclusion whose evidence the review found insufficient. */
+export interface EvidenceGap {
+  claim_ref: string | null;
+  missing_evidence: string;
+  suggested_evidence: string | null;
+}
+
+/** The paper-review task's final report (round-7, FINAL_PAPER_DRAFTED with a
+ * `paper_overview` key): what the paper argues, where it is not rigorous or
+ * well evidenced, and how to improve it. */
+export interface PaperReviewReport {
+  title: string;
+  paper_overview: {
+    title: string | null;
+    research_question: string;
+    main_claims: ReviewClaim[];
+  };
+  rigor_issues: ReviewIssue[];
+  evidence_insufficiency: EvidenceGap[];
+  improvement_suggestions: ReviewIssue[];
+  conclusion: string;
+  limitations: string[];
+  investigation_process: string[];
+}
+
+export function isPaperReview(
+  paper: FinalPaper | PaperReviewReport | null,
+): paper is PaperReviewReport {
+  return paper !== null && "paper_overview" in paper;
+}
+
 export interface WorkspaceSnapshot {
   task: TaskSummary;
   brief: ResearchBrief;
@@ -345,8 +404,9 @@ export interface WorkspaceSnapshot {
   independent_cluster_count: number;
   workspace_version: number;
   safety_notice: SafetyNotice;
-  /** The synthesised final paper, or null before synthesis ran. */
-  paper: FinalPaper | null;
+  /** The synthesised final paper (or review report), or null before
+   * synthesis ran. */
+  paper: FinalPaper | PaperReviewReport | null;
   /** The conditioned consensus from joint modeling, or null. */
   consensus: Record<string, unknown> | null;
 }

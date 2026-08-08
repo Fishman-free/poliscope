@@ -66,6 +66,10 @@ services:
       # quota -- only the recursive tree scan is rate limited (and falls
       # back to the tarball transparently).
       POLISCOPE_GITHUB_TOKEN: "${POLISCOPE_GITHUB_TOKEN:-}"
+      # Free-trial vendor key (round-7): the API's /settings/model/free-trial
+      # endpoint probes and stores this endpoint on demand. Blank = the
+      # trial is disabled for every account.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
     # No `ports:` here on purpose: `caddy` is the only service allowed to
     # bind a host port (see its comment below), so the shared password at
     # the edge cannot be routed around by hitting this container directly.
@@ -95,6 +99,11 @@ services:
       POLISCOPE_MODEL_NAME_LIGHTWEIGHT: ${POLISCOPE_MODEL_NAME_LIGHTWEIGHT:-}
       POLISCOPE_TOOLS_CONTACT_EMAIL: ${POLISCOPE_TOOLS_CONTACT_EMAIL:-}
       POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY: ${POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY:-}
+      # Free-trial vendor key (round-7): enables the per-account qwen3.8-max
+      # trial in Model Settings. The worker reads it through the stored task
+      # config, so this env is for the API's activation probe; a deployment
+      # that skips the trial simply leaves it blank.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

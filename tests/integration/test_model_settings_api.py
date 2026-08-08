@@ -515,3 +515,170 @@ async def test_clear_api_key_skips_the_probe(
         )
     assert row is not None
     assert row.model_api_key is None
+
+
+# --- round-7: free qwen3.8-max trial (per-account quota of 2) -------------
+#
+# These tests run against the *shared* session-level account, so each one
+# both resets the trial state before it and cleans up (trial marker, count,
+# AND the saved endpoint) afterwards -- a leftover saved key here would
+# change what task creation inherits for every other test file.
+
+
+async def _reset_trial(
+    app_sessions: async_sessionmaker[AsyncSession], account: dict[str, Any]
+) -> None:
+    """Zero the trial state and the saved endpoint row."""
+    from sqlalchemy import update as sa_update
+
+    async with app_sessions() as session:
+        await session.execute(
+            sa_update(AppSettingsModel)
+            .where(AppSettingsModel.user_id == UUID(account["id"]))
+            .values(
+                is_free_trial=False,
+                free_trial_used=0,
+                model_base_url=None,
+                model_api_key=None,
+                model_name=None,
+            )
+        )
+        await session.commit()
+
+
+async def test_free_trial_activation_saves_the_trial_endpoint(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    try:
+        await _reset_trial(app_sessions, account)
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+
+        response = await api_client.post("/api/settings/model/free-trial", json={})
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        assert body["model_name"] == "qwen3.8-max"
+        assert body["free_trial"]["active"] is True
+        assert body["free_trial"]["used"] == 0
+        assert body["free_trial"]["limit"] == 2
+        assert body["free_trial"]["remaining"] == 2
+        # 红线：任何响应都不回显 key（含服务端 key）。
+        assert "api_key" not in body
+        assert "sk-dashscope" not in response.text
+
+        async with app_sessions() as session:
+            row = await session.scalar(
+                select(AppSettingsModel).where(
+                    AppSettingsModel.user_id == UUID(account["id"]),
+                    AppSettingsModel.id == 1,
+                )
+            )
+        assert row is not None
+        assert row.is_free_trial is True
+        assert row.model_api_key == "sk-dashscope-test"
+    finally:
+        await _reset_trial(app_sessions, account)
+
+
+async def test_free_trial_unavailable_without_deployment_key(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    try:
+        await _reset_trial(app_sessions, account)
+        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+
+        response = await api_client.post("/api/settings/model/free-trial", json={})
+
+        assert response.status_code == 503
+        assert "免费体验暂未开放" in response.json()["detail"]
+    finally:
+        await _reset_trial(app_sessions, account)
+
+
+async def test_free_trial_refuses_after_quota_exhausted(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    try:
+        await _reset_trial(app_sessions, account)
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+        from sqlalchemy import update as sa_update
+
+        async with app_sessions() as session:
+            await session.execute(
+                sa_update(AppSettingsModel)
+                .where(AppSettingsModel.user_id == UUID(account["id"]))
+                .values(free_trial_used=2)
+            )
+            await session.commit()
+
+        response = await api_client.post("/api/settings/model/free-trial", json={})
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "免费额度已用尽，请填写你自己的api-key"
+    finally:
+        await _reset_trial(app_sessions, account)
+
+
+async def test_manual_save_clears_the_free_trial_marker(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    try:
+        await _reset_trial(app_sessions, account)
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+        activated = await api_client.post("/api/settings/model/free-trial", json={})
+        assert activated.status_code == 200
+
+        saved = await api_client.put(
+            SETTINGS_PATH,
+            json={"base_url": "https://own.example", "api_key": "sk-own"},
+        )
+
+        assert saved.status_code == 200
+        assert saved.json()["free_trial"]["active"] is False
+        async with app_sessions() as session:
+            row = await session.scalar(
+                select(AppSettingsModel).where(
+                    AppSettingsModel.user_id == UUID(account["id"]),
+                    AppSettingsModel.id == 1,
+                )
+            )
+        assert row is not None
+        assert row.is_free_trial is False
+        # 换回自己的 key：服务端 key 被覆盖。
+        assert row.model_api_key == "sk-own"
+    finally:
+        await _reset_trial(app_sessions, account)
+
+
+async def test_get_reports_free_trial_block_without_leaking_the_key(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    try:
+        await _reset_trial(app_sessions, account)
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+
+        body = (await api_client.get(SETTINGS_PATH)).json()
+
+        assert body["free_trial"]["enabled"] is True
+        assert body["free_trial"]["active"] is False
+        assert body["free_trial"]["remaining"] == 2
+        assert "api_key" not in body
+        assert "sk-dashscope" not in str(body)
+    finally:
+        await _reset_trial(app_sessions, account)

@@ -43,6 +43,8 @@ EXPECTED_COLUMNS = {
         "skill_ids",
         # Output language the council must answer in (migration 0017).
         "output_language",
+        # Task mode (migration 0020): "deep_research" or "paper_review".
+        "task_type",
     },
     "research_scopes": {
         "id",

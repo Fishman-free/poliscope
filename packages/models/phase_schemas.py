@@ -313,6 +313,148 @@ FINAL_PAPER_OUTPUT: Final[dict[str, Any]] = {
     ],
 }
 
+# The paper-review task's one-shot understanding call (round-7,
+# packages/papers/understanding.py): the model reads the uploaded paper and
+# states its research question, main claims with their supporting evidence,
+# and anything it could not verify. Not a seat's answer -- the worker stores
+# it as a process-only ledger event and injects it into every seat's prompt
+# as explicitly non-evidence context.
+PAPER_UNDERSTANDING_OUTPUT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "research_question": {"type": "string"},
+        "main_claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "statement": {
+                        "type": "string",
+                        "description": "One claim the paper makes",
+                    },
+                    "supporting_evidence": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "What the paper offers in support (results, "
+                            "citations, arguments), as stated in the paper"
+                        ),
+                    },
+                    "locations": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Page/paragraph locators in the uploaded text, "
+                            "e.g. 'p.5' or 'para 12'"
+                        ),
+                    },
+                },
+                "required": ["statement", "supporting_evidence"],
+            },
+        },
+        "unverifiable": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Claims or parts of the paper that could not be understood "
+                "from the provided text -- must be admitted, not guessed"
+            ),
+        },
+    },
+    "required": ["title", "research_question", "main_claims"],
+}
+
+# The paper-review task's final report shape (round-7,
+# packages/reports/synthesis.py). Same machinery as FINAL_PAPER_OUTPUT, but
+# the subject is the *uploaded paper*: the report must state what the paper
+# argues, then where its argument is not rigorous or well-evidenced, then how
+# to improve it.
+PAPER_REVIEW_OUTPUT: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "paper_overview": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "research_question": {"type": "string"},
+                "main_claims": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "statement": {"type": "string"},
+                            "supporting_evidence": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                        },
+                        "required": ["statement"],
+                    },
+                },
+            },
+            "required": ["research_question", "main_claims"],
+        },
+        "rigor_issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim_ref": {
+                        "type": "string",
+                        "description": (
+                            "Which paper claim or part this issue concerns"
+                        ),
+                    },
+                    "issue": {"type": "string"},
+                    "severity": {
+                        "type": "string",
+                        "description": "high, medium, or low",
+                    },
+                },
+                "required": ["issue"],
+            },
+        },
+        "evidence_insufficiency": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim_ref": {"type": "string"},
+                    "missing_evidence": {"type": "string"},
+                    "suggested_evidence": {"type": "string"},
+                },
+                "required": ["missing_evidence"],
+            },
+        },
+        "improvement_suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim_ref": {"type": "string"},
+                    "issue": {"type": "string"},
+                },
+                "required": ["issue"],
+            },
+        },
+        "conclusion": {"type": "string"},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "investigation_process": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "title",
+        "paper_overview",
+        "rigor_issues",
+        "evidence_insufficiency",
+        "improvement_suggestions",
+        "conclusion",
+        "limitations",
+        "investigation_process",
+    ],
+}
+
 # Keyed by the exact schema name strings in
 # packages.council.deliberation.PHASE_OUTPUT_SCHEMAS.
 PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
@@ -328,6 +470,11 @@ PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     # (packages/reports/synthesis.py). Same repair/quarantine machinery as the
     # rounds; a paper that cannot be repaired becomes FINAL_PAPER_FAILED.
     "FinalPaper": FINAL_PAPER_OUTPUT,
+    # Round-7 system-level schemas: the paper-review task's one-shot
+    # understanding call (packages/papers/understanding.py) and final report
+    # (packages/reports/synthesis.py). Neither is a seat's answer.
+    "PaperUnderstanding": PAPER_UNDERSTANDING_OUTPUT,
+    "PaperReviewReport": PAPER_REVIEW_OUTPUT,
 }
 
 __all__ = ["PHASE_OUTPUT_JSON_SCHEMAS"]

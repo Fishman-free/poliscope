@@ -390,12 +390,15 @@ async def test_upload_rejects_empty_file(
 async def test_upload_rejects_non_pdf_bytes(
     api_client: httpx.AsyncClient,
 ) -> None:
+    """Round-7: the gate is extraction, not a PDF magic-byte claim -- bytes
+    that cannot become text (here a fake .pdf body) are refused with the
+    parse reason up front instead of a silent gap in the worker."""
     body = await _create(api_client)
     response = await _upload_pdf(
         api_client, body["task_id"], b"PK\x03\x04 not a pdf at all"
     )
     assert response.status_code == 422
-    assert "not a PDF" in response.text
+    assert "cannot be read as text" in response.text
 
 
 async def test_upload_rejects_oversized_file(
@@ -449,7 +452,7 @@ async def test_list_reports_effective_model_config(
     their settings actually take effect."""
     async def _create_task() -> str:
         body = await _create(api_client)
-        return body["task_id"]
+        return str(body["task_id"])
 
     plain_task = await _create_task()
     listing = (await api_client.get("/api/tasks")).json()
@@ -496,6 +499,14 @@ async def test_list_reports_effective_model_config(
     detail = (await api_client.get(f"/api/tasks/{saved_task}")).json()
     assert detail["effective_model_config"]["source"] == "saved"
     assert detail["effective_model_config"]["base_url"] == "https://api.deepseek.com"
+
+    # 清理：这个测试运行在共享的 session 级账号上，留下的设置会改变其他
+    # 测试文件（及其它运行顺序）中任务创建的继承行为——测试不得依赖文件
+    # 收集顺序。
+    cleared = await api_client.put(
+        "/api/settings/model", json={"clear_api_key": True}
+    )
+    assert cleared.status_code == 200
 
 
 async def test_delete_task_removes_the_task_and_its_records(
