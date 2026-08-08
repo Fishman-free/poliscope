@@ -25,8 +25,12 @@ services:
       POSTGRES_DB: ${POLISCOPE_DB_NAME:-poliscope}
     volumes:
       - poliscope-postgres-data:/var/lib/postgresql/data
+    # Host mapping binds loopback only: `api` and `worker` reach Postgres over
+    # the compose-internal network (`postgres:5432`), so the host port exists
+    # solely for the developer's psql/backup access and must never be
+    # reachable from the public internet on a cloud host.
     ports:
-      - "${POLISCOPE_DB_HOST_PORT:-55440}:5432"
+      - "127.0.0.1:${POLISCOPE_DB_HOST_PORT:-55440}:5432"
     healthcheck:
       test:
         [
@@ -124,8 +128,10 @@ services:
       dockerfile: deploy/caddy/Dockerfile
     environment:
       POLISCOPE_SITE_ADDRESS: ${POLISCOPE_SITE_ADDRESS:-:80}
-      POLISCOPE_SITE_USERNAME: ${POLISCOPE_SITE_USERNAME:-poliscope}
-      POLISCOPE_SITE_PASSWORD: ${POLISCOPE_SITE_PASSWORD:?set in .env}
+    # Note: the legacy POLISCOPE_SITE_USERNAME / POLISCOPE_SITE_PASSWORD
+    # shared-password variables are gone -- caddy is pure transport and the
+    # account system (register / login, per-account isolation) owns access
+    # control. There is nothing left to configure here.
     # POLISCOPE_SITE_HOST_PORT(_TLS) default to the standard 80/443 for a real
     # deployment. Override only if this host already has something else bound
     # to 80/443 (e.g. a different project's reverse proxy) -- this changes

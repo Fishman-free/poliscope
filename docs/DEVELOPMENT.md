@@ -268,10 +268,15 @@ docker compose up --build -d
 ### 为什么 `api`/`web` 不直接暴露端口
 
 `api` 和 `web` 只在 Compose 内部网络上用 `expose:` 声明端口，不映射到宿主机——`caddy` 是**唯一**
-绑定 `80`/`443` 的服务。Caddy 只做反代不做认证（不再有 `basic_auth`）：访问控制由 API 层的账号
+绑定公网可达端口的服务。Caddy 只做反代不做认证（不再有 `basic_auth`）：访问控制由 API 层的账号
 系统完成（见下节）。`web` 容器自己的 nginx（`apps/web/nginx.conf`）已经把 `/api/*`（含 SSE，
 `proxy_buffering off` + `proxy_read_timeout 3600s`）和静态资源拆开转发到 `api:8000` / 自身静态文件，
 所以 Caddy 只需要两条 `handle` 规则（见 `deploy/caddy/Caddyfile`），不需要在边缘再拆一次路由。
+
+**Postgres 的宿主机端口同样只绑定回环地址**（`127.0.0.1:${POLISCOPE_DB_HOST_PORT:-55440}:5432`）：
+`api`/`worker` 通过 Compose 内部网络（`postgres:5432`）访问数据库，宿主机端口只留给部署者自己的
+`psql`/备份使用——在带公网 IP 的云主机上，这个端口对公网不可达。数据库无论如何都不应暴露给公网；
+如需远程运维数据库，走 SSH 隧道而不是改端口绑定。
 
 ### 公开落地页与账号系统的边界
 
@@ -281,9 +286,10 @@ docker compose up --build -d
 - **研究证据工作台与全部 `/api/*` 需要账号**：注册/登录后拿到 30 天 bearer token（浏览器存
   localStorage 实现本机免登录）；所有业务端点按账号隔离，跨账号访问一律 404（不泄露存在性）。
 
-账号系统已取代旧的 Caddy 共享口令（`basic_auth`）。`.env` 里的 `POLISCOPE_SITE_USERNAME` /
-`POLISCOPE_SITE_PASSWORD` 已不再使用，可删除；`deploy/caddy/Caddyfile` 与 `entrypoint.sh` 不再
-生成或注入任何口令。账号模型（`users` / `auth_tokens`，PBKDF2 密码哈希、token 仅存 sha256）在
+账号系统已取代旧的 Caddy 共享口令（`basic_auth`），`POLISCOPE_SITE_USERNAME` /
+`POLISCOPE_SITE_PASSWORD` 已从 `docker-compose.yml` 与 `.env.example` 中**彻底移除**——Caddy 是纯
+传输层，`deploy/caddy/Caddyfile` 与 `entrypoint.sh` 不生成也不注入任何口令，`.env` 里不再需要这两个
+变量。账号模型（`users` / `auth_tokens`，PBKDF2 密码哈希、token 仅存 sha256）在
 `packages/accounts/`，API 端点在 `apps/api/routers/auth.py`，按账号隔离的数据列由迁移 0012–0014
 管理。
 
@@ -305,6 +311,29 @@ curl http://localhost/api/auth/me              # 无 token：401 —— 访问�
 `POLISCOPE_MODEL_*` 系列变量指向任意 OpenAI-Chat-Completions 兼容端点；**千万不要**填成运行 Claude
 Code 会话自己的 `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`——那是 Claude Code 连 Anthropic 用的凭证，
 不属于 Poliscope 的模型网关。
+
+### GitHub Actions 自动部署：push 即上线
+
+仓库自带 `.github/workflows/deploy.yml`：每次 push 到 `main`（或手动触发）都会 SSH 登录部署服务器，
+执行 `git pull --ff-only origin main && docker compose up -d --build`，并做一次落地页健康检查。
+服务器上的 `.env` 不在 git 里、由部署者维护，部署流程只更新代码与镜像，不会触碰数据库卷。
+
+**一次性准备**（服务器侧）：
+
+```bash
+# 1. 服务器：克隆仓库到 /opt/poliscope 并配置 .env（见上文，模型网关留空=BYOK 模式）
+cd /opt && git clone https://github.com/Fishman-free/poliscope.git && cd poliscope
+cp .env.example .env && nano .env
+docker compose up -d --build        # 首次手动部署
+
+# 2. GitHub 仓库 Settings → Secrets and variables → Actions，添加：
+#    SERVER_HOST   服务器公网 IP 或域名
+#    SERVER_USER   SSH 用户（需有 docker 权限）
+#    SERVER_SSH_KEY 该用户的 SSH 私钥（推荐 ed25519）
+```
+
+之后每次 `git push origin main`，服务器自动更新。工作流用 `--ff-only` 而非 `reset --hard`：
+如果服务器 checkout 意外偏离 `origin/main`，部署会显式失败并需要人工处理，而不是被自动化静默覆盖。
 
 ### 任务级模型设置：研究者自带接口
 

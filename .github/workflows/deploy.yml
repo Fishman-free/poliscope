@@ -1,0 +1,67 @@
+# Auto-deploy Poliscope to the production server on every push to `main`.
+#
+# The server keeps its own `.env` (never in git) with the database passwords,
+# the site address, and the model/tool gateway settings; this workflow only
+# updates the code and rebuilds the stack:
+#
+#   git fetch && git pull --ff-only origin main
+#   docker compose up -d --build
+#
+# `--ff-only` deliberately fails (instead of force-resetting) if the server
+# checkout ever diverges from origin/main -- the fix is a human decision, not
+# something automation should silently destroy.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   SERVER_HOST    public IP or hostname of the deployment server
+#   SERVER_USER    SSH user with docker access (e.g. "deploy" or "root")
+#   SERVER_SSH_KEY private key for that user (ed25519 recommended)
+#
+# One-time server setup (see docs/DEVELOPMENT.md, "自建部署"):
+#   cd /opt && git clone https://github.com/Fishman-free/poliscope.git
+#   cd poliscope && cp .env.example .env   # fill in real secrets
+#   docker compose up -d --build
+
+name: Deploy Poliscope
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # manual "Run workflow" button for on-demand deploys
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+            "$SERVER_USER@$SERVER_HOST" \
+            'set -eu; \
+             cd /opt/poliscope && \
+             git fetch origin main && \
+             git pull --ff-only origin main && \
+             docker compose up -d --build'
+
+      - name: Health check
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          # Give caddy a moment, then confirm the landing page answers.
+          ssh -i ~/.ssh/id_ed25519 \
+            "$SERVER_USER@$SERVER_HOST" \
+            'sleep 8 && curl -fsS -o /dev/null -w "landing: %{http_code}\n" http://localhost/'
