@@ -1759,6 +1759,15 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
                 unresolved_conflicts=(),
             ),
             initial_judgments=judgments,
+            # Only the seats that actually produced a judgment are judged:
+            # judgments come from this round's collected outputs, or from the
+            # precommitment carry when nothing answered now (the keys are
+            # Seat in both paths). A run with fewer seats -- the single-agent
+            # evaluation baseline -- must not mint placeholder FINAL_JUDGMENT
+            # events for the other six. `or context.seats` is belt and braces:
+            # the `if not judgments` early return above already guarantees
+            # non-empty, and context.seats is the honest fallback anyway.
+            seats=tuple(judgments) or context.seats,
         )
     )
     events = [

@@ -68,3 +68,6 @@ local_objects/
 *.local.json
 apps/web/node_modules/
 apps/web/dist/
+
+# --- Arbor evaluation session state (local) ---
+.arbor/

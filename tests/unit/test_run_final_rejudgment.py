@@ -141,10 +141,11 @@ async def test_final_rejudgment_emits_a_confidence_marker_regardless_of_dissent(
     assert markers[0].payload["phase"] == TaskPhase.FINAL_REJUDGMENT.value
     note = markers[0].payload["confidence_delta_note"]
     assert isinstance(note, str)
-    # FinalRejudgmentHandler judges all seven seats regardless of how many
-    # outputs were collected this round (missing ones default to "no initial
-    # judgment", which _detect_dissent does not match).
-    assert "7 位科学家给出最终判断" in note
+    # Only the seats that actually produced a final judgment this round are
+    # judged -- no "no initial judgment" placeholders for seats that did not
+    # participate (the two-seat run below, or the single-agent evaluation
+    # baseline).
+    assert "2 位科学家给出最终判断" in note
     assert "0 位保留异议" in note
 
 
