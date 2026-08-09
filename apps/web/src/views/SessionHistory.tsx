@@ -4,11 +4,18 @@
  * 「认出并打开」的粒度：问题、状态、时间；完整内容在跳转后由工作台载入。
  * 弹出层按组件菜单标准做：点击外部 / Escape 关闭，点击条目打开并收起；
  * 列表首次展开时才拉取，之后保持（同一会话内数据不变，YAGNI 不做轮询）。
+ *
+ * Round-6 additions: each row carries a model-config badge (whose endpoint
+ * this session actually runs on), and rows can be deleted -- a queued or
+ * stale session is the researcher's own data, and discarding it is the
+ * intended way to unblock a queue. Deletion is destructive, so it uses a
+ * two-step inline confirm per row, and the whole list has a "clear all"
+ * two-step confirm as well.
  */
 
 import { useEffect, useRef, useState } from "react";
 
-import { fetchTasks } from "../api/client";
+import { deleteTask, fetchTasks } from "../api/client";
 import type { TaskSummary } from "../api/types";
 import { Badge, Empty, Spinner, TASK_STATUS_TONE } from "../components/primitives";
 import { t } from "../i18n";
@@ -48,16 +55,45 @@ function HistoryIcon() {
   );
 }
 
+/** 每行右侧：模型配置来源徽章——「你保存的配置」或「系统默认」，悬停
+ * 给出端点与模型名。这直接回答「我的模型设置到底有没有生效」（round-6）。 */
+function ModelBadge({ task }: { task: TaskSummary }) {
+  const config = task.effective_model_config;
+  if (!config) return null;
+  if (config.source === "saved") {
+    const detail = [config.base_url, config.model_name].filter(Boolean).join(" · ");
+    return (
+      <Badge tone="admitted" title={t("本会话使用你保存的模型配置：{0}", detail)}>
+        {t("你保存的配置")}
+      </Badge>
+    );
+  }
+  return (
+    <Badge tone="unknown" title={t("本会话使用部署方配置的系统默认模型")}>
+      {t("系统默认")}
+    </Badge>
+  );
+}
+
 export function SessionHistory({
   currentTaskId,
   onOpen,
+  onDeleted,
 }: {
   currentTaskId: string | null;
   onOpen: (taskId: string) => void;
+  /** Called after a task was deleted, with its id, so the shell can leave it
+   * if it was the one being viewed. */
+  onDeleted?: (deletedId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [tasks, setTasks] = useState<TaskSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 两段式确认：pendingDelete 是等待二次确认的任务 id，「clear」表示
+  // 等待确认清空全部。删除中（deleting）期间禁用所有删除操作。
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pendingClear, setPendingClear] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // 每次展开都重新拉列表：刚创建的任务（或新回到列表的会话）必须立刻
@@ -104,6 +140,42 @@ export function SessionHistory({
     onOpen(taskId);
   }
 
+  async function removeOne(taskId: string) {
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteTask(taskId);
+      setTasks((list) => list?.filter((task) => task.task_id !== taskId) ?? null);
+      onDeleted?.(taskId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
+    }
+  }
+
+  /** 清空全部：逐个删除剩余任务。失败即中断并显示原因——绝不静默吞掉
+   * 一个没删掉的任务，假装清空成功。 */
+  async function clearAll() {
+    if (!tasks) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      for (const task of [...tasks]) {
+        await deleteTask(task.task_id);
+        onDeleted?.(task.task_id);
+      }
+      setTasks([]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setDeleting(false);
+      setPendingClear(false);
+      setPendingDelete(null);
+    }
+  }
+
   return (
     <div className="session" ref={rootRef}>
       <button
@@ -130,29 +202,104 @@ export function SessionHistory({
           ) : tasks.length === 0 ? (
             <Empty>{t("还没有会话。创建第一个研究任务后，它会出现在这里。")}</Empty>
           ) : (
-            <ol className="session__list">
-              {tasks.map((task) => (
-                <li key={task.task_id}>
+            <>
+              <ol className="session__list">
+                {tasks.map((task) => (
+                  <li key={task.task_id} className="session__row-wrap">
+                    <button
+                      type="button"
+                      className={
+                        "session__row" +
+                        (task.task_id === currentTaskId
+                          ? " session__row--current"
+                          : "")
+                      }
+                      onClick={() => openAndClose(task.task_id)}
+                      title={t("打开这个会话")}
+                    >
+                      <span className="session__question">{task.question}</span>
+                      <span className="session__meta">
+                        <ModelBadge task={task} />
+                        <Badge tone={TASK_STATUS_TONE[task.status] ?? "unknown"}>
+                          {task.status}
+                        </Badge>
+                        <span className="session__date">
+                          {formatDate(task.created_at)}
+                        </span>
+                      </span>
+                    </button>
+                    {pendingDelete === task.task_id ? (
+                      <span className="session__confirm">
+                        {t("删除后不可恢复。确认删除？")}
+                        <button
+                          type="button"
+                          className="session__danger"
+                          onClick={() => removeOne(task.task_id)}
+                          disabled={deleting}
+                        >
+                          {deleting ? t("删除中…") : t("确认删除")}
+                        </button>
+                        <button
+                          type="button"
+                          className="session__cancel"
+                          onClick={() => setPendingDelete(null)}
+                          disabled={deleting}
+                        >
+                          {t("取消")}
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="session__delete"
+                        onClick={() => {
+                          setPendingDelete(task.task_id);
+                          setPendingClear(false);
+                        }}
+                        disabled={deleting}
+                        title={t("删除这个会话（不可恢复）")}
+                        aria-label={t("删除会话")}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ol>
+              {pendingClear ? (
+                <div className="session__clear-confirm">
+                  {t("将删除全部 {0} 个会话及其证据记录，不可恢复。确认清空？", tasks.length)}
                   <button
                     type="button"
-                    className={
-                      "session__row" +
-                      (task.task_id === currentTaskId ? " session__row--current" : "")
-                    }
-                    onClick={() => openAndClose(task.task_id)}
-                    title={t("打开这个会话")}
+                    className="session__danger"
+                    onClick={clearAll}
+                    disabled={deleting}
                   >
-                    <span className="session__question">{task.question}</span>
-                    <span className="session__meta">
-                      <Badge tone={TASK_STATUS_TONE[task.status] ?? "unknown"}>
-                        {task.status}
-                      </Badge>
-                      <span className="session__date">{formatDate(task.created_at)}</span>
-                    </span>
+                    {deleting ? t("删除中…") : t("确认清空全部")}
                   </button>
-                </li>
-              ))}
-            </ol>
+                  <button
+                    type="button"
+                    className="session__cancel"
+                    onClick={() => setPendingClear(false)}
+                    disabled={deleting}
+                  >
+                    {t("取消")}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="session__clear-all"
+                  onClick={() => {
+                    setPendingClear(true);
+                    setPendingDelete(null);
+                  }}
+                  disabled={deleting}
+                >
+                  {t("清空全部会话")}
+                </button>
+              )}
+            </>
           )}
         </div>
       ) : null}

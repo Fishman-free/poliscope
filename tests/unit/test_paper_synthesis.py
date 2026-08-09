@@ -73,6 +73,7 @@ def test_parse_drops_references_missing_id_or_title() -> None:
         "not a dict",
     ]
     paper = paper_payload_to_dataclass(payload)
+    assert isinstance(paper, FinalPaper)
     assert len(paper.references) == 1
     assert paper.references[0].title == "kept"
 
@@ -86,6 +87,7 @@ def test_parse_tolerates_broken_section_entries() -> None:
         "not a dict",
     ]
     paper = paper_payload_to_dataclass(payload)
+    assert isinstance(paper, FinalPaper)
     assert len(paper.sections) == 1
     assert paper.sections[0].heading == "ok"
 

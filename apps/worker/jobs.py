@@ -64,6 +64,10 @@ from packages.papers.acquisition import KnowledgeDocumentRef, SourceAcquisition
 from packages.papers.bibtex import extract_dois_from_bibtex
 from packages.papers.finding_extraction import FindingExtractor
 from packages.papers.object_store import PrivateObjectStore
+from packages.papers.understanding import (
+    load_paper_understanding,
+    understand_paper,
+)
 from packages.reports.synthesis import synthesize_paper
 from packages.research.contracts import TaskModelConfig
 from packages.research.language import detect_output_language
@@ -139,6 +143,10 @@ def _gateway_for_task_config(
     # learned to do this can carry a console-portal URL (the incident that
     # made the council go absent), and the gateway must not inherit it.
     base_url, _ = normalize_base_url(parsed.base_url)
+    # extra_body (round-7 free trial): vendor-specific request fields merged
+    # into the chat-completions body; None on the ordinary researcher-owned
+    # path keeps the DeepSeek-style thinking toggle behaviour unchanged.
+    extra_body = dict(parsed.extra_body) if parsed.extra_body is not None else None
     return OpenAICompatibleModelGateway(
         OpenAICompatibleConfig(
             api_key=parsed.api_key,
@@ -148,6 +156,7 @@ def _gateway_for_task_config(
                 ModelClass.MEDIUM: model_name,
                 ModelClass.LIGHTWEIGHT: model_name,
             },
+            extra_body=extra_body,
         )
     )
 
@@ -521,6 +530,37 @@ async def _deliberate_impl(
     output_language = task.output_language or "auto"
     if output_language == "auto":
         output_language = detect_output_language(task.question)
+
+    # Round-7 paper-review tasks: before the council runs, one model call
+    # reads the uploaded paper and states what it claims (see
+    # packages/papers/understanding.py). The first pass runs it (its ledger
+    # idempotency key is stable, so a replay is a no-op); a resumed pass reads
+    # the captured event back instead of paying for the call again. The
+    # summary is injected into every seat's prompt as explicitly non-evidence
+    # context; the paper's own text is the Level A evidence via the
+    # acquisition pass. With no model provider the step is skipped and the
+    # report must admit it (gateway None -> no event).
+    paper_understanding: dict[str, object] | None = None
+    if getattr(task, "task_type", "deep_research") == "paper_review":
+        if checkpoint is None:
+            understanding = await understand_paper(
+                session,
+                task_id,
+                gateway,
+                object_store or PrivateObjectStore.from_env(),
+                output_language=output_language,
+            )
+            if understanding.ok:
+                paper_understanding = understanding.payload
+            elif understanding.reason:
+                logger.warning(
+                    "paper understanding unavailable for task %s: %s",
+                    task_id,
+                    understanding.reason,
+                )
+        else:
+            paper_understanding = await load_paper_understanding(session, task_id)
+
     if checkpoint is None:
         report = await orchestrator.run(
             task_id=task_id,
@@ -533,6 +573,7 @@ async def _deliberate_impl(
             knowledge_search=_knowledge_searcher(session, task),
             researcher_skills=skills,
             output_language=output_language,
+            paper_understanding=paper_understanding,
             stop_before=TaskPhase.JOINT_MODELING,
         )
     else:
@@ -547,6 +588,7 @@ async def _deliberate_impl(
             knowledge_search=_knowledge_searcher(session, task),
             researcher_skills=skills,
             output_language=output_language,
+            paper_understanding=paper_understanding,
             resume_from=checkpoint,
             council_guidance=checkpoint.guidance,
         )

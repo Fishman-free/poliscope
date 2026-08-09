@@ -18,8 +18,8 @@
 import { flushSync } from "react-dom";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, getToken, logout } from "./api/client";
-import type { ResearchBrief } from "./api/types";
+import { clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout } from "./api/client";
+import type { ResearchBrief, TaskSummary } from "./api/types";
 import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
 import { Badge, Spinner, TASK_STATUS_TONE } from "./components/primitives";
@@ -136,6 +136,50 @@ function gapDetails(brief: ResearchBrief): string[] {
   return details;
 }
 
+/** Queue visibility for a QUEUED task (round-6 "stuck at 已入队" report):
+ * how many tasks are ahead of it, and which task the single worker is
+ * currently running. Computed from the session-history list -- the server
+ * already orders by created_at, which is the queue order. */
+interface QueueInfo {
+  ahead: number;
+  running: { question: string; minutes: number } | null;
+}
+
+function computeQueue(
+  tasks: TaskSummary[],
+  currentId: string | null,
+): QueueInfo {
+  const ordered = [...tasks].sort((a, b) =>
+    String(a.created_at ?? "").localeCompare(String(b.created_at ?? "")),
+  );
+  const currentIndex = currentId
+    ? ordered.findIndex((task) => task.task_id === currentId)
+    : -1;
+  const ahead =
+    currentIndex > 0
+      ? ordered
+          .slice(0, currentIndex)
+          .filter((task) => task.status === "QUEUED").length
+      : 0;
+  const running = tasks.find((task) => task.status === "RUNNING") ?? null;
+  return {
+    ahead,
+    running: running
+      ? {
+          question: running.question,
+          minutes: running.updated_at
+            ? Math.max(
+                1,
+                Math.round(
+                  (Date.now() - new Date(running.updated_at).getTime()) / 60000,
+                ),
+              )
+            : 0,
+        }
+      : null,
+  };
+}
+
 /** Read the task id from ?task=, so a researcher can share a link to exactly
  * the workspace they are looking at. */
 function taskIdFromLocation(): string | null {
@@ -201,6 +245,33 @@ export function App() {
   const [follow, setFollow] = useState(true);
   const { snapshot, load, stream, error, events, processEvents, refresh } =
     useWorkspace(taskId);
+
+  // 排队任务的队列可见性：QUEUED 时轮询任务列表，算出前面还有几个、
+  // Worker 正在跑哪个任务（round-6「已入队后迟迟无响应」的根因是队列
+  // 里别的任务把单 worker 占满，前端却什么都不说）。拉取失败保持现状
+  // ——队列信息是增强，不能打断主视图。
+  const [queue, setQueue] = useState<QueueInfo | null>(null);
+  useEffect(() => {
+    if (snapshot?.task.status !== "QUEUED") {
+      setQueue(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const list = await fetchTasks();
+        if (!cancelled) setQueue(computeQueue(list, taskId));
+      } catch {
+        // 队列信息失败不报错：下一轮轮询会重试。
+      }
+    };
+    void poll();
+    const id = window.setInterval(poll, CHECKPOINT_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [snapshot?.task.status, taskId]);
 
   // Sliding tab indicator: measure the active tab so the bar glides from
   // wherever it was to the new position (App.css transitions the transform).
@@ -302,6 +373,14 @@ export function App() {
     withTransition(() => setHomeView(next));
   }
 
+  /** 会话历史里删掉了当前正在看的任务：离开它，回到新建任务页。 */
+  function handleTaskDeleted(deletedId: string) {
+    if (deletedId === taskId) {
+      setTaskId(null);
+      window.history.replaceState({}, "", "/workspace");
+    }
+  }
+
   /** A manual tab choice always wins over auto-follow. */
   function selectTab(next: Tab) {
     withTransition(() => {
@@ -392,7 +471,11 @@ export function App() {
         <div className="app__account">
           <LanguageSwitcher />
           <span className="app__account-name">{username}</span>
-          <SessionHistory currentTaskId={taskId} onOpen={open} />
+          <SessionHistory
+            currentTaskId={taskId}
+            onOpen={open}
+            onDeleted={handleTaskDeleted}
+          />
           <button type="button" className="button button--small" onClick={signOut}>
             {t("退出登录")}
           </button>
@@ -556,6 +639,7 @@ export function App() {
                         status={snapshot.task.status}
                         taskId={taskId}
                         seats={snapshot.seats}
+                        queue={queue}
                         onGuidanceSubmitted={refresh}
                       />
                     ) : null}
@@ -576,7 +660,11 @@ export function App() {
                       />
                     ) : null}
                     {tab === "radar" ? (
-                      <BlindspotRadarView blindspots={snapshot.blindspots} />
+                      <BlindspotRadarView
+                        blindspots={snapshot.blindspots}
+                        claims={brief.confirmed_claims}
+                        graph={snapshot.graph}
+                      />
                     ) : null}
                     {tab === "evolution" ? (
                       <EvolutionView

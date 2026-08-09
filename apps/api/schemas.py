@@ -105,6 +105,10 @@ class CreateTaskRequest(ContractModel):
     # following): "auto" (default) resolves from the question; otherwise one
     # of zh-Hans / zh-Hant / en.
     output_language: str = "auto"
+    # Task mode (round-7): "deep_research" (default) or "paper_review" -- the
+    # researcher uploads a paper and the council critiques it instead of
+    # investigating a controversy question.
+    task_type: str = "deep_research"
 
 
 class ConfirmClaimsRequest(ContractModel):

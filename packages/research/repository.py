@@ -66,6 +66,22 @@ class StoredTask:
     created_at: datetime | None = None
     # Owning account (migration 0012); isolation queries filter on it.
     user_id: UUID | None = None
+    # The task's own model configuration (the account's saved settings copied
+    # in at creation, or an explicit per-task override), None when the task
+    # runs the deployment default. Exposed so the API can tell the researcher
+    # which endpoint a task will actually use -- the round-6 "my settings are
+    # not taking effect" report came from this being invisible.
+    model_config: dict[str, Any] | None = None
+    # Last update time, filled by get_task and list_tasks -- the live view
+    # uses it to say how long a RUNNING task has been going.
+    updated_at: datetime | None = None
+    # Task mode (migration 0020): "deep_research" or "paper_review". The
+    # worker and synthesizer branch on it.
+    task_type: str = "deep_research"
+    # User-supplied evidence (dois / bibtex / uploaded paper object ids),
+    # filled by get_task -- the API's paper-review guard and the worker's
+    # understanding step both need it.
+    user_evidence: dict[str, Any] | None = None
 
 
 class TaskNotFound(Exception):
@@ -116,6 +132,7 @@ class ResearchRepository:
                     else None
                 ),
                 knowledge_base_id=contract.knowledge_base_id,
+                task_type=contract.task_type,
             )
         )
         # Flushed before the dependent rows because their foreign key targets
@@ -181,6 +198,10 @@ class ResearchRepository:
             knowledge_base_id=row.knowledge_base_id,
             created_at=row.created_at,
             user_id=row.user_id,
+            model_config=row.model_config,
+            updated_at=row.updated_at,
+            task_type=row.task_type,
+            user_evidence=row.user_evidence,
         )
 
     async def list_tasks(
@@ -213,6 +234,9 @@ class ResearchRepository:
                 knowledge_base_id=row.knowledge_base_id,
                 created_at=row.created_at,
                 user_id=row.user_id,
+                model_config=row.model_config,
+                updated_at=row.updated_at,
+                task_type=row.task_type,
             )
             for row in result.scalars()
         )

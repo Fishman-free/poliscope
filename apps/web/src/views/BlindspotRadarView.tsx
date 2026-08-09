@@ -11,11 +11,23 @@
  * missing measurement is not the same as a measured zero, and CLAUDE.md 7
  * requires the system to admit what is unknown rather than silently
  * mis-locate it on the chart.
+ *
+ * Inspector readability (round-6): a researcher clicking a dot gets the
+ * blindspot *explained* -- what it is, how big its impact would be if it
+ * were real, whether it can be investigated, and what happens if it is
+ * ignored -- never a dump of raw fields. Raw payload survives under a
+ * collapsible <details> so the original record stays auditable (CLAUDE.md 2
+ * separates the original record from any rendering of it), and UUIDs inside
+ * the statement are resolved to the claims they name.
  */
 
 import { useMemo, useState } from "react";
 
-import type { WorkspaceBlindspot } from "../api/types";
+import type {
+  ConfirmedClaim,
+  EvidenceGraph,
+  WorkspaceBlindspot,
+} from "../api/types";
 import { BLINDSPOT_KIND_LABELS } from "../api/types";
 import {
   Badge,
@@ -25,6 +37,11 @@ import {
   toneForStatus,
 } from "../components/primitives";
 import { t } from "../i18n";
+import {
+  buildClaimLabels,
+  humanizeText,
+  replaceClaimUuids,
+} from "./claimLabels";
 
 import "./BlindspotRadarView.css";
 
@@ -47,6 +64,10 @@ function toNumber(value: unknown): number | null {
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+function percent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
 
 function split(blindspots: WorkspaceBlindspot[]): {
@@ -97,13 +118,169 @@ function Marker({
   );
 }
 
+/** 0-1 数值的通俗刻度。刻度的切分点与措辞是固定的，不随数据改变——
+ * 「显著/中等/轻微」是对评分区间的直接翻译，不是对盲点内容的推测。 */
+function impactTier(value: number): string {
+  if (value >= 0.66) return t("显著");
+  if (value >= 0.33) return t("中等");
+  return t("轻微");
+}
+
+function investigabilityTier(value: number): string {
+  if (value >= 0.66) return t("高——现有手段即可开展检验");
+  if (value >= 0.33) return t("中——需要补充证据或设计");
+  return t("低——目前难以直接检验");
+}
+
+function uncertaintyTier(value: number): string {
+  if (value >= 0.66) return t("高——围绕它的认识分歧很大");
+  if (value >= 0.33) return t("中——存在部分分歧");
+  return t("低——较为确定");
+}
+
+/** 按影响评分给出一句「忽略它的后果」解读。模板只翻译评分刻度，不
+ * 编造盲点内容；评分缺失时（未评分盲点）不渲染本段。 */
+function consequenceForImpact(value: number | null): string | null {
+  if (value === null) return null;
+  if (value >= 0.66) {
+    return t(
+      "若忽略此盲点，最终结论可能被实质性扭曲——它指向的未知足以改变排序或因果判断的可信度。",
+    );
+  }
+  if (value >= 0.33) {
+    return t("若忽略此盲点，结论的适用范围或稳健性可能被高估。");
+  }
+  return t("此盲点对结论的潜在影响有限，但仍是记录在案的未知。");
+}
+
+/** 一条可读的盲点明细行：标签 + 值 + 刻度条。 */
+function ScoreRow({
+  label,
+  value,
+  tier,
+}: {
+  label: string;
+  value: number | null;
+  tier: string;
+}) {
+  return (
+    <div className="radar__score-row">
+      <span className="radar__score-label">{label}</span>
+      {value === null ? (
+        <span className="radar__score-value">{t("未评分")}</span>
+      ) : (
+        <>
+          <span className="radar__score-value">{percent(value)}</span>
+          <span className="radar__bar" aria-hidden="true">
+            <span
+              className="radar__bar-fill"
+              style={{ width: `${Math.round(value * 100)}%` }}
+            />
+          </span>
+        </>
+      )}
+      <span className="radar__score-tier">{tier}</span>
+    </div>
+  );
+}
+
+/** 点击点后的可读详情：盲点是什么、为什么影响大、能否调查、忽略的
+ * 后果，逐条说人话；原始载荷收进可折叠的 details（CLAUDE.md 2）。 */
+function BlindspotInspector({
+  selected,
+  labels,
+}: {
+  selected: WorkspaceBlindspot;
+  labels: Map<string, string>;
+}) {
+  const impact = toNumber(selected.impact);
+  const uncertainty = toNumber(selected.uncertainty);
+  const investigability = toNumber(selected.investigability);
+  const statement = humanizeText(
+    replaceClaimUuids(selected.statement ?? t("（未记录陈述）"), labels),
+  );
+  const consequence = consequenceForImpact(impact);
+  const sourceNote =
+    selected.kind === "source_diversity"
+      ? t("来源单一检查：证据可能依赖同一个来源或同一批数据，需要独立来源复核。")
+      : selected.kind === "bounty"
+        ? t("议会提名：在盲点悬赏轮由科学家提出并评选的盲点。")
+        : null;
+
+  return (
+    <div className="radar__inspector">
+      <h3>{t("这个盲点是什么")}</h3>
+      <p className="radar__inspector-head">
+        <Badge tone={toneForStatus(selected.status)}>
+          {t(STATUS_LABELS[selected.status] ?? selected.status)}
+        </Badge>
+        {selected.kind ? (
+          <span className="radar__kind-label">
+            {BLINDSPOT_KIND_LABELS[selected.kind] ?? selected.kind}
+          </span>
+        ) : null}
+        {selected.score ? (
+          <span className="radar__score-badge">
+            {t("综合 {0}", percent(toNumber(selected.score) ?? 0))}
+          </span>
+        ) : null}
+      </p>
+      <p className="radar__statement">{statement}</p>
+      {sourceNote ? <p className="radar__source-note">{sourceNote}</p> : null}
+
+      <div className="radar__scores">
+        <ScoreRow
+          label={t("影响程度")}
+          value={impact}
+          tier={impact === null ? "" : impactTier(impact)}
+        />
+        <ScoreRow
+          label={t("可调查性")}
+          value={investigability}
+          tier={investigability === null ? "" : investigabilityTier(investigability)}
+        />
+        <ScoreRow
+          label={t("不确定性")}
+          value={uncertainty}
+          tier={uncertainty === null ? "" : uncertaintyTier(uncertainty)}
+        />
+      </div>
+
+      {consequence ? (
+        <p className="radar__consequence">
+          <span className="radar__consequence-label">{t("轻信的后果：")}</span>
+          {consequence}
+        </p>
+      ) : null}
+      <p className="radar__unscored-note">
+        {t(
+          "以上解读由评分区间直接翻译；如某项未评分（来源单一检查不打分），不代表它为零。",
+        )}
+      </p>
+
+      <details className="radar__raw">
+        <summary>{t("原始记录（可审计）")}</summary>
+        <pre className="radar__payload">{JSON.stringify(selected, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
 export function BlindspotRadarView({
   blindspots,
+  claims,
+  graph,
 }: {
   blindspots: WorkspaceBlindspot[];
+  claims: ConfirmedClaim[];
+  graph: EvidenceGraph;
 }) {
   const [selected, setSelected] = useState<WorkspaceBlindspot | null>(null);
   const { plottable, unscored } = useMemo(() => split(blindspots), [blindspots]);
+  const labels = useMemo(
+    () => buildClaimLabels(claims, graph),
+    [claims, graph],
+  );
 
   if (blindspots.length === 0) {
     return (
@@ -181,33 +358,11 @@ export function BlindspotRadarView({
         </svg>
 
         <aside className="radar__side">
-          <div className="radar__inspector">
-            <h3>{t("详情")}</h3>
-            {selected === null ? (
-              <Empty>{t("点击任一点查看该盲点的完整载荷。")}</Empty>
-            ) : (
-              <>
-                <p className="radar__inspector-head">
-                  <Badge tone={toneForStatus(selected.status)}>
-                    {t(STATUS_LABELS[selected.status] ?? selected.status)}
-                  </Badge>
-                  {selected.kind ? (
-                    <span className="radar__kind-label">
-                      {BLINDSPOT_KIND_LABELS[selected.kind] ?? selected.kind}
-                    </span>
-                  ) : null}
-                </p>
-                <p className="radar__statement">
-                  {selected.statement ?? t("（未记录陈述）")}
-                </p>
-                {/* Raw payload, unformatted on purpose: CLAUDE.md 2 separates
-                    the original record from any AI rendering of it. */}
-                <pre className="radar__payload">
-                  {JSON.stringify(selected, null, 2)}
-                </pre>
-              </>
-            )}
-          </div>
+          {selected === null ? (
+            <Empty>{t("点击任一点查看该盲点的可读解释与原始记录。")}</Empty>
+          ) : (
+            <BlindspotInspector selected={selected} labels={labels} />
+          )}
 
           {unscored.length > 0 ? (
             <div className="radar__unscored">
@@ -231,7 +386,9 @@ export function BlindspotRadarView({
                     </Badge>
                     <span>
                       {typeof node.statement === "string"
-                        ? node.statement
+                        ? humanizeText(
+                            replaceClaimUuids(node.statement, labels),
+                          )
                         : t("（未记录陈述）")}
                     </span>
                   </li>

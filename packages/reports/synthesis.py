@@ -49,9 +49,14 @@ from packages.models.contracts import (
 )
 from packages.models.gateway import AuditedModelGateway
 from packages.reports.contracts import (
+    EvidenceGap,
     FinalPaper,
+    PaperOverview,
     PaperReference,
+    PaperReviewReport,
     PaperSection,
+    ReviewClaim,
+    ReviewIssue,
     SynthesisOutcome,
 )
 from packages.reports.safety import sanitize_export
@@ -332,6 +337,248 @@ def _build_user_prompt(
     return sanitize_export("\n".join(lines))
 
 
+def _understanding_lines(understanding: dict[str, object] | None) -> list[str]:
+    """Render the paper-understanding summary as prompt material.
+
+    When the understanding is missing (no model provider, parse failure,
+    resumed run without a captured event), the report must say it could not
+    critique the paper's content -- an honest gap, never an improvisation.
+    """
+    if understanding is None:
+        return [
+            "The paper-understanding step produced no summary (no model "
+            "provider, an unparsable upload, or a failed call -- see the "
+            "ledger). You MUST state in the report that the council could "
+            "not verify the paper's content, and keep every critique "
+            "explicitly conditional on that gap."
+        ]
+    lines = ["### Paper understanding (machine summary of the uploaded paper)"]
+    title = understanding.get("title")
+    if isinstance(title, str) and title:
+        lines.append(f"Paper title: {title}")
+    question = understanding.get("research_question")
+    if isinstance(question, str) and question:
+        lines.append(f"Research question: {question}")
+    main_claims = understanding.get("main_claims")
+    if isinstance(main_claims, (list, tuple)):
+        for claim in main_claims:
+            if not isinstance(claim, Mapping):
+                continue
+            statement = _as_str(claim.get("statement"))
+            if not statement:
+                continue
+            support = claim.get("supporting_evidence")
+            if isinstance(support, (list, tuple)) and support:
+                lines.append(
+                    f"- Claim: {statement} | paper's support: "
+                    + "; ".join(_as_str(item) for item in support)
+                )
+            else:
+                lines.append(f"- Claim: {statement} | paper's support: (none stated)")
+    unverifiable = understanding.get("unverifiable")
+    if isinstance(unverifiable, (list, tuple)) and unverifiable:
+        lines.append(
+            "Unverifiable from the text: "
+            + "; ".join(_as_str(item) for item in unverifiable)
+        )
+    if understanding.get("truncated") is True:
+        lines.append(
+            "(The uploaded text was truncated for length; the summary may "
+            "not cover the whole paper.)"
+        )
+    return lines
+
+
+def _build_review_user_prompt(
+    brief: ResearchBrief,
+    consensus: dict[str, object],
+    judgments: tuple[tuple[str, object], ...],
+    understanding: dict[str, object] | None,
+) -> str:
+    lines = [
+        "Write the final paper-review report for the council run described "
+        "below. The council critiqued an uploaded paper; your report must: "
+        "1) state what the paper argues (its research question, its main "
+        "claims, and the evidence the paper itself offers for each); 2) list "
+        "where the paper's argument is not rigorous (logical breaks, "
+        "measurement problems, unfounded generalizations -- each tied to the "
+        "claim it concerns); 3) list where its evidence is insufficient and "
+        "what evidence would close the gap; 4) give concrete, more "
+        "rigorous improvement suggestions; 5) conclude with an overall "
+        "assessment. Ground every critique in the admitted findings and the "
+        "confirmed claims; do not invent sources, numbers, or references "
+        "that are not listed here. State uncertainties and limitations "
+        "honestly -- a gap is a correct answer, a confident guess is not.",
+        "",
+    ]
+    lines.extend(_material_brief_lines(brief))
+    lines.append("")
+    lines.extend(_understanding_lines(understanding))
+    if consensus:
+        lines.append("")
+        lines.append("### Conditioned consensus (from joint modeling)")
+        lines.extend(_consensus_lines(consensus))
+    if judgments:
+        lines.append("")
+        lines.append("### Final judgments (seven seats, independent)")
+        for seat, judgment in judgments:
+            lines.append(f"- {seat}: {judgment}")
+    lines.append("")
+    lines.append(
+        "`paper_overview` must reflect the paper-understanding summary above "
+        "(or explicitly note what could not be verified). `rigor_issues`, "
+        "`evidence_insufficiency`, and `improvement_suggestions` must each "
+        "name the paper claim they concern in `claim_ref` (or be left empty "
+        "when they concern the paper as a whole). `limitations` must state "
+        "the limits of this review itself, including a missing paper "
+        "understanding if the step produced none."
+    )
+    return sanitize_export("\n".join(lines))
+
+
+def _parse_review_paper(payload: dict[str, object]) -> PaperReviewReport:
+    """Parse a model payload into a PaperReviewReport, or raise on a broken
+    shape -- same strictness as _parse_paper: a payload that still fails here
+    is a real failure and must surface as FINAL_PAPER_FAILED, never as a
+    half-filled report.
+    """
+    title = _as_str(payload.get("title"))
+    if not title:
+        raise ValueError("review payload missing title")
+    conclusion = _as_str(payload.get("conclusion"))
+    if not conclusion:
+        raise ValueError("review payload missing conclusion")
+
+    overview = payload.get("paper_overview")
+    if not isinstance(overview, Mapping):
+        raise ValueError("review payload missing paper_overview")
+    research_question = _as_str(overview.get("research_question"))
+    if not research_question:
+        raise ValueError("review payload missing paper_overview.research_question")
+    raw_claims = overview.get("main_claims")
+    claims: list[ReviewClaim] = []
+    if isinstance(raw_claims, (list, tuple)):
+        for item in raw_claims:
+            if not isinstance(item, Mapping):
+                continue
+            statement = _as_str(item.get("statement"))
+            if not statement:
+                continue
+            support = item.get("supporting_evidence")
+            claims.append(
+                ReviewClaim(
+                    statement=statement,
+                    supporting_evidence=(
+                        _strings(support) if support is not None else ()
+                    ),
+                )
+            )
+
+    def _issues(value: object) -> tuple[ReviewIssue, ...]:
+        issues: list[ReviewIssue] = []
+        if not isinstance(value, (list, tuple)):
+            return ()
+        for item in value:
+            if not isinstance(item, Mapping):
+                continue
+            text = _as_str(item.get("issue"))
+            if not text:
+                continue
+            ref = item.get("claim_ref")
+            severity = item.get("severity")
+            issues.append(
+                ReviewIssue(
+                    claim_ref=None if ref is None else _as_str(ref),
+                    issue=text,
+                    severity=None if severity is None else _as_str(severity),
+                )
+            )
+        return tuple(issues)
+
+    def _gaps(value: object) -> tuple[EvidenceGap, ...]:
+        gaps: list[EvidenceGap] = []
+        if not isinstance(value, (list, tuple)):
+            return ()
+        for item in value:
+            if not isinstance(item, Mapping):
+                continue
+            missing = _as_str(item.get("missing_evidence"))
+            if not missing:
+                continue
+            ref = item.get("claim_ref")
+            suggested = item.get("suggested_evidence")
+            gaps.append(
+                EvidenceGap(
+                    claim_ref=None if ref is None else _as_str(ref),
+                    missing_evidence=missing,
+                    suggested_evidence=(
+                        None if suggested is None else _as_str(suggested)
+                    ),
+                )
+            )
+        return tuple(gaps)
+
+    return PaperReviewReport(
+        title=title,
+        paper_overview=PaperOverview(
+            title=(
+                None
+                if overview.get("title") is None
+                else _as_str(overview.get("title"))
+            ),
+            research_question=research_question,
+            main_claims=tuple(claims),
+        ),
+        rigor_issues=_issues(payload.get("rigor_issues")),
+        evidence_insufficiency=_gaps(payload.get("evidence_insufficiency")),
+        improvement_suggestions=_issues(payload.get("improvement_suggestions")),
+        conclusion=conclusion,
+        limitations=_strings(payload.get("limitations")),
+        investigation_process=_strings(payload.get("investigation_process")),
+    )
+
+
+def _review_payload_dict(report: PaperReviewReport) -> dict[str, object]:
+    """Serialize a PaperReviewReport to the ledger payload shape."""
+    return {
+        "title": report.title,
+        "paper_overview": {
+            "title": report.paper_overview.title,
+            "research_question": report.paper_overview.research_question,
+            "main_claims": [
+                {
+                    "statement": claim.statement,
+                    "supporting_evidence": list(claim.supporting_evidence),
+                }
+                for claim in report.paper_overview.main_claims
+            ],
+        },
+        "rigor_issues": [
+            {
+                "claim_ref": item.claim_ref,
+                "issue": item.issue,
+                "severity": item.severity,
+            }
+            for item in report.rigor_issues
+        ],
+        "evidence_insufficiency": [
+            {
+                "claim_ref": item.claim_ref,
+                "missing_evidence": item.missing_evidence,
+                "suggested_evidence": item.suggested_evidence,
+            }
+            for item in report.evidence_insufficiency
+        ],
+        "improvement_suggestions": [
+            {"claim_ref": item.claim_ref, "issue": item.issue}
+            for item in report.improvement_suggestions
+        ],
+        "conclusion": report.conclusion,
+        "limitations": list(report.limitations),
+        "investigation_process": list(report.investigation_process),
+    }
+
+
 async def synthesize_paper(
     session: AsyncSession,
     task_id: UUID,
@@ -340,9 +587,12 @@ async def synthesize_paper(
 ) -> SynthesisOutcome:
     """Run the synthesis model call and record its result in the ledger.
 
-    Never raises for a model failure -- a failed synthesis is recorded as a
-    ``FINAL_PAPER_FAILED`` event and reported through :class:`SynthesisOutcome`
-    so the task's terminal status stays a function of evidence gaps only.
+    Deep-research tasks produce a FinalPaper; paper-review tasks produce a
+    PaperReviewReport (the same machinery, different schema and prompt --
+    see the round-7 branching below). Never raises for a model failure: a
+    failed synthesis is recorded as a ``FINAL_PAPER_FAILED`` event and
+    reported through :class:`SynthesisOutcome` so the task's terminal status
+    stays a function of evidence gaps only.
     """
     task_id = canonical_uuid(task_id)
     task_query = await session.execute(
@@ -372,35 +622,59 @@ async def synthesize_paper(
             reason="no model provider connected to the Model Gateway",
         )
 
+    is_review = getattr(task, "task_type", "deep_research") == "paper_review"
     directive = OUTPUT_LANGUAGE_DIRECTIVES.get(
         language, OUTPUT_LANGUAGE_DIRECTIVES["en"]
     )
+    if is_review:
+        # The paper-understanding summary orients the report; a missing one
+        # (no model provider on the first pass, parse failure, resumed run
+        # without a captured event) is fed to the prompt as an explicit gap
+        # the report must admit.
+        from packages.papers.understanding import load_paper_understanding
+
+        understanding = await load_paper_understanding(session, task_id)
+        system_prompt = (
+            "You are the reporting synthesizer for a seven-seat research "
+            "council that reviewed an uploaded paper. You integrate the "
+            "council's admitted outputs into a paper-review report: what the "
+            "paper argues, where its argument is not rigorous or well "
+            "evidenced, and how to improve it. You are not an eighth "
+            "scientist: you cast no judgment, you only integrate what the "
+            "seven wrote. Every critique must trace to the materials you are "
+            "given; never add new sources, numbers, or conclusions.\n"
+            f"{directive}\n"
+            "Reply only with the requested schema."
+        )
+        user_prompt = _build_review_user_prompt(
+            brief, consensus, judgments, understanding
+        )
+        output_schema = "PaperReviewReport"
+    else:
+        system_prompt = (
+            "You are the reporting synthesizer for a seven-seat "
+            "research council. You integrate the council's admitted "
+            "outputs into a single final paper. You are not an eighth "
+            "scientist: you cast no judgment, you only integrate what "
+            "the seven wrote. Every claim in the paper must trace to "
+            "the materials you are given; never add new sources, "
+            "numbers, or conclusions.\n"
+            f"{directive}\n"
+            "Reply only with the requested schema."
+        )
+        user_prompt = _build_user_prompt(brief, consensus, judgments)
+        output_schema = "FinalPaper"
+
     request = ModelRequest(
         task_id=task_id,
         actor="report_synthesizer",
         purpose="FINAL_SYNTHESIS",
         model_class=ModelClass.STRONG_REASONING,
         messages=(
-            ModelMessage(
-                role="system",
-                content=(
-                    "You are the reporting synthesizer for a seven-seat "
-                    "research council. You integrate the council's admitted "
-                    "outputs into a single final paper. You are not an eighth "
-                    "scientist: you cast no judgment, you only integrate what "
-                    "the seven wrote. Every claim in the paper must trace to "
-                    "the materials you are given; never add new sources, "
-                    "numbers, or conclusions.\n"
-                    f"{directive}\n"
-                    "Reply only with the requested schema."
-                ),
-            ),
-            ModelMessage(
-                role="user",
-                content=_build_user_prompt(brief, consensus, judgments),
-            ),
+            ModelMessage(role="system", content=system_prompt),
+            ModelMessage(role="user", content=user_prompt),
         ),
-        output_schema="FinalPaper",
+        output_schema=output_schema,
         evidence_refs=(
             # asyncpg returns its own UUID subclass, which ContractModel
             # rejects on purpose (packages/kernel/contracts.py) -- normalise
@@ -417,7 +691,10 @@ async def synthesize_paper(
             raise ValueError(
                 "synthesis schema could not be repaired; output quarantined"
             )
-        paper = _parse_paper(dict(model_result.payload))
+        payload = dict(model_result.payload)
+        paper: FinalPaper | PaperReviewReport = (
+            _parse_review_paper(payload) if is_review else _parse_paper(payload)
+        )
     except Exception as error:  # noqa: BLE001 -- a model failure is reported, not raised
         reason = sanitize_export(str(error))[:500]
         logger.warning("paper synthesis failed: %s", reason)
@@ -434,10 +711,10 @@ async def synthesize_paper(
             )
         return SynthesisOutcome(available=False, reason=reason)
 
-    await SqlEventLedger(session).append(
-        task_id,
-        FINAL_PAPER_DRAFTED,
-        {
+    stored_payload: dict[str, object] = (
+        _review_payload_dict(paper)
+        if isinstance(paper, PaperReviewReport)
+        else {
             "title": paper.title,
             "abstract": paper.abstract,
             "sections": [
@@ -450,19 +727,30 @@ async def synthesize_paper(
             ],
             "limitations": list(paper.limitations),
             "investigation_process": list(paper.investigation_process),
-        },
+        }
+    )
+    await SqlEventLedger(session).append(
+        task_id,
+        FINAL_PAPER_DRAFTED,
+        stored_payload,
         _PAPER_IDEMPOTENCY_KEY,
     )
     return SynthesisOutcome(available=True)
 
 
-def paper_payload_to_dataclass(payload: dict[str, Any]) -> FinalPaper:
-    """Parse a stored FINAL_PAPER_DRAFTED payload into a FinalPaper.
+def paper_payload_to_dataclass(
+    payload: dict[str, Any],
+) -> FinalPaper | PaperReviewReport:
+    """Parse a stored FINAL_PAPER_DRAFTED payload into its dataclass.
 
-    Distinct from ``_parse_paper`` only in provenance: this reads what was
-    already stored, so a corrupted stored payload raises rather than renders
-    as a partial paper.
+    Dispatches on the payload shape: ``paper_overview`` marks a
+    paper-review report, everything else parses as a FinalPaper. Distinct
+    from ``_parse_paper``/``_parse_review_paper`` only in provenance: this
+    reads what was already stored, so a corrupted stored payload raises
+    rather than renders as a partial paper.
     """
+    if "paper_overview" in payload:
+        return _parse_review_paper(payload)
     return _parse_paper(payload)
 
 

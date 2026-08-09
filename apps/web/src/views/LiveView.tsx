@@ -300,12 +300,20 @@ function ToolPending({ group }: { group: { startedAt: number } }) {
   );
 }
 
+/** 排队中的队列信息（App.tsx 轮询计算后传入）：本任务前面还有几个
+ * 任务、Worker 当前正在跑哪个、已跑多久。 */
+export interface QueueInfo {
+  ahead: number;
+  running: { question: string; minutes: number } | null;
+}
+
 export function LiveView({
   events,
   processEvents,
   status,
   taskId,
   seats,
+  queue,
   onGuidanceSubmitted,
 }: {
   events: LedgerEvent[];
@@ -315,6 +323,8 @@ export function LiveView({
   /** 方向性检查点（AWAITING_COUNCIL_INPUT）时在实时进展页就地提交。 */
   taskId?: string;
   seats?: SeatSummary[];
+  /** 队列可见性：为什么「已入队」却迟迟不开始（round-6）。 */
+  queue?: QueueInfo | null;
   onGuidanceSubmitted?: () => void;
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
@@ -455,13 +465,32 @@ export function LiveView({
 
       {!anyTrace && status === "QUEUED" ? (
         /* 排队 ≠ 没反应：任务还没有任何过程事件，但状态是「在队列里等
-           worker」。说清楚在等什么，而不是留一句干巴巴的「已入队」。 */
+           worker」。round-6 报告「已入队后迟迟无响应」的根因是队列里别的
+           任务把单 worker 占满——所以这里必须说清楚：前面还有几个、Worker
+           正在跑哪个、跑了多久，而不是留一句干巴巴的「已入队」。 */
         <div className="live__queued" role="status">
           <span className="live__queued-badge">{t("排队中")}</span>
           <p className="live__queued-title">{t("任务已入队，等待 Worker 认领")}</p>
+          {queue?.running ? (
+            <p className="live__queued-note">
+              {t(
+                "Worker 当前正在运行：「{0}」（已运行约 {1} 分钟）。每个任务最长运行约 60 分钟，它结束后队列自动推进。",
+                queue.running.question,
+                queue.running.minutes,
+              )}
+            </p>
+          ) : null}
+          {queue && queue.ahead > 0 ? (
+            <p className="live__queued-note">
+              {t(
+                "本任务前面还有 {0} 个任务在排队；如队列中有不再需要的任务，可在「会话历史」中删除，队列会立即推进。",
+                queue.ahead,
+              )}
+            </p>
+          ) : null}
           <p className="live__queued-note">
             {t(
-              "Worker 正在处理队列中的任务。本任务开始运行后，这里会自动显示七位科学家的思考、检索与议会动作，无需手动刷新。外部模型服务繁忙时，排队时间可能较长；盲点悬赏结束后会到达方向性检查点，届时可在此提交备注调整后续讨论重点（不进入任何证据判定）。",
+              "本任务开始运行后，这里会自动显示七位科学家的思考、检索与议会动作，无需手动刷新。盲点悬赏结束后会到达方向性检查点，届时可在此提交备注调整后续讨论重点（不进入任何证据判定）。",
             )}
           </p>
         </div>

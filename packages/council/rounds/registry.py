@@ -422,6 +422,12 @@ class PhaseContext:
     # treated as evidence a later phase's Evidence Gate/Claim/DissentCertificate
     # logic can read.
     guidance: str | None = None
+    # The paper-understanding summary for a paper_review task (round-7), or
+    # None for a deep_research task. Rendered into every phase's prompt as
+    # explicitly non-evidence context -- the machine's reading of the uploaded
+    # paper, so the seats critique the paper's actual claims (the paper's own
+    # text is the Level A evidence via the acquisition pass).
+    paper_understanding: dict[str, object] | None = None
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase.
@@ -1759,6 +1765,15 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
                 unresolved_conflicts=(),
             ),
             initial_judgments=judgments,
+            # Only the seats that actually produced a judgment are judged:
+            # judgments come from this round's collected outputs, or from the
+            # precommitment carry when nothing answered now (the keys are
+            # Seat in both paths). A run with fewer seats -- the single-agent
+            # evaluation baseline -- must not mint placeholder FINAL_JUDGMENT
+            # events for the other six. `or context.seats` is belt and braces:
+            # the `if not judgments` early return above already guarantees
+            # non-empty, and context.seats is the honest fallback anyway.
+            seats=tuple(judgments) or context.seats,
         )
     )
     events = [

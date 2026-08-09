@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
+from sqlalchemy import delete, select
 
 from apps.api.dependencies import CurrentUserDep, SessionDep
 from apps.api.routers.workspace import _seats
@@ -20,11 +21,36 @@ from apps.api.schemas import (
     CreateTaskRequest,
 )
 from packages.accounts.repository import StoredUser
+from packages.council.models import (
+    CouncilRoundModel,
+    RoundOutputModel,
+    ScientistRunModel,
+)
+from packages.evidence.models import (
+    EventAuditModel,
+    GraphEdgeModel,
+    GraphNodeModel,
+    ProcessStreamModel,
+    ProjectionCheckpointModel,
+    ScientificEventModel,
+)
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
 from packages.models.endpoint_config import normalize_base_url
-from packages.models.settings import ModelSettingsRepository
+from packages.models.free_trial import (
+    FREE_TRIAL_EXHAUSTED_MESSAGE,
+    FREE_TRIAL_EXTRA_BODY,
+    FREE_TRIAL_LIMIT,
+)
+from packages.models.models import ModelCallModel
+from packages.models.settings import ModelSettingsRepository, StoredModelSettings
+from packages.papers.models import ObjectModel, SourceModel, SourceVersionModel
 from packages.research.contracts import ResearchContract
 from packages.research.language import detect_output_language
+from packages.research.models import (
+    AtomicClaimModel,
+    ResearchScopeModel,
+    ResearchTaskModel,
+)
 from packages.research.repository import ResearchRepository, StoredTask, TaskNotFound
 from packages.research.service import (
     InvalidCouncilGuidanceState,
@@ -33,6 +59,7 @@ from packages.research.service import (
     UnconfirmedClaims,
 )
 from packages.skills.repository import SkillsRepository
+from packages.tools.models import ToolCallModel
 
 router = APIRouter()
 
@@ -41,6 +68,43 @@ TASK_NOT_FOUND = "unknown task"
 
 def _service(session: SessionDep) -> ResearchService:
     return ResearchService(ResearchRepository(session))
+
+
+def _effective_model_config(
+    task_config: dict[str, Any] | None,
+    saved: StoredModelSettings,
+) -> dict[str, Any]:
+    """The model endpoint this task would actually run with, for display.
+
+    Round-6 report: a researcher saved an API key and model name, then saw
+    tasks still run the deployment default and could not tell whether their
+    settings had ever been applied. This resolves the same inheritance
+    create_task applies -- explicit per-task config wins, then the account's
+    saved settings (only when both URL and key are present), else the
+    deployment default -- so the UI can say which one a task uses. The key
+    itself never leaves the server (CLAUDE.md 16), only its presence.
+    """
+    explicit = task_config or {}
+    if explicit.get("base_url") and explicit.get("api_key"):
+        return {
+            "source": "saved",
+            "base_url": explicit["base_url"],
+            "model_name": explicit.get("model_name"),
+            "has_api_key": True,
+        }
+    if saved.model_base_url and saved.has_api_key:
+        return {
+            "source": "saved",
+            "base_url": saved.model_base_url,
+            "model_name": saved.model_name,
+            "has_api_key": True,
+        }
+    return {
+        "source": "default",
+        "base_url": None,
+        "model_name": None,
+        "has_api_key": False,
+    }
 
 
 def _normalized_model_config(config: dict[str, object]) -> dict[str, object]:
@@ -93,9 +157,12 @@ async def list_tasks(
     The panel replaces the old "paste a task id" box: the researcher's whole
     history is one click away. Scoped to the calling account -- another
     account's sessions are invisible, and pre-account rows belong to no one.
-    Summaries only -- no claims, no evidence, no model config.
+    Summaries only -- no claims, no evidence. The model endpoint each task
+    will use is resolved once for the whole list (the account's saved settings
+    are the same for every task).
     """
     tasks = await ResearchRepository(session).list_tasks(current_user.id)
+    saved = await ModelSettingsRepository(session).get(current_user.id)
     return [
         {
             "task_id": str(task.task_id),
@@ -103,6 +170,11 @@ async def list_tasks(
             "status": task.status,
             "created_by": task.created_by,
             "created_at": task.created_at.isoformat() if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            "task_type": task.task_type,
+            "effective_model_config": _effective_model_config(
+                task.model_config, saved
+            ),
         }
         for task in tasks
     ]
@@ -155,6 +227,24 @@ async def create_task(
                 "api_key": saved.model_api_key,
                 "model_name": saved.model_name,
             }
+            if saved.is_free_trial:
+                # Free-trial marker: the task's own config must remember it
+                # came from the trial (confirm-claims consumes a quota slot
+                # on this flag), and the vendor's request fields must reach
+                # the worker's gateway. The slot is consumed when the task
+                # actually starts, so a trial task that is created but never
+                # confirmed costs nothing.
+                task_model_config["is_free_trial"] = True
+                task_model_config["extra_body"] = dict(FREE_TRIAL_EXTRA_BODY)
+                if saved.free_trial_used >= FREE_TRIAL_LIMIT:
+                    # The first gate: refuse at the moment of asking, before
+                    # any draft exists. The second gate is confirm-claims'
+                    # atomic consume, which stays authoritative under
+                    # concurrency.
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=FREE_TRIAL_EXHAUSTED_MESSAGE,
+                    )
     if task_model_config is not None:
         task_model_config = _normalized_model_config(task_model_config)
     # Output language follows the language the researcher asked in: "auto"
@@ -176,6 +266,7 @@ async def create_task(
                 "knowledge_base_id": request.knowledge_base_id,
                 "skill_ids": tuple(request.skill_ids),
                 "output_language": output_language,
+                "task_type": request.task_type,
             }
         )
     except ValueError as error:
@@ -209,8 +300,46 @@ async def confirm_claims(
     current_user: CurrentUserDep,
 ) -> dict[str, Any]:
     """Confirm the claims to investigate, then queue the task."""
-    await _owned_task(session, task_id, current_user)
+    task = await _owned_task(session, task_id, current_user)
     service = _service(session)
+    # A task can be confirmed exactly once: a second confirm would re-queue an
+    # already-queued task and -- for a free-trial task -- burn a second quota
+    # slot on the same research. Refuse rather than double-charge.
+    if task.status != "AWAITING_CLAIM_CONFIRMATION":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"task is {task.status}, not awaiting claim confirmation",
+        )
+    # A paper-review task's whole subject is the uploaded paper: confirming
+    # without one would hand the council an empty critique (the worker's
+    # understanding step has nothing to read). Refuse up front with the
+    # reason rather than let the run degrade silently (CLAUDE.md 7).
+    if task.task_type == "paper_review":
+        pdf_object_ids = (task.user_evidence or {}).get("pdf_object_ids") or ()
+        if not pdf_object_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="论文审查任务必须至少上传一篇论文，请先上传后再确认。",
+            )
+    # Free-trial quota (round-7): a task whose inherited config carries the
+    # free-trial marker consumes one of the account's two slots the moment
+    # the research actually starts -- a draft that is never confirmed costs
+    # nothing, and a task the researcher later switched to their own
+    # endpoint (task-level explicit config) is not trial-flagged at all.
+    # The consume is atomic (UPDATE ... WHERE used < limit RETURNING), so
+    # two concurrent confirmations cannot both take the last slot, and it
+    # shares this transaction with confirm+queue: any failure rolls the
+    # slot back.
+    task_config = task.model_config or {}
+    if task_config.get("is_free_trial") is True:
+        consumed = await ModelSettingsRepository(session).consume_free_trial(
+            current_user.id, FREE_TRIAL_LIMIT
+        )
+        if not consumed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=FREE_TRIAL_EXHAUSTED_MESSAGE,
+            )
     try:
         claims = await service.confirm_claims(task_id, request.claim_ids)
         task_status = await service.queue(task_id)
@@ -333,6 +462,87 @@ async def council_guidance(
     return {"task_id": str(task_id), "status": new_status}
 
 
+@router.delete("/{task_id}")
+async def delete_task(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Permanently delete a task and every record that belongs to it.
+
+    Session-history management (round-6): a researcher may discard a whole
+    session -- queued clutter, a mistake, an obsolete run -- claims, ledger
+    events, process stream, graph, audit rows and the task row itself go with
+    it. Deletion is physical and irreversible, so the frontend confirms
+    before calling; nothing here resurrects anything (CLAUDE.md 5.3's
+    no-physical-delete rule governs quarantined *evidence*, not a researcher
+    destroying their own session).
+
+    The records span every module's tables, which is why this lives in the
+    API layer rather than one module's repository: no single module owns the
+    task's lifecycle. Order matters only where one child FK-references
+    another (event_audits → scientific_events, source_versions → sources,
+    scientist_runs/round_outputs → council_rounds); those go first via a
+    join, then every task-scoped child, then the task row itself.
+    """
+    await _owned_task(session, task_id, current_user)
+    await session.execute(
+        delete(EventAuditModel).where(
+            EventAuditModel.event_id.in_(
+                select(ScientificEventModel.id).where(
+                    ScientificEventModel.task_id == task_id
+                )
+            )
+        )
+    )
+    await session.execute(
+        delete(SourceVersionModel).where(
+            SourceVersionModel.source_id.in_(
+                select(SourceModel.id).where(SourceModel.task_id == task_id)
+            )
+        )
+    )
+    await session.execute(
+        delete(ScientistRunModel).where(
+            ScientistRunModel.round_id.in_(
+                select(CouncilRoundModel.id).where(
+                    CouncilRoundModel.task_id == task_id
+                )
+            )
+        )
+    )
+    await session.execute(
+        delete(RoundOutputModel).where(
+            RoundOutputModel.round_id.in_(
+                select(CouncilRoundModel.id).where(
+                    CouncilRoundModel.task_id == task_id
+                )
+            )
+        )
+    )
+    children: tuple[type[Any], ...] = (
+        ScientificEventModel,
+        ProcessStreamModel,
+        ModelCallModel,
+        ToolCallModel,
+        ObjectModel,
+        SourceModel,
+        CouncilRoundModel,
+        GraphEdgeModel,
+        GraphNodeModel,
+        ProjectionCheckpointModel,
+        AtomicClaimModel,
+        ResearchScopeModel,
+    )
+    for model in children:
+        await session.execute(delete(model).where(model.task_id == task_id))
+    await session.execute(
+        delete(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
+    )
+    await session.commit()
+    return {"deleted": str(task_id)}
+
+
 @router.get("/{task_id}")
 async def get_task(
     task_id: UUID,
@@ -340,9 +550,14 @@ async def get_task(
     current_user: CurrentUserDep,
 ) -> dict[str, Any]:
     task = await _owned_task(session, task_id, current_user)
+    saved = await ModelSettingsRepository(session).get(current_user.id)
     return {
         "task_id": str(task.task_id),
         "question": task.question,
         "status": task.status,
         "created_by": task.created_by,
+        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+        "effective_model_config": _effective_model_config(
+            task.model_config, saved
+        ),
     }

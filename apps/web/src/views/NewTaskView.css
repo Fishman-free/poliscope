@@ -4,6 +4,50 @@
   gap: var(--space-3);
 }
 
+/* 模式切换（round-7）：Apple 风格 segmented pill。选中态用唯一交互色
+   Action Blue，未选中为透明描边；pill 全圆角与全站按钮语法一致。 */
+.newtask__mode {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1);
+}
+
+.newtask__mode-pill {
+  padding: 6px 18px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-3);
+  font: inherit;
+  font-size: var(--text-small);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.newtask__mode-pill:hover:not(:disabled) {
+  color: var(--ink-1);
+}
+
+.newtask__mode-pill:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.newtask__mode-pill--active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.newtask__mode-pill--active:hover:not(:disabled) {
+  color: #ffffff;
+}
+
 .newtask__label {
   font-size: var(--text-small);
   color: var(--ink-2);
@@ -151,6 +195,14 @@
 .newtask__upload input[type="file"] {
   font-size: var(--text-small);
   color: var(--ink-2);
+}
+
+/* 论文审查模式的必填提示：与错误同色系（证据语义的颜色只表示证据状态，
+   但「不能继续」的强制提示沿用 refuted 色，与全站表单错误一致）。 */
+.newtask__upload-required {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-micro);
+  color: var(--refuted);
 }
 
 .newtask__upload-list {

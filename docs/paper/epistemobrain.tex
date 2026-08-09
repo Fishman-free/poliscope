@@ -1,0 +1,873 @@
+% =============================================================================
+% EpistemoBrain / Poliscope -- ACL Findings 2026 format manuscript
+%
+% Compile with the official ACLPUB 2026 template (aclpub-style .sty files).
+% This file is the self-contained body: title, authors, abstract, sections,
+% and the bibliography are all here; only the .sty preamble comes from the
+% official template. With the ACL template loaded via \usepackage{acl}
+% (or the aclpub equivalent), this document compiles as-is.
+%
+%   \documentclass[11pt]{article}
+%   \usepackage{acl}      % official ACL template
+%   \usepackage{times}
+%   \usepackage{graphicx}
+%   \usepackage{latexsym}
+%   \usepackage{booktabs}
+%   ... plus \title{...}\author{...}\begin{document}...\end{document}
+%
+% Placeholders to fill before submission:
+%   - author emails
+%   - funding/acknowledgment text (optional)
+%   - the DOI of the open-source repository (poliscope)
+% =============================================================================
+
+\title{EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence
+Governance for Auditable Scientific Blindspot Discovery}
+
+\author{
+  Zhuqi Ma$^1$ \qquad Haopeng Cui$^{2,\dagger}$\\
+  $^1$Renmin University of China\\
+  $^2$Tsinghua University\\
+  \texttt{\{zhuqi.ma, haopeng.cui\}@example.edu}\\
+  \dagger\ Corresponding author
+}
+
+\begin{abstract}
+
+Scientific literature review is one of the highest-value applications of
+large language model (LLM) agents, yet also one of the most dangerous:
+a fluent, well-cited summary can mask a causal claim built on cross-sectional
+correlation, six papers that share a single dataset, or a dissent that was
+quietly flattened by a summarizer. We propose \textbf{EpistemoBrain}, an
+agentic framework that organizes \textbf{seven AI scientists with distinct
+specializations} into a formal council protocol -- independent
+precommitment, professional acquisition, evidence exchange, cross-
+examination, blindspot bounty, joint modeling, and final rejudgment -- to
+review a contested empirical question and produce an \emph{auditable
+controversy evidence map} in which conclusions and limitations sit side by
+side, every claim is traceable to its source, and no dissent is deleted.
+
+EpistemoBrain treats memory as the public cognitive layer of a scientific
+community rather than a private per-agent cache: three layers (private
+process memory, collective executive memory, and a formal evidence graph)
+are governed by a \emph{dual-graph} architecture in which the process graph
+records how scientists worked while the evidence graph records what the
+community now knows. All formal changes pass through an append-only
+Scientific Event Ledger, a six-stage Evidence Gate, and a single Graph
+Projector whose write privileges are enforced at the database level. The
+protocol forbids majority voting as a way of deciding scientific truth:
+outcomes are expressed as conditional consensus, and genuine disagreement
+survives as named Dissent Certificates.
+
+We evaluate EpistemoBrain on the \textbf{ForesightBlindspot} benchmark, a
+time-sliced evaluation protocol for blindspot discovery in computational
+social science, and report a controlled scripted-case comparison of five
+baselines (single-agent deep research, fixed multi-agent debate, council
+with linear context, council with executive memory but no evidence engine,
+and the full system) together with end-to-end verification on real research
+tasks. The comparison confirms that blindspot coverage is driven by the
+council's seat coverage -- a lone researcher misses seven of eight
+specialist blindspots -- and isolates where the protocol's remaining
+contributions become observable.
+
+\end{abstract}
+
+\section{Introduction}
+
+LLM agents have made deep research practical: a user asks a question and an
+agent retrieves, reads, and synthesizes literature into a coherent answer
+\citep{yao2023react,lewis2020retrieval}. For contested scientific questions,
+however, the standard deep-research pipeline inherits three failure modes
+that a fluency-optimized summary cannot fix. First, a single agent that
+reads a paper tends to see only its own interpretation; a measurement
+scientist's concern about self-report bias is invisible to a pipeline that
+has no measurement scientist. Second, agreement is not evidence:
+if seven agents read the same erroneous abstract, the same retracted paper,
+or the same misattributed citation, the system can package a \emph{shared
+error} as a consensus that looks verified because it was repeated
+\citep{ioannidis2005why,osc2015estimating}. Third, a summarizer's final
+``everyone basically agrees'' step flattens exactly the information a
+contested review must preserve: what the dissenting scientist opposed, and
+which evidence would change their mind. These are not prompt-tuning
+problems; they are structural questions about how a scientific review
+should be organized.
+
+Computational social science makes the stakes concrete. The reproducibility
+crisis has shown that a large share of published findings do not replicate
+\citep{osc2015estimating}, that publication bias inflates apparent effect
+sizes \citep{fanelli2010positive}, and that researcher degrees of freedom
+multiply false positives \citep{gelman2013garden,nosek2018preregistration}.
+In the specific domain this work targets -- digital behavior, social media,
+and mental health -- cross-sectional designs are routinely reported as
+causal, self-report measures dominate, and a small number of datasets
+support a large fraction of the literature \citep{orben2019association,
+valkenburg2022social}. An evidence reviewer for this domain needs more than
+an accurate summary: it needs to \emph{audit} claims against their sources,
+to \emph{count independent evidence} rather than papers, and to \emph{keep
+the dissent} visible.
+
+We propose \textbf{EpistemoBrain}, the organizing brain of \textbf{Poliscope},
+a deep research agent that assembles \textbf{seven AI scientists} -- theory
+builder, causal scientist, measurement and construct scientist, statistics
+and replication scientist, boundary and context scientist, adversarial
+falsifier, and evidence and provenance auditor -- into a seven-round
+council protocol. The design starts from the opposite direction of ``seven
+chatbots plus a summarizer'': we first decide what organizational structure
+and memory mechanisms a reliable controversy review requires, then place
+the roles inside that structure. The architecture rests on four pillars:
+(i) all seven seats participate in every task, with cost controlled by
+speaking budgets, semantic deduplication, and shared retrieval caches
+rather than by dropping seats; (ii) dissent is preserved by construction --
+majority voting is forbidden, outcomes are conditional consensus, and
+dissents become named certificates; (iii) process and evidence are stored
+in separate graphs governed by an append-only event ledger and a single,
+database-enforced writer; and (iv) memory is a layered public cognitive
+layer -- private per-seat memory, collective executive memory, and the
+formal evidence graph -- with MemoBrain's native operations redefined in
+scientific semantics (Quarantine, Dialectical Fold, Perspective Recall).
+
+We evaluate EpistemoBrain on \textbf{ForesightBlindspot}, a time-sliced
+evaluation protocol for blindspot discovery in computational social
+science, and report a controlled comparison of five baselines on a
+scripted case with no model calls, no network, and no database, together
+with end-to-end verification on real research tasks. The comparison shows
+that blindspot coverage is driven by seat coverage -- the single-agent
+baseline, after we corrected its seat-selection semantics (Section 4.3),
+finds one of seven gold blindspots while every seven-seat variant finds all
+seven -- and isolates precisely where the protocol's remaining
+contributions (memory, evidence gate) become observable under scripted
+gateways: on the blindspot metric they do not, which we report honestly as
+a property of the measurement, not a claim about the mechanisms.
+
+Our contributions are threefold:
+(1) We introduce a \emph{council protocol} for scientific controversy
+review in which seven specialized scientist agents interact through
+structured scientific actions (propose, support, challenge, qualify, fork,
+request, revise, dissent) under an explicit prohibition on majority
+voting, producing conditional consensus with preserved minority positions;
+(2) We design a \emph{dual-graph evidence governance} architecture --
+process graph versus evidence graph, connected by an append-only,
+idempotent, replayable Scientific Event Ledger, a six-stage Evidence Gate,
+and a single Graph Projector whose write privileges are enforced at the
+database privilege level -- together with a layered memory model that
+redefines executive memory operations in scientific semantics;
+(3) We provide \textbf{Poliscope}, an open-source implementation, and the
+\textbf{ForesightBlindspot} evaluation protocol with a five-baseline
+comparison and end-to-end verification, establishing a measurement basis
+for blindspot discovery in computational social science.
+
+\section{Related Work}
+
+\subsection{Multi-Agent Debate and Collaboration}
+
+Multi-agent debate improves reasoning by having agents critique one
+another's answers \citep{du2023improving,liang2023encouraging,chen2023agentverse,
+qian2024chatdev}, and role-specialized panels have been proposed for
+domain reasoning. These systems typically end in a summarization step that
+aggregates positions; none addresses what this work considers the central
+failure mode: the summarizer can flatten a genuine dissent, and the agents
+can converge on a shared evidence error that looks like independent
+verification. EpistemoBrain differs on both axes: it forbids majority
+voting as a truth mechanism, and it subjects evidence -- not arguments --
+to a six-stage gate before anything enters the formal knowledge graph.
+
+\subsection{Memory for Long-Horizon Agents}
+
+Long-horizon reasoning strains bounded contexts, motivating explicit
+memory architectures \citep{packer2023memgpt,sumers2023coala}. MemoBrain
+introduces executive memory for tool-augmented agents: a dependency-aware
+graph of reasoning steps with Flush/Fold/Recall operations that prune
+invalid steps, fold completed sub-trajectories, and preserve a compact,
+high-salience reasoning backbone under a fixed context budget
+\citep{qian2026memobrain}. EpistemoBrain builds on MemoBrain as its
+executive-memory foundation but changes the unit of analysis: MemoBrain
+manages \emph{one} agent's trajectory, while EpistemoBrain manages a
+\emph{community}'s shared cognitive state. This forces three redefinitions
+-- Flush becomes Quarantine (refuted claims change status, they do not
+disappear), Fold becomes Dialectical Fold (a dispute compresses only after
+preserving both strongest positions, hinge variables, and falsification
+conditions), and Recall becomes Perspective Recall (each seat recalls a
+role-specific projection of the shared evidence graph). Process memory and
+formal evidence are additionally separated into two graphs, because a
+scientist's momentary guess must never quietly upgrade into a formal
+conclusion.
+
+\subsection{Retrieval-Augmented Generation and Factual Verification}
+
+RAG grounds generation in retrieved documents \citep{lewis2020retrieval},
+and verification pipelines check claims against evidence
+\citep{thorne2018fever,wadden2020scifact,min2023factscore,dhuliawala2023chain}.
+These systems verify \emph{textual entailment}; EpistemoBrain audits
+\emph{scientific claims}, which requires several checks standard
+entailment systems do not perform: evidence levels (full text with exact
+quotes versus abstract-only metadata), citation entailment (an introduction
+hypothesis must not be reported as a tested result), causal upgrade
+policy (cross-sectional correlation must not become causal claims),
+evidence independence (papers sharing a dataset count as one independent
+evidence cluster), and source provenance (retraction status, preprint
+lineage). We reuse the production rules for these audits in our scoring
+functions rather than re-deriving parallel approximations.
+
+\subsection{LLM Agents for Science}
+
+LLM agents are increasingly applied to scientific tasks, from hypothesis
+generation to literature analysis. A recurring concern is that agentic
+systems can produce authoritative-sounding claims without grounding
+\citep{ioannidis2005why,osc2015estimating}; our design responds by making
+grounding a governance property rather than a prompt property. We are not
+aware of a system that combines a seven-scientist council protocol,
+dual-graph governance, an append-only event ledger with database-enforced
+write isolation, and a time-sliced blindspot evaluation benchmark in a
+single open-source implementation; Poliscope is, to our knowledge, the
+first.
+
+\section{Method}
+
+\subsection{Overview}
+
+Figure~\ref{fig:overview} gives the architecture. A researcher submits a
+Research Contract (question, scope, budget, optional knowledge base and
+PDFs). The system proposes atomic claims; the researcher confirms which to
+investigate. A worker then runs the seven-seat council through eight
+phases, appending every formal change as an event to the Scientific Event
+Ledger. The Graph Projector -- the ledger's single consumer and the
+evidence graph's single writer -- applies the six-stage Evidence Gate to
+each candidate and materializes admitted nodes and edges. Gaps in the
+evidence graph generate Blindspot bounties that are scored, ranked, and
+broadcast back into the council (epistemic routing). At the end, the
+researcher receives a Research Brief, an interactive controversy map, an
+audit trail, and a synthesized final paper.
+
+\begin{figure}[t]
+\centering
+% Insert the architecture diagram here (dual-graph, ledger, gate, council loop).
+\fbox{\parbox{0.9\columnwidth}{\centering\vspace{2.5em}
+Researcher $\rightarrow$ Council (7 seats $\times$ 8 phases)
+$\rightarrow$ Event Ledger $\rightarrow$ Evidence Gate
+$\rightarrow$ Graph Projector $\rightarrow$ Evidence Graph
+$\rightarrow$ Blindspot bounties $\rightarrow$ Council (loop)\vspace{2.5em}}}
+\caption{EpistemoBrain architecture: council, ledger, gate, projector, and
+epistemic routing form a closed loop. Process memory (left, per-seat
+MemoBrain) and the formal evidence graph (right) are physically separated.}
+\label{fig:overview}
+\end{figure}
+
+\subsection{The Seven-Scientist Council}
+
+Each research task runs all seven seats. Table~\ref{tab:seats} lists the
+seats, the question each one owns, and its primary responsibilities. Each
+seat has an independent role specification, independent private state and
+private memory, and a different evidence-projection weighting; the seats
+gather evidence without seeing one another, commit positions first, and
+only then exchange evidence, so cross-examination is genuinely
+cross-examination rather than restatement.
+
+Scientists submit only structured actions: \texttt{PROPOSE},
+\texttt{SUPPORT}, \texttt{CHALLENGE}, \texttt{QUALIFY}, \texttt{FORK},
+\texttt{REQUEST}, \texttt{REVISE}, \texttt{DISSENT}; when challenged they
+may \texttt{DEFEND}, \texttt{REVISE}, \texttt{NARROW}, \texttt{WITHDRAW},
+or \texttt{DISSENT}. Every action carries an actor, target, statement,
+evidence references, confidence, falsification condition, and novelty.
+Factual assertions without evidence, target-less comments, duplicated
+positions, and consent without new information are rejected by the ledger.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Seat} & \textbf{Core responsibility} \\
+\midrule
+Theory Builder & mechanisms and competing explanations \\
+Causal Scientist & confounding, reverse causation, selection \\
+Measurement Scientist & operationalization, self-report bias \\
+Replication Scientist & power, sensitivity, replication history \\
+Boundary Scientist & population, culture, platform limits \\
+Adversarial Falsifier & strongest-attack counterexamples \\
+Evidence Auditor & provenance, entailment, independence \\
+\bottomrule
+\end{tabular}
+\caption{The seven scientist seats and their primary responsibilities.}
+\label{tab:seats}
+\end{table}
+
+The protocol runs seven rounds:
+(1) \emph{Independent Precommitment} -- seats commit initial judgments and
+confidence levels without seeing one another (sealed first, read later);
+(2) \emph{Professional Acquisition} -- seats issue evidence requests from
+their own perspectives, merged by a query planner and executed against
+shared sources (OpenAlex, Crossref, Semantic Scholar, Unpaywall, and
+user-provided materials);
+(3) \emph{Evidence Exchange} -- structured evidence, not private reasoning
+histories, is exchanged;
+(4) \emph{Cross-Examination} -- targeted challenges on causality,
+measurement, statistics, boundaries, sources, and hidden assumptions;
+(5) \emph{Blindspot Bounty} -- gaps exposed by the evidence graph are
+scored on impact, uncertainty, investigability, novelty, and cost, ranked,
+and claimed;
+(6) \emph{Joint Modeling} -- a conditional consensus is drafted with shared
+understanding, strongest supporting and opposing positions, hinge
+variables, scope boundaries, unresolved conflicts, and falsification
+conditions;
+(7) \emph{Final Rejudgment} -- seats judge independently again, recording
+belief updates and named dissents.
+
+\emph{No majority voting decides scientific truth.} The joint-modeling
+round refuses to produce a consensus when the strongest opposing position
+or a falsification condition is missing, and a seat that cannot accept the
+consensus receives a Dissent Certificate -- a first-class node in the
+evidence graph -- recording what they oppose, why, and what evidence would
+retract the dissent.
+
+\subsection{Layered Memory and Dialectical Operations}
+
+Memory is organized in three layers. \emph{Private memory} holds each
+scientist's tool calls, failed routes, private hypotheses, and plans.
+\emph{Collective executive memory} records structured cognitive events of
+the community: who proposed what, who attacked whom, which controversies
+remain open, which blindspots nobody has claimed. \emph{The evidence
+graph} holds the audited formal knowledge: atomic claims, study findings,
+sources, constructs, contexts, blindspots, debate capsules, and dissent
+certificates.
+
+MemoBrain's native operations are redefined for the scientific setting.
+\emph{Quarantine} (from Flush): a refuted claim never disappears; it moves
+through \texttt{PROPOSED $\rightarrow$ SUPPORTED $\rightarrow$ CONTESTED
+$\rightarrow$ QUARANTINED $\rightarrow$ RESURRECTED/REJECTED}, and the
+record keeps who refuted it, what evidence is missing, and what conditions
+would resurrect it. \emph{Dialectical Fold} (from Fold): a dispute folds
+into a Debate Capsule only after preserving shared understanding, the
+strongest supporting evidence, the strongest opposing evidence, hinge
+variables, scope boundaries, unresolved conflicts, and falsification
+conditions -- the original nodes remain and the capsule links back to
+them. \emph{Perspective Recall} (from Recall): each seat's context is
+$\text{Context}_i = \text{ProcessRecall}_i + \text{EvidenceProjection}_i$,
+where the projection is a role-specific slice of the shared evidence
+graph, so the seven seats never read the same undifferentiated summary.
+Two further dynamics complete the set: \emph{Fork} creates parallel
+research paths when evidence cannot distinguish competing explanations,
+\emph{Resurrect} re-activates a quarantined hypothesis when new evidence
+meets its resurrection conditions, and \emph{Merge} records conditional
+merge candidates for the researcher to adjudicate.
+
+\subsection{Dual-Graph Governance}
+
+Process and conclusion are stored apart. The \emph{Process Graph} answers
+``how did the scientists work'': tasks, tool calls, failed routes,
+challenges, and decisions, managed by MemoBrain and freely foldable. The
+\emph{Evidence Graph} answers ``what do we now know'': ten node types
+(ResearchQuestion, Claim, Source, StudyFinding, Construct, Context,
+Blindspot, DebateCapsule, DiscriminatingStudy, DissentCertificate) and
+twelve edge types (SUPPORTS, REFUTES, QUALIFIES, CONTRADICTS, CONFOUNDS,
+MEDIATES, MODERATES, OPERATIONALIZES, DERIVED\_FROM, APPLIES\_IN, EXPOSES,
+TESTS).
+
+The two graphs are coupled by the \emph{Scientific Event Ledger}: every
+formal change is first appended as an idempotent, replayable, auditable
+event, and the \emph{Graph Projector} -- the ledger's only consumer and the
+evidence graph's only writer -- applies the Evidence Gate and materializes
+admitted nodes and edges. The write isolation is enforced at the database
+privilege level, not by coding discipline: the application role holds no
+insert, update, or truncate privilege on the evidence-graph tables, and
+the projector role holds no privilege on the ledger, so a bug in either
+side cannot forge the other's data. Refuted, quarantined, and folded nodes
+are never physically deleted; they change status and remain traceable.
+
+\subsection{The Evidence Gate}
+
+Every candidate event passes six stages: \emph{Schema validation},
+\emph{semantic deduplication}, \emph{source verification}, \emph{citation
+entailment}, \emph{method quality}, and \emph{graph consistency}. Evidence
+is graded A--D: Level A requires full text with exact quotes and precise
+location; Level B is abstract-plus-metadata; Level C is second-hand
+descriptions in reviews; Level D is web or news leads. Levels B/C/D can
+never alone support a high-confidence causal conclusion. Three audits are
+applied to formal findings: source authenticity (DOI, title, authors,
+version, retraction, PDF identity), citation entailment (does the quote
+support the claim; is correlation reported as causation; are qualifiers
+dropped), and method quality (directness, design strength, measurement
+validity, statistical precision, replicability, external validity). A
+\emph{CausalUpgradePolicy} intercepts the combination of cross-sectional
+design plus causal claim at stage six and quarantines the event with an
+audit record. The pipeline also tracks evidence independence: lineage
+detection identifies same-dataset, overlapping-sample, preprint, extension,
+reanalysis, and meta-analysis-inclusion dependencies, and the interface
+reports both the paper count and the independent-evidence-cluster count --
+six papers sharing one dataset count as one independent evidence cluster.
+
+Four mechanisms defend against the subtler failure of \emph{shared}
+evidence errors: blind evidence review (prestige signals such as author,
+journal, and citation counts are stripped from first substantive
+judgments), independent dual extraction (high-impact findings are extracted
+twice through separate paths and discrepancies are escalated), source
+diversity constraints (when all supporting evidence for a claim shares a
+dataset, team, country, or design, a Blindspot node is automatically
+generated), and adversarial retrieval (six classes of reverse queries --
+refutation, null results, alternative theories, measurement criticism,
+replication failure, boundary inversion -- are executed against the
+evidence sources for each confirmed claim).
+
+\subsection{Epistemic Routing and Blindspot Bounty}
+
+The council is not a scripted run of seven rounds. Gaps exposed by the
+evidence graph generate Blindspot bounties, scored on impact, uncertainty,
+investigability, novelty, and normalized cost, ranked, and broadcast for
+the seats to claim -- the evidence state drives the next investigation
+direction rather than a moderator reading from a script. Blindspot is
+therefore a first-class object in the product (a radar view ranked by
+impact and investigability), not a limitations paragraph. When the bounty
+round closes, the system may also propose a \emph{DiscriminatingStudy}: a
+study design with competing predictions that would resolve an open
+conflict and the expected information gain.
+
+\subsection{Human Directional Checkpoint}
+
+After the blindspot bounty and before joint modeling, the task pauses at a
+single, fixed checkpoint (\texttt{AWAITING\_COUNCIL\_INPUT}). The
+researcher may review the seven seats' precommitment positions and submit a
+short directional note (e.g., ``prioritize cross-cultural boundary
+conditions'') or explicitly leave it blank and continue; both are equally
+valid. The note is injected into joint modeling only as an explicitly
+labeled ``researcher directional note, not a scientific judgment''; it
+never changes Evidence Gate decisions, never serves as evidence for or
+against any claim, and never enters Debate Capsules or Dissent
+Certificates. The same evidence input must produce identical claim
+admission, dissents, and gate decisions whether or not a note was provided
+-- a property asserted by tests. The checkpoint is directional control,
+not an eighth vote.
+
+\subsection{Engineering Realization}
+
+Poliscope is a modular monolith with an asynchronous worker, PostgreSQL as
+the source of truth, and no workflow state living only in memory. The
+worker claims tasks with \texttt{SELECT ... FOR UPDATE SKIP LOCKED}; a
+council run executes each phase in a single transaction as the application
+role, then commits, and the projector runs in a second transaction as the
+projector role -- two identities, two transactions, one ledger. All model
+calls go through a Model Gateway (OpenAI-compatible endpoints, streaming
+with non-streaming fallback, per-task model configuration, cost and
+latency accounting); all external tools go through a Tool Gateway
+(OpenAlex, Crossref, Semantic Scholar, Unpaywall, user knowledge bases).
+Single-seat failure degrades the round (the seat is marked absent with a
+reason on the ledger) instead of aborting the task; structured-output
+repair failures are quarantined and never write the formal graph. Live
+views are served as two SSE streams -- the formal ledger stream and a
+best-effort process stream for token-level progress -- so the audit
+trail is never polluted by reasoning noise. The implementation is
+open-source (MIT) at \url{https://github.com/Fishman-free/poliscope}.
+
+\section{Experiments}
+
+\subsection{The ForesightBlindspot Benchmark}
+
+We design \textbf{ForesightBlindspot}, a time-sliced evaluation protocol
+for blindspot discovery in computational social science (domain: digital
+behavior, social media, and mental health). Each case is a contested
+question with a cutoff date: the system may read only the pre-cutoff
+corpus, and gold blindspots are gaps that later high-quality research
+confirmed, had reasonable premonitory evidence before the cutoff, and do
+not depend on entirely unforeseeable platforms, events, or methods.
+Leakage controls are built into the protocol: closed pre-cutoff corpora,
+no future citations, anonymizable variables, and an explicit disclosure
+that base-model parameters may contain future knowledge -- a risk that
+cannot be fully eliminated. The metric family covers blindspots (recall,
+precision, high-impact recall, specificity, actionability, foresight
+distance), evidence (citation existence, citation entailment, evidence
+independence, causal overclaim rate, full-text coverage), memory
+(compression ratio, scientific backbone retention, contradiction
+retention, long-horizon drift, recovery quality), collaboration (role
+diversity, debate utility, belief-update quality, dissent preservation,
+false consensus rate), and cost (cost per valid blindspot, tokens per
+admitted finding).
+
+\subsection{Baselines}
+
+Five baselines are configurations of the real council rather than separate
+implementations, so each adds exactly one capability over the previous:
+(1) \emph{Single-Agent Deep Research} -- one researcher (the theory
+builder) with no protocol, no memory, and no gate; (2) \emph{Fixed
+Multi-Agent Debate} -- seven seats with an undifferentiated deliberator,
+no per-seat memory, no gate; (3) \emph{Council + Linear Context} -- seven
+seats sharing one undifferentiated transcript; (4) \emph{Council +
+MemoBrain without Evidence Engine} -- seven seats with per-seat memory but
+the gate removed; (5) \emph{Full Poliscope} -- the complete system.
+
+\subsection{Baseline Construction Correctness}
+
+Before reporting numbers, we validated that the baselines are what they
+claim to be -- and found two construction defects that the first
+evaluation run exposed. First, the single-agent baseline selected its seat
+by the alphabetically first seat of an ordered enumeration, which happened
+to be the adversarial falsifier: the ``lone researcher'' was actually the
+falsifier, and in our scripted material the falsifier is the seat with the
+strongest blindspot answers, so the single agent scored as high as the
+full council (F1 0.8 on all five variants). Second, the final-rejudgment
+handler iterated all seven seats unconditionally, minting placeholder
+judgments for seats that never participated. We corrected both: the
+single-agent baseline explicitly uses the theory builder, and the
+rejudgment handler respects the participating-seat set with a compatible
+fallback so the seven-seat production path is byte-for-byte unchanged. A
+regression guard now asserts that single-seat blindspot coverage is
+strictly below multi-seat coverage, so a future regression that collapses
+the baseline ladder fails immediately. We report this correction process
+because the measurement instrument's construction is part of the
+measurement.
+
+\subsection{Results on the Scripted Case}
+
+Table~\ref{tab:results} reports the five baselines on a scripted demo case
+(screen time and adolescent depressive symptoms) in which every gateway is
+deterministic -- no model calls, no network, no database -- and each seat
+nominates one specialist blindspot in the bounty round (the falsifier
+nominates two, one deliberately duplicating the boundary scientist's
+nomination to model overlapping multi-seat nominations). Gold blindspots
+are one keyword per specialist seat.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Baseline} & \textbf{Rec.} & \textbf{Prec.} & \textbf{F1} \\
+\midrule
+Single-Agent Deep Research & 0.143 & 0.500 & 0.222 \\
+Fixed Multi-Agent Debate & 1.000 & 0.778 & 0.875 \\
+Council + Linear Context & 1.000 & 0.778 & 0.875 \\
+Council + MemoBrain, no gate & 1.000 & 0.778 & 0.875 \\
+Full Poliscope & 1.000 & 0.778 & 0.875 \\
+\bottomrule
+\end{tabular}
+\caption{Blindspot recall, precision, and F1 on the scripted demo case
+(B\_dev). All four seven-seat variants find all seven gold blindspots;
+the single agent, restricted to the theory builder, finds one.}
+\label{tab:results}
+\end{table}
+
+Three findings stand out. First, blindspot coverage is driven by \emph{seat
+coverage}: the lone researcher finds one of seven specialist blindspots
+(F1 0.222) while every seven-seat variant finds all seven (F1 0.875) --
+the council's contribution is real and large, and it is attributable to
+the seats rather than to any single seat's presence. Second, the
+distinguishing factor is the \emph{set of participating seats}, not the
+presence of any particular seat: after the construction fix, the single
+agent's score is determined by what its own seat contributes, not by
+whether the falsifier happens to be present. Third -- reported honestly as
+a property of the measurement -- the four seven-seat variants score
+identically on the blindspot metric under scripted gateways. This is a
+structural consequence of the harness: every variant collects all seven
+seats' outputs, the scripted gateway ignores prompts and memory, and the
+bounty events are admitted unconditionally by the gate. The contributions
+of the protocol, memory, and evidence gate to blindspot \emph{integration}
+are not observable through this metric on scripted material; they surface
+in the auxiliary scores (dissent preservation, citation entailment,
+evidence independence) and require real-model runs to observe on
+blindspots. We treat this as an identified boundary of the measurement,
+not a claim about the mechanisms.
+
+\subsection{System Verification}
+
+Beyond the controlled comparison, Poliscope is verified end to end.
+The test suite comprises 642 unit tests and 290 integration tests over a
+real PostgreSQL instance with three database identities, including
+privilege tests that assert the application role cannot write the
+evidence graph and the projector role cannot rewrite the ledger -- the
+dual-graph isolation is a database fact, not a code convention. Real
+research tasks run through the full seven-seat council on real OpenAI-
+compatible endpoints, producing conditional consensus, Debate Capsules,
+Dissent Certificates, and a synthesized final paper with references
+bound to DOIs; tasks that exhaust budget or lose seats finish as
+``completed with gaps'' with every absent seat and unfilled slot named in
+the report, never as a fabricated success. The event ledger is
+idempotent and replay-safe (re-running a task is a no-op), and the
+streaming live view survives reconnection via Last-Event-ID.
+
+\section{Conclusion}
+
+We presented EpistemoBrain, the organizing brain of the open-source
+Poliscope system: a seven-scientist council with a formal protocol,
+layered memory, dual-graph evidence governance, an append-only event
+ledger with database-enforced write isolation, an evidence gate with
+three-layer audit, and epistemic routing through blindspot bounties.
+The design's thesis is that reliable blindspot discovery is an
+organizational and governance problem, not a prompt problem: dissent must
+survive by construction, evidence must be audited by construction, and
+process must never become evidence by construction. The ForesightBlindspot
+protocol and the five-baseline comparison establish a measurement basis --
+with the caveat, reported openly, that scripted gateways make the
+protocol's integration-level contributions unobservable on the blindspot
+metric and that a time-sliced corpus with a held-out split, human
+annotation, and real-model controlled runs is the next step of this
+research program.
+
+\section*{Acknowledgments}
+
+We thank the maintainers of MemoBrain for making their executive-memory
+foundation openly available, and the anonymous reviewers for their
+comments. \textbf{Poliscope} is open source (MIT); the repository, the
+ForesightBlindspot protocol, and the evaluation harness are linked from
+the paper's code artifact.
+
+\begin{thebibliography}{99}
+
+\bibitem[Yao et al.(2023)Yao, Zhao, Yu, Du, Shafran, Narasimhan, and
+Cao]{yao2023react}
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik
+Narasimhan, and Yuan Cao.
+\newblock 2023.
+\newblock ReAct: Synergizing reasoning and acting in language models.
+\newblock In \emph{International Conference on Learning Representations
+(ICLR)}.
+
+\bibitem[Lewis et al.(2020)Lewis, Perez, Piktus, Petroni, Karpukhin, Goyal,
+K{\"u}ttler, Lewis, Yih, Rockt{\"a}schel, et~al.]{lewis2020retrieval}
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir
+Karpukhin, Naman Goyal, Heinrich K{\"u}ttler, Mike Lewis, Wen-tau Yih,
+Tim Rockt{\"a}schel, et~al.
+\newblock 2020.
+\newblock Retrieval-augmented generation for knowledge-intensive NLP tasks.
+\newblock In \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}.
+
+\bibitem[Wei et al.(2022)Wei, Wang, Schuurmans, Bosma, Xia, Chi, Le, and
+Zhou]{wei2022cot}
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei
+Xia, Ed Chi, Quoc Le, and Denny Zhou.
+\newblock 2022.
+\newblock Chain-of-thought prompting elicits reasoning in large language
+models.
+\newblock In \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}.
+
+\bibitem[Yao et al.(2023)Yao, Yu, Zhao, Shafran, Griffiths, Cao, and
+Narasimhan]{yao2023tot}
+Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas Griffiths, Yuan
+Cao, and Karthik Narasimhan.
+\newblock 2023.
+\newblock Tree of thoughts: Deliberate problem solving with large language
+models.
+\newblock In \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}.
+
+\bibitem[Shinn et al.(2023)Shinn, Cassano, Gopinath, Narasimhan, and
+Yao]{shinn2023reflexion}
+Noah Shinn, Federico Cassano, Edward Gopinath, Karthik Narasimhan, and
+Shunyu Yao.
+\newblock 2023.
+\newblock Reflexion: Language agents with verbal reinforcement learning.
+\newblock In \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}.
+
+\bibitem[Madaan et al.(2023)Madaan, Tandon, Gupta, Hallinan, Gao,
+Wiegreffe, Alon, Dziri, Prabhumoye, Yang, et~al.]{madaan2023selfrefine}
+Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao,
+Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang,
+et~al.
+\newblock 2023.
+\newblock Self-refine: Iterative refinement with self-feedback.
+\newblock In \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}.
+
+\bibitem[Du et al.(2023)Du, Li, Torralba, Tenenbaum, and
+Morales]{du2023improving}
+Yilun Du, Shuang Li, Antonio Torralba, Joshua~B. Tenenbaum, and Igor
+Mordatch.
+\newblock 2023.
+\newblock Improving factuality and reasoning in language models through
+multiagent debate.
+\newblock \emph{arXiv preprint arXiv:2305.14325}.
+
+\bibitem[Liang et al.(2023)Liang, He, Xu, Li, Yu, Wang, and
+Liang]{liang2023encouraging}
+Tian Liang, Zhiwei He, Wenxiang Jiao, Xing Wang, Yan Wang, Rui Wang,
+Yujiu Yang, Zhaopeng Tu, and Shuming Shi.
+\newblock 2023.
+\newblock Encouraging divergent thinking in large language models through
+multi-agent debate.
+\newblock \emph{arXiv preprint arXiv:2305.19118}.
+
+\bibitem[Chen et al.(2023)Chen, Su, Zhan, Zhang, Chen, Yuan, Chan, Yu,
+Zhou, et~al.]{chen2023agentverse}
+Weize Chen, Yusheng Su, Jingwei Zhan, Xiaoyi Zhang, Yujia Chen, Songtao
+Yuan, Junting Chan, Xinchan Yu, Zhangzhi Zhou, et~al.
+\newblock 2023.
+\newblock AgentVerse: Facilitating multi-agent collaboration and exploring
+emergent behaviors.
+\newblock \emph{arXiv preprint arXiv:2308.10848}.
+
+\bibitem[Qian et al.(2024)Qian, Liu, Yang, Cong, Li, Chen, Xiong, Wu,
+Wang, et~al.]{qian2024chatdev}
+Chen Qian, Wei Liu, Hongzhang Yang, Bingcong Cong, Shenghui Li, Zhiyuan
+Liu, Mingjie Xiong, Ge Wu, Haoqi Wang, et~al.
+\newblock 2024.
+\newblock ChatDev: Communicative agents for software development.
+\newblock In \emph{Proceedings of the 62nd Annual Meeting of the
+Association for Computational Linguistics (ACL)}.
+
+\bibitem[Packer et al.(2023)Packer, Wooders, Lin, Fang, Patel, and
+Gonzalez]{packer2023memgpt}
+Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir Patel,
+and Joseph~E. Gonzalez.
+\newblock 2023.
+\newblock MemGPT: Towards LLMs as operating systems.
+\newblock \emph{arXiv preprint arXiv:2310.08560}.
+
+\bibitem[Sumers et al.(2023)Sumers, Yao, Narasimhan, and
+Griffiths]{sumers2023coala}
+Theodore~R. Sumers, Shunyu Yao, Karthik Narasimhan, and Thomas~L.
+Griffiths.
+\newblock 2023.
+\newblock Cognitive architectures for language agents.
+\newblock \emph{arXiv preprint arXiv:2309.02427}.
+
+\bibitem[Qian et al.(2026)Qian, Cao, and Liu]{qian2026memobrain}
+Hongjin Qian, Zhao Cao, and Zheng Liu.
+\newblock 2026.
+\newblock MemoBrain: Executive memory as an agentic brain for reasoning.
+\newblock In \emph{Findings of the Association for Computational
+Linguistics: ACL 2026}.
+
+\bibitem[Thorne et al.(2018)Thorne, Vlachos, Christodoulopoulos, and
+Mittal]{thorne2018fever}
+James Thorne, Andreas Vlachos, Christos Christodoulopoulos, and Arpit
+Mittal.
+\newblock 2018.
+\newblock FEVER: A large-scale dataset for fact extraction and
+VERification.
+\newblock In \emph{Proceedings of the 2018 Conference of the North
+American Chapter of the Association for Computational Linguistics
+(NAACL-HLT)}.
+
+\bibitem[Wadden et al.(2020)Wadden, Lin, Lo, Lu, Yoshioka, Wei, Beltagy,
+Lee, and Ostendorf]{wadden2020scifact}
+David Wadden, Shanchuan Lin, Kyle Lo, Lucy~Lu, Madeleine Yoshioka,
+Hanjie Wei, Arman Cohan, Iz Beltagy, Kenton Lee, and Noah~A. Ostendorf.
+\newblock 2020.
+\newblock Fact or fiction: Verifying scientific claims.
+\newblock In \emph{Proceedings of the 2020 Conference on Empirical
+Methods in Natural Language Processing (EMNLP)}.
+
+\bibitem[Min et al.(2023)Min, Krishna, Lyu, Lewis, Yih, Koh, Iyyer,
+Zettlemoyer, and Hajishirzi]{min2023factscore}
+Sewon Min, Kalpesh Krishna, Xinxi Lyu, Mike Lewis, Wen-tau Yih, Pang~Wei
+Koh, Mohit Iyyer, Luke Zettlemoyer, and Hannaneh Hajishirzi.
+\newblock 2023.
+\newblock FActScore: Fine-grained atomic evaluation of factual precision
+in long form text generation.
+\newblock In \emph{Proceedings of the 2023 Conference on Empirical
+Methods in Natural Language Processing (EMNLP)}.
+
+\bibitem[Dhuliawala et al.(2023)Dhuliawala, Komeili, Xu, Raileanu, Li,
+Asri, and Weston]{dhuliawala2023chain}
+Shehzaad Dhuliawala, Mojtaba Komeili, Jing Xu, Roberta Raileanu, Xian Li,
+Asli Celikyilmaz, and Jason Weston.
+\newblock 2023.
+\newblock Chain-of-verification reduces hallucination in large language
+models.
+\newblock \emph{arXiv preprint arXiv:2309.11495}.
+
+\bibitem[Vu et al.(2023)Vu, Iyyer, Wang, Xu, Wood, Chang, and
+Sabharwal]{vu2023freshllms}
+Tu Vu, Mohit Iyyer, Xuezhi Wang, Noah Constant, Jerry Wei, Yuancheng Xu,
+Jeffrey Flanigan, Daniel Hsu, Omar Albalak, Mark Yatskar, et~al.
+\newblock 2023.
+\newblock FreshLLMs: Refreshing large language models with search engine
+augmentation.
+\newblock \emph{arXiv preprint arXiv:2310.03214}.
+
+\bibitem[Ioannidis(2005)]{ioannidis2005why}
+John~P.~A. Ioannidis.
+\newblock 2005.
+\newblock Why most published research findings are false.
+\newblock \emph{PLoS Medicine}, 2(8):e124.
+
+\bibitem[Open Science Collaboration(2015)]{osc2015estimating}
+Open Science Collaboration.
+\newblock 2015.
+\newblock Estimating the reproducibility of psychological science.
+\newblock \emph{Science}, 349(6251):aac4716.
+
+\bibitem[Gelman and Loken(2013)]{gelman2013garden}
+Andrew Gelman and Eric Loken.
+\newblock 2013.
+\newblock The garden of forking paths: Why multiple comparisons can be a
+problem, even when there is no ``fishing expedition'' or ``p-hacking'' and
+the research hypothesis was posited ahead of time.
+\newblock \emph{Department of Statistics, Columbia University}.
+
+\bibitem[Nosek et al.(2018)Nosek, Ebersole, DeHaven, and
+Mellor]{nosek2018preregistration}
+Brian~A. Nosek, Charles~R. Ebersole, Alexander~C. DeHaven, and David~T.
+Mellor.
+\newblock 2018.
+\newblock The preregistration revolution.
+\newblock \emph{Proceedings of the National Academy of Sciences},
+115(11):2600--2607.
+
+\bibitem[Fanelli(2010)]{fanelli2010positive}
+Daniele Fanelli.
+\newblock 2010.
+\newblock ``Positive'' results increase down the hierarchy of the sciences.
+\newblock \emph{PLoS ONE}, 5(4):e10068.
+
+\bibitem[Orben and Przybylski(2019)]{orben2019association}
+Amy Orben and Andrew~K. Przybylski.
+\newblock 2019.
+\newblock The association between adolescent well-being and digital
+technology use.
+\newblock \emph{Nature Human Behaviour}, 3(2):173--182.
+
+\bibitem[Valkenburg et al.(2022)Valkenburg, Meier, and
+Beyens]{valkenburg2022social}
+Patti~M. Valkenburg, Adrian Meier, and Ine Beyens.
+\newblock 2022.
+\newblock Social media use and its impact on adolescent mental health: An
+umbrella review of the evidence.
+\newblock \emph{Current Opinion in Psychology}, 44:58--68.
+
+\bibitem[Priem et al.(2022)Priem, Piwowar, and Orr]{priem2022openalex}
+Jason Priem, Heather Piwowar, and Richard Orr.
+\newblock 2022.
+\newblock OpenAlex: A fully-open index of scholarly works, authors,
+venues, institutions, and concepts.
+\newblock \emph{arXiv preprint arXiv:2205.01833}.
+
+\bibitem[Simonsohn et al.(2014)Simonsohn, Nelson, and
+Simmons]{simonsohn2014pcurve}
+Uri Simonsohn, Leif~D. Nelson, and Joseph~P. Simmons.
+\newblock 2014.
+\newblock P-curve: A key to the file-drawer.
+\newblock \emph{Journal of Experimental Psychology: General},
+143(2):534--547.
+
+\end{thebibliography}
+
+\appendix
+\section{Appendix: Implementation Notes}
+
+\textbf{Deterministic evaluation harness.} The ForesightBlindspot harness
+(\texttt{packages/evaluation/}) runs the five baselines as configurations
+of the real orchestrator against a database-less event sink, so a baseline
+run is deterministic and fast enough for unit tests; scoring functions
+reuse the production audit rules (causal upgrade policy, citation
+entailment verifier, lineage detection and evidence clustering) instead of
+re-deriving them, so a baseline's score reflects the same standard the
+gated system is held to. Gold blindspot matching is currently a keyword
+proxy for human annotation, which does not yet exist; the agreement
+skeleton (Kappa/Alpha statistics, double annotation, adjudication) is
+implemented and awaiting annotation data.
+
+\textbf{Permissions as design.} PostgreSQL grants implement the write
+isolation: the application role can append to the ledger and read the
+evidence graph but cannot insert, update, or truncate graph tables; the
+projector role can write the graph and advance event status but cannot
+rewrite event payloads; neither role can truncate anything. A documented
+exception grants the application role DELETE for the session-lifecycle
+operation of destroying a whole task at the researcher's explicit request
+-- the one path by which evidence rows may be physically removed.
+
+\textbf{Reproducibility.} The repository pins migrations (Alembic),
+seeds, and Docker Compose services (postgres, migrate, api, worker, web,
+caddy); the demonstration task seed runs the real orchestrator with
+scripted model and tool stand-ins, and the evaluation harness runs with
+scripted gateways, so all numbers in this paper are reproducible without
+external credentials.

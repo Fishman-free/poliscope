@@ -17,11 +17,13 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
     String,
+    update,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from packages.kernel.database import Base
+from packages.models.free_trial import FREE_TRIAL_LIMIT
 
 SETTINGS_ROW_ID = 1
 
@@ -51,6 +54,15 @@ class AppSettingsModel(Base):
     model_base_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     model_api_key: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Free-trial marker (migration 0021): True exactly while the saved
+    # endpoint IS the deployment's free-trial vendor. A manual save clears
+    # it; the quota itself is ``free_trial_used`` below.
+    is_free_trial: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    # How many free-trial slots this account has consumed (migration 0021),
+    # incremented atomically by confirm-claims (never read-modify-write).
+    free_trial_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -61,10 +73,18 @@ class StoredModelSettings:
     model_base_url: str | None
     model_api_key: str | None
     model_name: str | None
+    # Free-trial marker and quota (migration 0021); defaults keep callers
+    # that only care about the endpoint untouched.
+    is_free_trial: bool = False
+    free_trial_used: int = 0
 
     @property
     def has_api_key(self) -> bool:
         return self.model_api_key is not None
+
+    @property
+    def free_trial_remaining(self) -> int:
+        return max(FREE_TRIAL_LIMIT - self.free_trial_used, 0)
 
 
 class ModelSettingsRepository:
@@ -78,7 +98,11 @@ class ModelSettingsRepository:
         if row is None:
             return StoredModelSettings(None, None, None)
         return StoredModelSettings(
-            row.model_base_url, row.model_api_key, row.model_name
+            row.model_base_url,
+            row.model_api_key,
+            row.model_name,
+            row.is_free_trial,
+            row.free_trial_used,
         )
 
     async def save(
@@ -88,6 +112,7 @@ class ModelSettingsRepository:
         base_url: str | None,
         api_key: str | None,
         model_name: str | None,
+        is_free_trial: bool = False,
     ) -> StoredModelSettings:
         """Upsert the account's single settings row and return what is now
         stored. Callers resolve the "keep vs. clear vs. replace" semantics of
@@ -100,11 +125,40 @@ class ModelSettingsRepository:
         row.model_base_url = base_url
         row.model_api_key = api_key
         row.model_name = model_name
+        row.is_free_trial = is_free_trial
         row.updated_at = datetime.now(UTC)
         await self._session.flush()
         return StoredModelSettings(
-            row.model_base_url, row.model_api_key, row.model_name
+            row.model_base_url,
+            row.model_api_key,
+            row.model_name,
+            row.is_free_trial,
+            row.free_trial_used,
         )
+
+    async def consume_free_trial(self, user_id: UUID, limit: int) -> bool:
+        """Atomically consume one free-trial slot, returning whether one was
+        available.
+
+        One UPDATE with the guard in the WHERE clause -- never a
+        read-then-write -- so two concurrent confirmations cannot both take
+        the last slot. The quota survives only while the row is still marked
+        ``is_free_trial``: a user who saved their own endpoint mid-way has
+        left the trial, and their old trial-flagged tasks no longer draw on
+        the quota.
+        """
+        result = await self._session.execute(
+            update(AppSettingsModel)
+            .where(
+                AppSettingsModel.user_id == user_id,
+                AppSettingsModel.is_free_trial.is_(True),
+                AppSettingsModel.free_trial_used < limit,
+            )
+            .values(free_trial_used=AppSettingsModel.free_trial_used + 1)
+            .returning(AppSettingsModel.free_trial_used)
+        )
+        await self._session.flush()
+        return result.scalar_one_or_none() is not None
 
 
 __all__ = [

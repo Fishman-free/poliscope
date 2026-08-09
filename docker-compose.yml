@@ -25,8 +25,12 @@ services:
       POSTGRES_DB: ${POLISCOPE_DB_NAME:-poliscope}
     volumes:
       - poliscope-postgres-data:/var/lib/postgresql/data
+    # Host mapping binds loopback only: `api` and `worker` reach Postgres over
+    # the compose-internal network (`postgres:5432`), so the host port exists
+    # solely for the developer's psql/backup access and must never be
+    # reachable from the public internet on a cloud host.
     ports:
-      - "${POLISCOPE_DB_HOST_PORT:-55440}:5432"
+      - "127.0.0.1:${POLISCOPE_DB_HOST_PORT:-55440}:5432"
     healthcheck:
       test:
         [
@@ -62,6 +66,10 @@ services:
       # quota -- only the recursive tree scan is rate limited (and falls
       # back to the tarball transparently).
       POLISCOPE_GITHUB_TOKEN: "${POLISCOPE_GITHUB_TOKEN:-}"
+      # Free-trial vendor key (round-7): the API's /settings/model/free-trial
+      # endpoint probes and stores this endpoint on demand. Blank = the
+      # trial is disabled for every account.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
     # No `ports:` here on purpose: `caddy` is the only service allowed to
     # bind a host port (see its comment below), so the shared password at
     # the edge cannot be routed around by hitting this container directly.
@@ -91,6 +99,11 @@ services:
       POLISCOPE_MODEL_NAME_LIGHTWEIGHT: ${POLISCOPE_MODEL_NAME_LIGHTWEIGHT:-}
       POLISCOPE_TOOLS_CONTACT_EMAIL: ${POLISCOPE_TOOLS_CONTACT_EMAIL:-}
       POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY: ${POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY:-}
+      # Free-trial vendor key (round-7): enables the per-account qwen3.8-max
+      # trial in Model Settings. The worker reads it through the stored task
+      # config, so this env is for the API's activation probe; a deployment
+      # that skips the trial simply leaves it blank.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -124,8 +137,10 @@ services:
       dockerfile: deploy/caddy/Dockerfile
     environment:
       POLISCOPE_SITE_ADDRESS: ${POLISCOPE_SITE_ADDRESS:-:80}
-      POLISCOPE_SITE_USERNAME: ${POLISCOPE_SITE_USERNAME:-poliscope}
-      POLISCOPE_SITE_PASSWORD: ${POLISCOPE_SITE_PASSWORD:?set in .env}
+    # Note: the legacy POLISCOPE_SITE_USERNAME / POLISCOPE_SITE_PASSWORD
+    # shared-password variables are gone -- caddy is pure transport and the
+    # account system (register / login, per-account isolation) owns access
+    # control. There is nothing left to configure here.
     # POLISCOPE_SITE_HOST_PORT(_TLS) default to the standard 80/443 for a real
     # deployment. Override only if this host already has something else bound
     # to 80/443 (e.g. a different project's reverse proxy) -- this changes

@@ -225,6 +225,7 @@ class CouncilOrchestrator:
         knowledge_search: KnowledgeSearcher | None = None,
         researcher_skills: tuple[tuple[str, str], ...] = (),
         output_language: str = "auto",
+        paper_understanding: dict[str, object] | None = None,
         stop_before: TaskPhase | None = None,
         resume_from: CouncilCheckpoint | None = None,
         council_guidance: str | None = None,
@@ -338,6 +339,7 @@ class CouncilOrchestrator:
                 output_language,
                 state,
                 council_guidance,
+                paper_understanding,
             )
             run_phases.append(phase)
 
@@ -412,6 +414,7 @@ class CouncilOrchestrator:
         output_language: str,
         state: _Accumulator,
         council_guidance: str | None = None,
+        paper_understanding: dict[str, object] | None = None,
     ) -> None:
         await self._ledger.append(
             task_id=task_id,
@@ -440,6 +443,7 @@ class CouncilOrchestrator:
             researcher_skills=researcher_skills,
             output_language=output_language,
             guidance=council_guidance,
+            paper_understanding=paper_understanding,
         )
         try:
             outcome = await runner_for(phase)(context)

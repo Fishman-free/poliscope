@@ -343,6 +343,7 @@ async def get_workspace(
         "question": task.question,
         "status": task.status,
         "created_by": task.created_by,
+        "task_type": task.task_type,
     }
     return WorkspaceSnapshot(
         task=FrozenDict(task_payload),

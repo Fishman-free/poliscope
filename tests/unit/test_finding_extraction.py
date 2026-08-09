@@ -102,9 +102,10 @@ class _FakeSession:
 
 class _ScalarResult:
     """Minimal stand-in for the SQLAlchemy ``Result`` object ``extract_uploaded``
-    reads via ``.scalar_one_or_none()`` -- the two ``select()`` lookups it
-    issues (``SourceModel.object_id``, then ``ObjectModel.object_key``) are
-    the only callers that ever read the return value of ``execute()``."""
+    reads via ``.scalar_one_or_none()`` -- the three ``select()`` lookups it
+    issues (``SourceModel.object_id``, then ``ObjectModel.file_name``, then
+    ``ObjectModel.object_key`` inside ``_retrieve_uploaded``) are the only
+    callers that ever read the return value of ``execute()``."""
 
     def __init__(self, value: object) -> None:
         self._value = value
@@ -115,10 +116,10 @@ class _ScalarResult:
 
 class _FakeUploadSession(_FakeSession):
     """Scripts ``scalar_one_or_none()`` results per ``execute()`` call, in
-    call order, for ``extract_uploaded``'s two lookups (object_id, then
-    object_key). Any later ``execute()`` call (the dataset_id UPDATE) never
-    has its result read, so an empty queue after both scalars are consumed
-    is harmless."""
+    call order, for ``extract_uploaded``'s three lookups (object_id, then
+    file_name, then object_key). Any later ``execute()`` call (the
+    dataset_id UPDATE) never has its result read, so an empty queue after
+    all scalars are consumed is harmless."""
 
     def __init__(self, scalars: list[object]) -> None:
         super().__init__()
@@ -476,7 +477,7 @@ async def test_extract_uploaded_success_persists_four_rows(tmp_path: Path) -> No
     stored = store.store(task_id=task_id, content=_pdf_bytes(quote))
     source_id = uuid4()
     object_id = uuid4()
-    session = _FakeUploadSession([object_id, stored.object_key])
+    session = _FakeUploadSession([object_id, None, stored.object_key])
     tools = _FakeToolGateway(url=None)
     model = _FakeModelGateway(_valid_payload(quote))
     extractor = FindingExtractor(
@@ -521,7 +522,7 @@ async def test_extract_uploaded_missing_object_row_records_gap(
     """The source names an object_id, but that objects row itself is gone --
     a distinct gap from the file simply being missing from disk."""
     store = PrivateObjectStore(root=str(tmp_path))
-    session = _FakeUploadSession([uuid4(), None])
+    session = _FakeUploadSession([uuid4(), None, None])
     tools = _FakeToolGateway(url=None)
     model = _FakeModelGateway(_valid_payload("irrelevant"))
     extractor = FindingExtractor(
@@ -542,7 +543,7 @@ async def test_extract_uploaded_missing_file_on_disk_records_gap(
     (CLAUDE.md 16-adjacent: retrieve() must fail closed, not raise past the
     caller) never actually has bytes under that key on disk."""
     store = PrivateObjectStore(root=str(tmp_path))
-    session = _FakeUploadSession([uuid4(), f"tasks/{uuid4()}/never-written.pdf"])
+    session = _FakeUploadSession([uuid4(), None, f"tasks/{uuid4()}/never-written.pdf"])
     tools = _FakeToolGateway(url=None)
     model = _FakeModelGateway(_valid_payload("irrelevant"))
     extractor = FindingExtractor(
@@ -562,7 +563,7 @@ async def test_extract_uploaded_pdf_parse_failure_records_gap(tmp_path: Path) ->
     stored = store.store(
         task_id=task_id, content=b"%PDF-1.4\nthis is not a real pdf body\n%%EOF"
     )
-    session = _FakeUploadSession([uuid4(), stored.object_key])
+    session = _FakeUploadSession([uuid4(), None, stored.object_key])
     tools = _FakeToolGateway(url=None)
     model = _FakeModelGateway(_valid_payload("irrelevant"))
     extractor = FindingExtractor(
@@ -587,7 +588,7 @@ async def test_extract_uploaded_quote_not_locatable_records_gap(
         task_id=task_id,
         content=_pdf_bytes("A completely different sentence is in this paper."),
     )
-    session = _FakeUploadSession([uuid4(), stored.object_key])
+    session = _FakeUploadSession([uuid4(), None, stored.object_key])
     tools = _FakeToolGateway(url=None)
     model = _FakeModelGateway(
         _valid_payload("This exact quote never appears in the pdf at all.")
@@ -615,7 +616,7 @@ async def test_extract_uploaded_dataset_identifier_detected_and_written_back(
     task_id = uuid4()
     stored = store.store(task_id=task_id, content=_pdf_bytes(full_text))
     source_id = uuid4()
-    session = _FakeUploadSession([uuid4(), stored.object_key])
+    session = _FakeUploadSession([uuid4(), None, stored.object_key])
     tools = _FakeToolGateway(url=None)
     model = _FakeModelGateway(_valid_payload(quote))
     extractor = FindingExtractor(
@@ -626,10 +627,11 @@ async def test_extract_uploaded_dataset_identifier_detected_and_written_back(
 
     assert result.ok is True
     assert result.dataset_id == "ICPSR:37183"
-    # Two selects (object_id, object_key) plus one UPDATE for the dataset_id
-    # write-back -- distinct from the DOI path's single select-free UPDATE
-    # count, since extract_uploaded has the extra object lookups.
-    assert len(session.executed) == 3
+    # Three selects (object_id, file_name, object_key) plus one UPDATE for
+    # the dataset_id write-back -- distinct from the DOI path's single
+    # select-free UPDATE count, since extract_uploaded has the extra object
+    # lookups.
+    assert len(session.executed) == 4
     params = session.executed[-1].compile().params
     assert params["dataset_id"] == "ICPSR:37183"
 

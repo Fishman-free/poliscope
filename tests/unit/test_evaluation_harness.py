@@ -39,7 +39,12 @@ from packages.models.contracts import ModelRequest, ModelResult, SchemaStatus
 
 
 def test_seats_for_single_agent_is_exactly_one_seat() -> None:
-    assert _seats_for(BaselineVariant.SINGLE_AGENT) == (ORDERED_SEATS[0],)
+    # The theory builder, the generic researcher -- not ORDERED_SEATS[0],
+    # which is alphabetical and therefore the adversarial falsifier (whose
+    # specialised role and demo-case blindspot answers must not leak into the
+    # single-agent baseline; see packages/evaluation/demo_case.py).
+    assert _seats_for(BaselineVariant.SINGLE_AGENT) == (Seat.THEORY_BUILDER,)
+    assert Seat.ADVERSARY_FALSIFIER not in _seats_for(BaselineVariant.SINGLE_AGENT)
 
 
 def test_seats_for_every_other_variant_is_all_seven_seats() -> None:

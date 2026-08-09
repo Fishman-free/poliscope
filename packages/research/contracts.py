@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import Field, StrictInt, model_validator
 
-from packages.kernel.contracts import ContractModel
+from packages.kernel.contracts import ContractModel, FrozenDict
 
 
 class EvidenceDemandType(StrEnum):
@@ -57,11 +57,23 @@ class TaskModelConfig(ContractModel):
     ``deepseek-v4-flash`` when the deployment has none), which is the "system
     default DeepSeek" the web form promises. The API key is stored on the
     task row and is never returned by any read endpoint (CLAUDE.md 16).
+
+    ``is_free_trial`` marks a task whose inherited endpoint is the
+    deployment's free-trial vendor (round-7); ``extra_body`` carries the
+    vendor-specific request fields that endpoint needs (DashScope's
+    ``enable_thinking``), forwarded to the worker's gateway. Both default
+    off/None so the ordinary researcher-owned path is untouched.
     """
 
     base_url: str = Field(min_length=1)
     api_key: str = Field(min_length=1)
     model_name: str | None = None
+    is_free_trial: bool = False
+    # Vendor-specific request fields (e.g. DashScope's ``enable_thinking``),
+    # forwarded verbatim into the chat-completions body by the worker's
+    # gateway. FrozenDict because ContractModel forbids mutable containers;
+    # it serialises to a plain JSON object on the task row.
+    extra_body: FrozenDict[str, object] | None = None
 
     @model_validator(mode="after")
     def validate_base_url_scheme(self) -> Self:
@@ -98,3 +110,9 @@ class ResearchContract(ContractModel):
     # system prompt, so reasoning, structured outputs, and the final report
     # all come back in that language.
     output_language: str = "auto"
+    # Task mode (round-7): "deep_research" (a controversy question, the
+    # original flow) or "paper_review" (the researcher uploads a paper for
+    # the council to critique). The worker reads it to decide whether to run
+    # the paper-understanding step and which prompt shape to use; the
+    # synthesizer reads it to decide which report shape to emit.
+    task_type: str = "deep_research"

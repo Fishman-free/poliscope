@@ -1,9 +1,11 @@
-/** 最终论文：综合 agent 整合议会产出后的完整论文视图。
+/** 最终论文 / 论文审查报告：综合 agent 整合议会产出后的完整视图。
  *
  * 这是用户要求的「最终结论」：与 Research Brief（模板组装的结构化摘要）
  * 不同，它是由一个独立的综合 agent 在议会结束后把七位科学家的立场、
  * 条件化共识、已采纳发现整合成的完整论文（摘要、正文、参考文献、
- * 局限、调查过程）。
+ * 局限、调查过程）。round-7 起，论文审查任务产出的是审查报告（同样的
+ * 诚实性纪律，不同的结构）：先复述论文的研究问题/主要观点/佐证，再
+ * 列出不严谨之处、证据不充分之处与改进建议。
  *
  * 诚实性纪律（CLAUDE.md 10/11）：
  * - 论文不存在时不渲染任何模板假论文——只有空态 + 原因 + 指向 Brief。
@@ -11,11 +13,175 @@
  * - 参考文献的 DOI 可点击跳转；无 DOI 的来源只显示标题。
  */
 
-import type { FinalPaper, PaperReference } from "../api/types";
+import type {
+  FinalPaper,
+  PaperReference,
+  PaperReviewReport,
+} from "../api/types";
 import { Badge, Empty, Panel } from "../components/primitives";
 import { t } from "../i18n";
 
 import "./PaperView.css";
+
+const SEVERITY_LABELS: Record<string, string> = {
+  high: "严重",
+  medium: "中等",
+  low: "轻微",
+};
+
+function ReviewReportView({
+  paper,
+  onExport,
+}: {
+  paper: PaperReviewReport;
+  onExport: () => void;
+}) {
+  const overview = paper.paper_overview;
+  return (
+    <div className="paper">
+      <Panel
+        title={paper.title}
+        subtitle={t("论文审查报告 · 综合 agent 整合议会产出")}
+        actions={
+          <button type="button" className="button" onClick={onExport}>
+            {t("下载报告 Markdown")}
+          </button>
+        }
+      >
+        <section className="paper__abstract">
+          <h3>{t("论文概况")}</h3>
+          {overview.title ? <p>{t("标题：{0}", overview.title)}</p> : null}
+          <p>{t("研究问题：{0}", overview.research_question)}</p>
+          <h4 className="paper__subsection">{t("主要观点与佐证")}</h4>
+          {overview.main_claims.length === 0 ? (
+            <p>{t("未能从论文中提取到可核验的主要观点。")}</p>
+          ) : (
+            <ul className="paper__review-claims">
+              {overview.main_claims.map((claim, index) => (
+                <li key={index}>
+                  <span className="paper__review-claim-statement">
+                    {claim.statement}
+                  </span>
+                  {claim.supporting_evidence.length > 0 ? (
+                    <span className="paper__review-claim-evidence">
+                      {t("论文佐证：{0}", claim.supporting_evidence.join("；"))}
+                    </span>
+                  ) : (
+                    <span className="paper__review-claim-evidence">
+                      {t("论文未提供可辨识佐证")}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        {paper.investigation_process.length > 0 ? (
+          <section className="paper__process">
+            <h3>{t("调查过程")}</h3>
+            <ul>
+              {paper.investigation_process.map((item, index) => (
+                <li key={index}>{item}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </Panel>
+
+      <Panel title={t("不严谨之处")} subtitle={t("论证与方法的薄弱环节。")}>
+        {paper.rigor_issues.length === 0 ? (
+          <Empty>{t("未记录不严谨之处。")}</Empty>
+        ) : (
+          <ul className="paper__review-list">
+            {paper.rigor_issues.map((issue, index) => (
+              <li key={index}>
+                <span className="paper__review-issue">{issue.issue}</span>
+                <span className="paper__review-meta">
+                  {issue.claim_ref
+                    ? t("涉及主张：{0}", issue.claim_ref)
+                    : t("涉及论文整体")}
+                  {issue.severity && SEVERITY_LABELS[issue.severity] ? (
+                    <Badge tone="provisional">
+                      {SEVERITY_LABELS[issue.severity]}
+                    </Badge>
+                  ) : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel title={t("证据不充分之处")} subtitle={t("结论与证据之间的缺口。")}>
+        {paper.evidence_insufficiency.length === 0 ? (
+          <Empty>{t("未记录证据不充分之处。")}</Empty>
+        ) : (
+          <ul className="paper__review-list">
+            {paper.evidence_insufficiency.map((gap, index) => (
+              <li key={index}>
+                <span className="paper__review-issue">
+                  {gap.missing_evidence}
+                </span>
+                <span className="paper__review-meta">
+                  {gap.claim_ref
+                    ? t("涉及主张：{0}", gap.claim_ref)
+                    : t("涉及论文整体")}
+                  {gap.suggested_evidence
+                    ? t(" · 建议补充：{0}", gap.suggested_evidence)
+                    : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel title={t("改进建议")} subtitle={t("更全面、更严谨的修改方向。")}>
+        {paper.improvement_suggestions.length === 0 ? (
+          <Empty>{t("未记录改进建议。")}</Empty>
+        ) : (
+          <ul className="paper__review-list">
+            {paper.improvement_suggestions.map((suggestion, index) => (
+              <li key={index}>
+                <span className="paper__review-issue">
+                  {suggestion.issue}
+                </span>
+                <span className="paper__review-meta">
+                  {suggestion.claim_ref
+                    ? t("涉及主张：{0}", suggestion.claim_ref)
+                    : t("涉及论文整体")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <div className="paper__grid">
+        <Panel title={t("结论与局限")} subtitle={t("局限与结论并排呈现。")}>
+          <p className="paper__conclusion">{paper.conclusion}</p>
+          {paper.limitations.length === 0 ? (
+            <Empty>{t("未记录局限。")}</Empty>
+          ) : (
+            <ul className="paper__limits">
+              {paper.limitations.map((item, index) => (
+                <li key={index}>
+                  <Badge tone="unknown">{t("局限")}</Badge> {item}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+
+      <p className="paper__ai-notice">
+        {t(
+          "本审查报告由 AI 辅助研究系统综合生成，供研究者核验原始论文与审计轨迹时使用；报告本身不构成新的科学证据，所有批评与建议须结合审计轨迹中的原始来源独立复核。",
+        )}
+      </p>
+    </div>
+  );
+}
 
 function ReferenceList({ references }: { references: PaperReference[] }) {
   if (references.length === 0) {
@@ -49,7 +215,7 @@ export function PaperView({
   onExport,
   onViewBrief,
 }: {
-  paper: FinalPaper | null;
+  paper: FinalPaper | PaperReviewReport | null;
   onExport: () => void;
   onViewBrief: () => void;
 }) {
@@ -71,6 +237,10 @@ export function PaperView({
         </div>
       </Panel>
     );
+  }
+
+  if ("paper_overview" in paper) {
+    return <ReviewReportView paper={paper} onExport={onExport} />;
   }
 
   return (

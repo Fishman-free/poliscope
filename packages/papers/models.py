@@ -33,6 +33,10 @@ class ObjectModel(Base):
     )
     content_type: Mapped[str] = mapped_column(String(128), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The name the researcher gave the file (migration 0020). NULL only for
+    # pre-round-7 uploads, which were all PDFs (the old upload gate accepted
+    # nothing else) -- the extraction path defaults NULL to a PDF.
+    file_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

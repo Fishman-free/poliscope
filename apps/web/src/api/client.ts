@@ -150,6 +150,10 @@ export interface NewTaskOptions {
   /** Skill ids to enable for this task; their downloaded SKILL.md texts are
    * injected into the council's prompts as non-evidence instructions. */
   skillIds?: string[];
+  /** Task mode (round-7): "deep_research" (default) or "paper_review" --
+   * the council critiques an uploaded paper instead of investigating a
+   * controversy question. */
+  taskType?: string;
 }
 
 export const DEFAULT_NEW_TASK_OPTIONS: Required<
@@ -169,6 +173,7 @@ export const DEFAULT_NEW_TASK_OPTIONS: Required<
   modelConfig: null,
   knowledgeBaseId: null,
   skillIds: [],
+  taskType: "deep_research",
 };
 
 /** Create a task from a plain question. The task does not start research --
@@ -208,6 +213,7 @@ export function createTask(
     },
     knowledge_base_id: merged.knowledgeBaseId ?? null,
     skill_ids: merged.skillIds ?? [],
+    task_type: merged.taskType ?? "deep_research",
     task_model_config: model
       ? {
           base_url: model.baseUrl,
@@ -407,6 +413,26 @@ export function fetchTasks(): Promise<TaskSummary[]> {
   return getJson<TaskSummary[]>("/api/tasks");
 }
 
+/** Permanently delete a task and all its records (server confirms the task
+ * is owned by the caller). The UI must confirm with the researcher before
+ * calling -- this cannot be undone. */
+export async function deleteTask(taskId: string): Promise<{ deleted: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/api/tasks/${taskId}`, {
+      method: "DELETE",
+      headers: { accept: "application/json", ...authHeaders() },
+    });
+  } catch (cause) {
+    throw new ApiError(0, `无法连接 API：${String(cause)}`);
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+  return (await response.json()) as { deleted: string };
+}
+
 /** The permanent model endpoint. `has_api_key` is all the server ever tells
  * the browser about the key -- the key itself never leaves the server
  * (CLAUDE.md 16). */
@@ -418,6 +444,13 @@ export function saveModelSettings(
   update: ModelSettingsUpdate,
 ): Promise<ModelSettings> {
   return putJson<ModelSettings>("/api/settings/model", update);
+}
+
+/** Save the deployment's free-trial endpoint (qwen3.8-max) as this account's
+ * model settings. The server enforces the two-use quota; activating only
+ * saves the endpoint, and each confirmed research task consumes one slot. */
+export function activateFreeTrial(): Promise<ModelSettings> {
+  return postJson<ModelSettings>("/api/settings/model/free-trial", {});
 }
 
 /** Probe the researcher's current form values against the live endpoint.

@@ -219,11 +219,21 @@ export function NewTaskView({
   const [taskId, setTaskId] = useState<string | null>(null);
   const [claims, setClaims] = useState<SuggestedClaim[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // PDF 上传（claims 阶段，任务已创建后才可能挂对象）：本会话已上传列表
+  // 任务模式（round-7）：深度研究（原始流程）或论文审查（上传论文交议会
+  // 审查）。模式只影响入口形态与后端 task_type；议会流程完全复用。
+  const [mode, setMode] = useState<"deep_research" | "paper_review">(
+    "deep_research",
+  );
+  // 上传（claims 阶段，任务已创建后才可能挂对象）：本会话已上传列表
   // 只存在组件状态里，不做回读端点（YAGNI——已上传管理的完整视图留给知识库页）。
+  // 多格式自 round-7：PDF/DOCX/PPTX/XLSX/HTML/TXT/MD/CSV，格式与大小由
+  // 服务端校验（magic bytes + 试提取 + 20 MB），前端 accept 只做第一道过滤。
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploads, setUploads] = useState<{ name: string; size: number }[]>([]);
+
+  const UPLOAD_ACCEPT =
+    ".pdf,.docx,.pptx,.xlsx,.html,.htm,.txt,.md,.csv,application/pdf";
 
   async function handleFiles(files: FileList | null) {
     if (!taskId || !files || uploading) return;
@@ -231,12 +241,8 @@ export function NewTaskView({
     setUploadError(null);
     const fresh: { name: string; size: number }[] = [];
     for (const file of Array.from(files)) {
-      const looksPdf =
-        file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-      if (!looksPdf) {
-        setUploadError(t("「{0}」不是 PDF 文件，已跳过", file.name));
-        continue;
-      }
+      // 格式校验交给服务端（magic bytes + 试提取，422 带原因），前端不再
+      // 按扩展名自行判断——伪装扩展名的文件必须由字节级校验拒绝。
       try {
         const result = await uploadPaper(taskId, file);
         fresh.push({ name: file.name, size: result.size_bytes });
@@ -286,7 +292,13 @@ export function NewTaskView({
 
   async function submitQuestion(event: FormEvent) {
     event.preventDefault();
-    if (!question.trim() || submitting) return;
+    // 深度研究必须有研究问题；论文审查的问题（审查要求）可选，留空时用
+    // 占位问题（后端契约要求 question 非空，占位如实描述任务性质）。
+    const effectiveQuestion =
+      mode === "paper_review" && !question.trim()
+        ? "审查上传论文的论证严谨性与证据充分性，并给出改进建议"
+        : question.trim();
+    if (!effectiveQuestion || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -301,9 +313,10 @@ export function NewTaskView({
         sourceLimit,
         knowledgeBaseId: knowledgeBaseId || null,
         skillIds: Array.from(selectedSkills),
+        taskType: mode,
         // 模型设置不再随任务提交：右侧栏的永久设置由服务器在创建时自动套用。
       };
-      const created = await createTask(question.trim(), options);
+      const created = await createTask(effectiveQuestion, options);
       setTaskId(created.task_id);
       setClaims(created.suggested_claims);
       setSelected(new Set(created.suggested_claims.map((claim) => claim.id)));
@@ -370,17 +383,32 @@ export function NewTaskView({
         )}
 
         <section className="newtask__upload">
-          <h4>{t("补充 PDF 文献（可选，单个不超过 20 MB）")}</h4>
+          <h4>
+            {mode === "paper_review"
+              ? t("上传待审查论文（必填，单个不超过 20 MB）")
+              : t("补充 PDF 文献（可选，单个不超过 20 MB）")}
+          </h4>
           <p className="newtask__upload-hint">
-            {t("上传的 PDF 会作为用户提供的证据，交给议会做全文核验后按 Level A 进入证据图。")}
+            {mode === "paper_review"
+              ? t(
+                  "支持 PDF / DOCX / PPTX / XLSX / HTML / TXT / MD / CSV。论文全文会交给议会核验并按 Level A 进入证据图，审查报告将指出其中不严谨、证据不充分之处并给出改进建议。",
+                )
+              : t(
+                  "上传的 PDF 会作为用户提供的证据，交给议会做全文核验后按 Level A 进入证据图。",
+                )}
           </p>
           <input
             type="file"
-            accept="application/pdf"
+            accept={UPLOAD_ACCEPT}
             multiple
             disabled={submitting || uploading}
             onChange={(event) => handleFiles(event.target.files)}
           />
+          {mode === "paper_review" && uploads.length === 0 && !uploading ? (
+            <p className="newtask__upload-required">
+              {t("论文审查任务必须至少上传一篇论文，才能确认并开始研究。")}
+            </p>
+          ) : null}
           {uploads.length > 0 ? (
             <ul className="newtask__upload-list">
               {uploads.map((item, index) => (
@@ -418,9 +446,17 @@ export function NewTaskView({
             type="button"
             className="button button--primary"
             onClick={confirmAndStart}
-            disabled={submitting || selected.size === 0}
+            disabled={
+              submitting ||
+              selected.size === 0 ||
+              (mode === "paper_review" && uploads.length === 0)
+            }
           >
-            {submitting ? t("提交中…") : t("确认并开始研究")}
+            {submitting
+              ? t("提交中…")
+              : mode === "paper_review"
+                ? t("确认并开始审查")
+                : t("确认并开始研究")}
           </button>
         </div>
       </Panel>
@@ -433,19 +469,57 @@ export function NewTaskView({
       className="fade-in-up"
       title={t("打开一个新的研究任务")}
       subtitle={t(
-        "七人议会会围绕这个问题独立取证、交叉质询，产出一张可审计的证据地图，而不是一段读起来通顺的摘要。",
+        mode === "paper_review"
+          ? "上传论文，七人议会会先读清论文的研究问题、主要观点与佐证，再逐项审查论证严谨性与证据充分性，产出一份可审计的论文审查报告。"
+          : "七人议会会围绕这个问题独立取证、交叉质询，产出一张可审计的证据地图，而不是一段读起来通顺的摘要。",
       )}
     >
+      {/* 模式切换（round-7）：Apple 风格 segmented pill，唯一交互色
+          #0066cc 承载选中态。切换只改变入口形态与后端 task_type。 */}
+      <div className="newtask__mode" role="tablist" aria-label={t("任务类型")}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "deep_research"}
+          className={
+            mode === "deep_research"
+              ? "newtask__mode-pill newtask__mode-pill--active"
+              : "newtask__mode-pill"
+          }
+          onClick={() => setMode("deep_research")}
+          disabled={submitting}
+        >
+          {t("深度研究")}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "paper_review"}
+          className={
+            mode === "paper_review"
+              ? "newtask__mode-pill newtask__mode-pill--active"
+              : "newtask__mode-pill"
+          }
+          onClick={() => setMode("paper_review")}
+          disabled={submitting}
+        >
+          {t("论文审查")}
+        </button>
+      </div>
       <form className="newtask__form" onSubmit={submitQuestion}>
         <label className="newtask__label" htmlFor="new-task-question">
-          {t("研究问题")}
+          {mode === "paper_review" ? t("审查要求（可选）") : t("研究问题")}
         </label>
         <textarea
           id="new-task-question"
           className="newtask__textarea"
           value={question}
           onChange={(event) => setQuestion(event.target.value)}
-          placeholder={t("例如：社交媒体使用时长是否会降低青少年的心理健康水平？")}
+          placeholder={
+            mode === "paper_review"
+              ? t("例如：重点审查论文的因果推断、测量方式与样本代表性（可留空，系统会审查全文）")
+              : t("例如：社交媒体使用时长是否会降低青少年的心理健康水平？")
+          }
           rows={3}
           disabled={submitting}
         />
@@ -536,6 +610,7 @@ export function NewTaskView({
           </fieldset>
         </details>
 
+        {mode === "deep_research" ? (
         <details className="newtask__advanced">
           <summary>
             {t("用户提供的证据（可选）——关联知识库，文档会作为正式证据源交给议会核验")}
@@ -616,6 +691,7 @@ export function NewTaskView({
             </fieldset>
           ) : null}
         </details>
+        ) : null}
 
         <p className="newtask__model-note">
           {t(
@@ -632,9 +708,16 @@ export function NewTaskView({
         <button
           type="submit"
           className="button button--primary"
-          disabled={submitting || !question.trim()}
+          disabled={
+            submitting ||
+            (mode === "deep_research" && !question.trim())
+          }
         >
-          {submitting ? t("创建中…") : t("开始研究")}
+          {submitting
+            ? t("创建中…")
+            : mode === "paper_review"
+              ? t("开始审查")
+              : t("开始研究")}
         </button>
       </form>
 

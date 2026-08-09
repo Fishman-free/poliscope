@@ -198,9 +198,17 @@ def _memory_for(variant: BaselineVariant, task_id: UUID) -> CouncilMemory | None
 
 def _seats_for(variant: BaselineVariant) -> tuple[Seat, ...]:
     # Single-Agent Deep Research is one researcher, not seven -- the whole
-    # point of the comparison is what a lone agent misses.
+    # point of the comparison is what a lone agent misses. The theory builder
+    # is the generic researcher standing in for that lone agent: ORDERED_SEATS
+    # is alphabetical and its first member is the adversarial falsifier,
+    # whose specialised role is exactly what a single researcher is not -- and
+    # whose two BLINDSPOT_BOUNTY nominations in the demo case (see
+    # packages/evaluation/demo_case.py's DemoGateway, which scripts one
+    # specialist blindspot per seat) would hand a single-agent run two
+    # falsification-flavoured gold matches instead of the theory builder's
+    # one generic mechanism blindspot.
     if variant is BaselineVariant.SINGLE_AGENT:
-        return (ORDERED_SEATS[0],)
+        return (Seat.THEORY_BUILDER,)
     return ORDERED_SEATS
 
 

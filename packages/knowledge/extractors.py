@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import xml.etree.ElementTree as ET
 import zipfile
+from html.parser import HTMLParser
 from pathlib import PurePosixPath
 
 from packages.papers.parser import PageText, PdfExtractionError, extract_pages
@@ -56,6 +57,8 @@ CONTENT_TYPES = {
     ".pdf": "application/pdf",
     ".txt": "text/plain",
     ".md": "text/markdown",
+    ".html": "text/html",
+    ".htm": "text/html",
     ".csv": "text/csv",
     ".docx": (
         "application/vnd.openxmlformats-officedocument."
@@ -113,6 +116,9 @@ def extract_text(
         )
     if suffix in TEXT_EXTENSIONS:
         return [_decode_text(content)], 1
+    if suffix in (".html", ".htm"):
+        blocks = _html_text(content)
+        return blocks, len(blocks)
     if suffix == ".docx":
         blocks = _docx_text(content)
         return blocks, len(blocks)
@@ -124,6 +130,78 @@ def extract_text(
     raise InvalidDocument(
         f"unsupported file type{f' ({suffix})' if suffix else ''}"
     )
+
+
+def _html_text(content: bytes) -> list[PageText]:
+    """HTML/HTM: one text chunk per block element (p, div, li, heading).
+
+    ``<script>`` and ``<style>`` bodies are skipped -- they are code, not the
+    document the researcher meant to hand the council. The parser collects
+    text per block boundary, then strips each block to its non-empty lines so
+    a heavily-marked-up page degrades to readable paragraphs instead of a
+    wall of tags.
+    """
+    text = _decode_text(content).text
+    parser = _HtmlTextParser()
+    try:
+        parser.feed(text)
+    except Exception as error:  # noqa: BLE001 -- parser errors surface as a reason
+        raise InvalidDocument(f"html parsing failed: {error}") from error
+    blocks: list[PageText] = []
+    for index, raw in enumerate(parser.blocks, start=1):
+        chunk = _strip_html_block(raw)
+        if chunk:
+            blocks.append(PageText(page_number=index, text=chunk))
+    if not blocks:
+        raise InvalidDocument("html produced no extractable text")
+    return blocks
+
+
+def _strip_html_block(raw: str) -> str:
+    """Trim an HTMLParser-collected block to its readable text.
+
+    The parser appends raw data as-is (entities arrive decoded, which is
+    what matters); here each line is stripped and blank lines collapse, so
+    indentation-driven markdown inside the HTML survives as prose.
+    """
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    return "\n".join(lines)
+
+
+class _HtmlTextParser(HTMLParser):
+    """Collect text per block-level boundary; skip script/style bodies."""
+
+    _BLOCK_TAGS = frozenset(
+        {"p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "br", "tr", "pre"}
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[str] = []
+        self._current: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("script", "style"):
+            self._skip_depth += 1
+        elif tag in self._BLOCK_TAGS:
+            self._current.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style") and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag in self._BLOCK_TAGS:
+            self._flush()
+
+    def handle_data(self, data: str) -> None:
+        if not self._skip_depth:
+            self._current.append(data)
+
+    def _flush(self) -> None:
+        chunk = "".join(self._current).strip()
+        if chunk:
+            self.blocks.append(chunk)
+        self._current = []
 
 
 def _decode_text(content: bytes) -> PageText:

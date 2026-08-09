@@ -116,6 +116,13 @@ class OpenAICompatibleConfig:
     # whole-call ceilings the file header's failure shape relies on.
     stream_total_timeout_seconds: float = STREAM_TOTAL_TIMEOUT_SECONDS
     invoke_total_timeout_seconds: float = INVOKE_TOTAL_TIMEOUT_SECONDS
+    # Vendor-specific request fields merged verbatim into every
+    # chat-completions body (round-7 free trial: DashScope's
+    # ``enable_thinking``). When present, the gateway skips its own
+    # DeepSeek-style ``thinking`` field so the vendor's own toggle drives
+    # thinking mode -- an unrecognised `thinking` would otherwise be sent to
+    # a vendor that never asked for it (recorded assumption, CLAUDE.md 17).
+    extra_body: Mapping[str, object] | None = None
 
     @classmethod
     def from_env(
@@ -315,7 +322,13 @@ class OpenAICompatibleModelGateway:
             model_name, messages, request.output_schema, schema, force_tool=False
         )
         body["stream"] = True
-        body["thinking"] = {"type": "enabled"}
+        if self._config.extra_body is not None:
+            # Same rule as the non-streaming path: the vendor's own fields
+            # (e.g. DashScope's enable_thinking) replace the DeepSeek-style
+            # thinking toggle below.
+            body.update(self._config.extra_body)
+        else:
+            body["thinking"] = {"type": "enabled"}
 
         # Total deadline, not just the per-read httpx timeout: a thinking-mode
         # stream keeps the connection alive with an endless drip of reasoning
@@ -450,7 +463,12 @@ class OpenAICompatibleModelGateway:
         body = _build_body(
             model_name, messages, schema_name, schema, force_tool=force_tool
         )
-        if thinking:
+        if self._config.extra_body is not None:
+            # Vendor-specific fields (e.g. DashScope's enable_thinking) drive
+            # their own thinking mode; the DeepSeek-style `thinking` toggle
+            # below is skipped so an unrecognised field never reaches them.
+            body.update(self._config.extra_body)
+        elif thinking:
             body["thinking"] = {"type": "enabled"}
         else:
             # DeepSeek's reasoning models default to "thinking mode", which

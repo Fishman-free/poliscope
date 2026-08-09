@@ -1,0 +1,15 @@
+# Arbor run configuration (auto-detected by arbor)
+task: >-
+  组织 ForesightBlindspot 评测实验：5 基线对比（Single-Agent Deep Research /
+  Fixed Multi-Agent Debate / Council+Linear Context / Council+MemoBrain 无证据引擎 /
+  完整 Poliscope）与消融。主 metric = Blindspot F1（maximize），
+  eval = scripts/arbor_eval.py（scripted demo case，无模型/无网络/无数据库）。
+  INIT 已发现基线语义 bug（SINGLE_AGENT 席位选择 + final_rejudgment 全席遍历），
+  修正后重新测量 baseline。B_dev = demo case；无独立 B_test（时间切片语料未采集）。
+  smoke 起步；真实模型受控实验需用户确认。permissions：实验 worktree 内可改代码，
+  不 commit，不跑真实模型。
+
+coordinator:
+  max_cycles: 3
+  ui:
+    interaction_mode: review

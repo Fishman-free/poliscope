@@ -30,6 +30,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
+from packages.knowledge.extractors import InvalidDocument, extract_text
 from packages.knowledge.models import KnowledgeDocumentModel
 from packages.models.contracts import (
     ModelClass,
@@ -408,13 +409,21 @@ class FindingExtractor:
         source_id: UUID,
         object_id: UUID,
     ) -> FindingExtractionResult:
-        """Try to turn an uploaded PDF's own bytes into a StudyFinding.
+        """Try to turn an uploaded paper's own bytes into a StudyFinding.
 
         Mirrors ``extract`` from the point full text exists onward -- same
         parsing, same model call, same Level A quote check, same persistence
         -- but skips the Unpaywall lookup and full-text fetch entirely, since
         the bytes are already sitting in the private object store under the
         key ``acquire_uploaded`` recorded on this source's ``object_id``.
+
+        Since round-7 the upload gate accepts more than PDF: the extractor is
+        chosen by the stored ``file_name`` (``extract_text`` dispatches on
+        it), so a docx/pptx/txt upload reaches the same Level A path a PDF
+        does. ``page_number`` semantics come from the extractor per format
+        (real pages for PDF/PPTX, paragraph chunks for DOCX, one block for
+        the rest) -- an honest coarse locator, never a fabricated page
+        (CLAUDE.md 7).
         """
 
         dataset_id: str | None = None
@@ -435,16 +444,21 @@ class FindingExtractor:
         if stored_object_id is None:
             return _gap("source has no uploaded object to extract from")
 
+        name_row = await self._session.execute(
+            select(ObjectModel.file_name).where(ObjectModel.id == stored_object_id)
+        )
+        file_name = name_row.scalar_one_or_none() or "paper.pdf"
+
         content = await self._retrieve_uploaded(stored_object_id)
         if content is None:
             return _gap("uploaded object not found in private object store")
 
         try:
-            pages = extract_pages(content)
-        except PdfExtractionError as error:
-            return _gap(f"pdf parsing failed: {error}")
+            pages, _ = extract_text(content, file_name)
+        except InvalidDocument as error:
+            return _gap(str(error))
         if not pages:
-            return _gap("pdf produced no extractable text")
+            return _gap("uploaded paper produced no extractable text")
 
         dataset_id = detect_dataset_identifier(pages)
         if dataset_id is not None:

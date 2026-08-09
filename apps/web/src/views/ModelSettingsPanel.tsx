@@ -17,11 +17,12 @@
 import { useEffect, useState } from "react";
 
 import {
+  activateFreeTrial,
   fetchModelSettings,
   saveModelSettings,
   testModelConnection,
 } from "../api/client";
-import type { ModelTestResult } from "../api/types";
+import type { ModelSettings, ModelTestResult } from "../api/types";
 import { Badge, Panel } from "../components/primitives";
 import { t } from "../i18n";
 
@@ -32,9 +33,11 @@ export function ModelSettingsPanel() {
   const [apiKey, setApiKey] = useState("");
   const [modelName, setModelName] = useState("");
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [freeTrial, setFreeTrial] = useState<ModelSettings["free_trial"]>();
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [activatingTrial, setActivatingTrial] = useState(false);
   // 连接已验证（最近一次测试成功）。任何字段改动都会使它失效。
   const [verified, setVerified] = useState(false);
   const [testResult, setTestResult] = useState<ModelTestResult | null>(null);
@@ -49,6 +52,7 @@ export function ModelSettingsPanel() {
         setBaseUrl(settings.base_url ?? "");
         setModelName(settings.model_name ?? "");
         setHasApiKey(settings.has_api_key);
+        setFreeTrial(settings.free_trial);
         setLoaded(true);
       })
       .catch((cause: unknown) => {
@@ -133,10 +137,35 @@ export function ModelSettingsPanel() {
     }
   }
 
+  /** 启用免费体验：把部署方的 qwen3.8-max 端点存为账号设置。激活本身不
+   * 消耗额度（服务端语义：每次确认开始研究才扣一次），前端只展示服务器
+   * 返回的剩余次数——额度裁决永远在服务端（apps/api/routers/tasks.py）。 */
+  async function activateTrial() {
+    setActivatingTrial(true);
+    setError(null);
+    try {
+      const result = await activateFreeTrial();
+      setBaseUrl(result.base_url ?? "");
+      setModelName(result.model_name ?? "");
+      setHasApiKey(result.has_api_key);
+      setFreeTrial(result.free_trial);
+      setSaved(true);
+    } catch (cause) {
+      // 403「免费额度已用尽，请填写你自己的api-key」/ 503「免费体验暂未
+      // 开放」的 detail 直接展示——提示必须精确，不包装、不美化。
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setActivatingTrial(false);
+    }
+  }
+
   const busy = saving || testing;
   const canTest = Boolean(baseUrl.trim()) && !busy;
   // 保存必须建立在本组值通过连接测试之上——这是硬门控。
   const canSave = verified && !busy;
+  // round-6「填了 Key 和模型名但任务仍走系统默认」的根因：没有 Base URL
+  // 的配置永远不会被任务继承（后端同样拒绝保存，这里在输入时就讲清楚）。
+  const urlMissingWithKey = !baseUrl.trim() && (Boolean(apiKey.trim()) || hasApiKey);
 
   return (
     <Panel
@@ -200,6 +229,17 @@ export function ModelSettingsPanel() {
               spellCheck={false}
             />
           </label>
+
+          {/* 有 Key 无 URL 是半套配置：任务创建时只继承同时包含 Base URL
+              与 Key 的设置，这样保存「成功」也不会作用于任何任务——必须
+              在输入时就警告，而不是让用户事后发现。 */}
+          {urlMissingWithKey ? (
+            <p className="settings__warn" role="alert">
+              {t(
+                "未填写 Base URL：此配置不会被任何任务使用（任务只继承同时有 Base URL 与 API Key 的设置）。请补上端点地址，或清除 Key 使用系统默认。",
+              )}
+            </p>
+          ) : null}
 
           {/* 连接测试结果：成功给延迟与纠正说明，失败给出可操作的原因。 */}
           {testResult ? (
@@ -266,7 +306,11 @@ export function ModelSettingsPanel() {
               {t("修改后需先「测试连接」通过，才能保存设置。")}
             </p>
           ) : null}
-          {saved ? <p className="settings__ok">{t("已保存 ✓")}</p> : null}
+          {saved ? (
+            <p className="settings__ok">
+              {t("已保存 ✓ · 将用于之后创建的新任务（不影响已有任务）")}
+            </p>
+          ) : null}
           <p className="settings__note">
             {t(
               "API Key 只存服务器、任何页面都不会回显；不设置则使用部署方配置的系统默认模型。",
@@ -274,6 +318,56 @@ export function ModelSettingsPanel() {
           </p>
         </div>
       )}
+      {freeTrial ? (
+        <div className="settings__trial">
+          <h4 className="settings__trial-title">
+            {t("免费 qwen3.8-max 体验")}
+            {freeTrial.active ? (
+              <Badge tone="admitted">{t("体验中")}</Badge>
+            ) : null}
+          </h4>
+          <p className="settings__trial-hint">
+            {freeTrial.active
+              ? t(
+                  "当前设置正在使用部署方的免费模型（{0} 次/共 {1} 次）。每次确认开始研究消耗一次额度。",
+                  freeTrial.used,
+                  freeTrial.limit,
+                )
+              : t(
+                  "每个账号可使用部署方提供的免费 qwen3.8-max 模型提问 2 次，之后需要填写自己的 API Key。",
+                )}
+          </p>
+          {freeTrial.enabled && !freeTrial.active && freeTrial.available ? (
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={activateTrial}
+              disabled={busy || activatingTrial}
+            >
+              {activatingTrial
+                ? t("启用中…")
+                : t("使用免费模型提问（剩余 {0} 次）", freeTrial.remaining)}
+            </button>
+          ) : null}
+          {freeTrial.enabled && freeTrial.used >= freeTrial.limit ? (
+            <p className="settings__trial-exhausted" role="alert">
+              {t("免费额度已用尽，请填写你自己的api-key")}
+            </p>
+          ) : null}
+          {!freeTrial.enabled ? (
+            <p className="settings__trial-disabled">
+              {t("免费体验暂未开放（部署方未配置免费模型服务）。")}
+            </p>
+          ) : null}
+          {freeTrial.active ? (
+            <p className="settings__trial-disabled">
+              {t(
+                "如需换回自己的 Key，直接在上方填写并保存即可——免费额度已消耗的不返还。",
+              )}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </Panel>
   );
 }

@@ -11,6 +11,12 @@ from packages.council.rounds.joint_modeling import JointModelInput
 class FinalRejudgmentInput:
     joint_snapshot: JointModelInput
     initial_judgments: dict[Seat, str]
+    # The seats that actually took part in this rejudgment. None (the
+    # default, and the value production always passes today) means every
+    # seat -- a run with fewer seats, such as the single-agent evaluation
+    # baseline, must not mint "no initial judgment" placeholders for seats
+    # that never participated.
+    seats: tuple[Seat, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +51,14 @@ class FinalRejudgmentHandler:
     )
 
     def run(self, input: FinalRejudgmentInput) -> FinalRejudgmentOutput:
+        # Only the seats that actually took part in the rejudgment get a
+        # SeatJudgment; without the explicit list this used to iterate every
+        # seat, minting "no initial judgment" placeholders for seats that
+        # never participated (six of seven FINAL_JUDGMENT events in the
+        # single-agent evaluation baseline). ``tuple(Seat)`` is exactly what
+        # ``for seat in Seat`` enumerated, so the all-seats fallback is
+        # behaviour-identical to the pre-fix path.
+        seats = input.seats if input.seats is not None else tuple(Seat)
         judgments = tuple(
             SeatJudgment(
                 seat=seat,
@@ -58,7 +72,7 @@ class FinalRejudgmentHandler:
                 ),
                 evidence_driven_update=bool(input.joint_snapshot.claim_refs),
             )
-            for seat in Seat
+            for seat in seats
         )
         output = FinalRejudgmentOutput(judgments=judgments)
         self._last_output = output
