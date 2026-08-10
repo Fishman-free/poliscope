@@ -134,6 +134,25 @@ class ResearchService:
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
 
+    async def re_research(self, task_id: UUID) -> str:
+        """Move a FAILED task back to QUEUED so the worker can claim it again.
+
+        ``重新研究`` (round-8): a task that ended in FAILED -- e.g. an
+        unrecoverable event conflict or a watchdog timeout -- is requeued. The
+        worker resumes from the stored council checkpoint if one exists (the
+        phases before it are not re-run, and their ledger events replay as
+        no-ops via stable idempotency keys); a task that failed before reaching
+        the checkpoint re-runs its early phases, which is an honest restart.
+        """
+        task = await self._repository.get_task(task_id)
+        if task.status != TaskStatus.FAILED:
+            raise InvalidPauseState(
+                f"task {task_id} is {task.status}, not {TaskStatus.FAILED}; "
+                "only a failed task can be re-researched"
+            )
+        await self._repository.set_status(task_id, TaskStatus.QUEUED)
+        return TaskStatus.QUEUED
+
     async def submit_council_guidance(self, task_id: UUID, guidance_text: str) -> str:
         """Attach the human's advisory steer to the halted checkpoint and resume.
 

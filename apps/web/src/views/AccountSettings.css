@@ -1,0 +1,154 @@
+/* 账号设置弹层：Apple 风格 sheet（hairline 卡片、毛玻璃遮罩、负字距）。 */
+
+.account-settings__backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: var(--space-5);
+}
+
+.account-settings {
+  width: min(100%, 26rem);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-4);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.account-settings__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.account-settings__head h2 {
+  margin: 0;
+  font-size: var(--text-title);
+  letter-spacing: -0.02em;
+}
+
+.account-settings__close {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  font-size: var(--text-title);
+  cursor: pointer;
+}
+
+.account-settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.account-settings__section h3 {
+  margin: 0;
+  font-size: var(--text-small);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.account-settings__section input {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-body);
+}
+
+.account-settings__section .button {
+  align-self: flex-start;
+}
+
+.account-settings__avatar-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  font-size: var(--text-small);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.account-settings__avatar-pick input {
+  display: none;
+}
+
+.account-settings__hint {
+  margin: 0;
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.account-settings__current {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--ink-2);
+}
+
+.account-settings__ok {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--admitted);
+}
+
+.account-settings__error {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--refuted);
+}
+
+.account-settings__danger {
+  border-top-color: var(--refuted-soft);
+}
+
+.account-settings__danger-note {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.account-settings__danger-btn {
+  background: var(--refuted);
+  color: #fff;
+  border-radius: var(--radius-pill);
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-small);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.account-settings__danger-btn:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.account-settings__cancel {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  font-size: var(--text-small);
+  cursor: pointer;
+  align-self: flex-start;
+}

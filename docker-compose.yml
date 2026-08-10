@@ -70,6 +70,14 @@ services:
       # endpoint probes and stores this endpoint on demand. Blank = the
       # trial is disabled for every account.
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      # Email verification (round-8): registration sends a 6-digit code via
+      # SMTP. Blank SMTP_HOST = the register endpoint refuses with 503 (the
+      # API process owns sending -- the worker never emails).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     # No `ports:` here on purpose: `caddy` is the only service allowed to
     # bind a host port (see its comment below), so the shared password at
     # the edge cannot be routed around by hitting this container directly.

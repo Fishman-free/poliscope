@@ -27,12 +27,9 @@ Guidance for the council.
 
 
 async def _register(client: httpx.AsyncClient, username: str) -> dict[str, Any]:
-    response = await client.post(
-        "/api/auth/register",
-        json={"username": username, "password": "test-password-123"},
-    )
-    assert response.status_code == 201, response.text
-    return cast(dict[str, Any], response.json())
+    from tests.conftest import register_user
+
+    return await register_user(client, username)
 
 
 def _bearer(token: str) -> dict[str, str]:

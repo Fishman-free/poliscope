@@ -88,6 +88,88 @@
   font-size: var(--text-body);
 }
 
+.auth__step {
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+  letter-spacing: 0.01em;
+}
+
+.auth__verify {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.auth__code {
+  text-align: center;
+  font-family: var(--mono);
+  letter-spacing: 0.5em;
+  font-size: var(--text-title);
+}
+
+.auth__hint {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.auth__verify-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.auth__resend {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+
+.auth__resend:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.auth__back {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  font-size: var(--text-micro);
+  cursor: pointer;
+}
+
+.auth__back:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.auth__forgot {
+  align-self: flex-end;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+
+.auth__forgot:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.auth__ok {
+  font-size: var(--text-small);
+  color: var(--admitted);
+  margin: 0;
+}
+
 .auth__error {
   font-size: var(--text-small);
   color: var(--refuted);

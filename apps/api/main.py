@@ -18,6 +18,7 @@ from sqlalchemy import text
 
 from apps.api.dependencies import AppState
 from apps.api.routers import (
+    account,
     auth,
     knowledge_bases,
     papers,
@@ -54,6 +55,7 @@ app.include_router(stream.router, prefix="/api/stream", tags=["stream"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(account.router, prefix="/api/account", tags=["account"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
 
 

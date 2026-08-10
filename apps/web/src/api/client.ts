@@ -20,9 +20,11 @@ import type {
   ModelSettings,
   ModelSettingsUpdate,
   ModelTestResult,
+  RegistrationRequest,
   SkillSummary,
   TaskSummary,
   UploadedPaper,
+  VerificationResponse,
   WorkspaceSnapshot,
 } from "./types";
 
@@ -89,7 +91,7 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function sendJson<T>(
-  method: "POST" | "PUT",
+  method: "POST" | "PUT" | "DELETE",
   path: string,
   body: unknown,
 ): Promise<T> {
@@ -413,6 +415,15 @@ export function fetchTasks(): Promise<TaskSummary[]> {
   return getJson<TaskSummary[]>("/api/tasks");
 }
 
+/** 「重新研究」: move a FAILED task back to QUEUED so the worker resumes it
+ * from the stored council checkpoint (round-8). */
+export function reResearch(taskId: string): Promise<{ task_id: string; status: string }> {
+  return postJson<{ task_id: string; status: string }>(
+    `/api/tasks/${taskId}/re-research`,
+    {},
+  );
+}
+
 /** Permanently delete a task and all its records (server confirms the task
  * is owned by the caller). The UI must confirm with the researcher before
  * calling -- this cannot be undone. */
@@ -476,17 +487,19 @@ export async function addTextDocument(
   );
 }
 
-/** Account sessions: register and login, storing the bearer token for
- * remember-me. The token is handed out exactly once -- these are the only
- * calls that write it. */
-export async function register(
-  username: string,
-  password: string,
+/** Account sessions: register (two-phase email verification) and login,
+ * storing the bearer token for remember-me. The token is handed out exactly
+ * once -- only confirmRegistration and login write it. */
+export async function requestRegistration(
+  body: RegistrationRequest,
+): Promise<VerificationResponse> {
+  return postJson<VerificationResponse>("/api/auth/register", body);
+}
+
+export async function confirmRegistration(
+  body: RegistrationRequest & { code: string },
 ): Promise<AuthSession> {
-  const session = await postJson<AuthSession>("/api/auth/register", {
-    username,
-    password,
-  });
+  const session = await postJson<AuthSession>("/api/auth/register/confirm", body);
   setToken(session.token);
   return session;
 }
@@ -515,6 +528,75 @@ export async function logout(): Promise<void> {
 /** Verify the remembered token at startup; throws 401 when it expired. */
 export function fetchMe(): Promise<MeInfo> {
   return getJson<MeInfo>("/api/auth/me");
+}
+
+/** Account self-management (round-8): avatar, username, password, delete. */
+
+/** Upload a new avatar image. Returns the stored image's metadata. */
+export async function uploadAvatar(file: File): Promise<{ content_type: string; size_bytes: number }> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`${BASE}/api/account/avatar`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+  return (await response.json()) as { content_type: string; size_bytes: number };
+}
+
+/** Fetch the avatar image bytes as a blob, or null when none is set. */
+export async function fetchAvatarBlob(): Promise<Blob | null> {
+  const token = getToken();
+  if (!token) return null;
+  const response = await fetch(`${BASE}/api/account/avatar`, {
+    headers: authHeaders(),
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+  return response.blob();
+}
+
+/** Rename the account. Requires the current password. */
+export function changeUsername(newUsername: string, password: string): Promise<{ username: string }> {
+  return postJson<{ username: string }>("/api/account/username", {
+    new_username: newUsername,
+    password,
+  });
+}
+
+/** Replace the password after verifying the old one. */
+export function changePassword(oldPassword: string, newPassword: string): Promise<{ status: string }> {
+  return postJson<{ status: string }>("/api/account/password", {
+    old_password: oldPassword,
+    new_password: newPassword,
+  });
+}
+
+/** Permanently delete the account. Clears the local token on success. */
+export async function deleteAccount(password: string): Promise<void> {
+  await sendJson<unknown>("DELETE", "/api/account", { password });
+  clearToken();
+}
+
+/** Request a password-reset code (202 even for unknown emails). */
+export function requestPasswordReset(email: string): Promise<VerificationResponse> {
+  return postJson<VerificationResponse>("/api/auth/forgot-password", { email });
+}
+
+/** Reset the password with the emailed code. */
+export function resetPassword(email: string, code: string, password: string): Promise<{ status: string }> {
+  return postJson<{ status: string }>("/api/auth/reset-password", {
+    email,
+    code,
+    password,
+  });
 }
 
 /** The account's skills: download, list, toggle, forget. */

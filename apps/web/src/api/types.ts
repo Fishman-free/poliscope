@@ -214,6 +214,21 @@ export interface AuthSession {
 export interface MeInfo {
   username: string;
   created_at: string;
+  /** Whether the account has set an avatar (round-8 account management). */
+  has_avatar?: boolean;
+}
+
+/** Phase-1 registration: validate and email a 6-digit verification code. */
+export interface RegistrationRequest {
+  username: string;
+  password: string;
+  email: string;
+}
+
+/** Phase-1 response: the code was emailed, wait this many seconds to resend. */
+export interface VerificationResponse {
+  status: "code_sent";
+  retry_after: number;
 }
 
 /** One downloaded skill, scoped to the account. `enabled` is the checkbox

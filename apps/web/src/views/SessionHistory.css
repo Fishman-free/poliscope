@@ -158,6 +158,28 @@
   min-width: 0;
 }
 
+.session__rerun {
+  flex: none;
+  align-self: center;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-micro);
+  cursor: pointer;
+}
+
+.session__rerun:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.session__rerun:hover {
+  background: var(--accent-soft);
+}
+
 .session__delete {
   flex: none;
   align-self: center;

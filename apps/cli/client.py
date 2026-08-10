@@ -114,12 +114,31 @@ class CLIClient:
         decoded: dict[str, Any] = response.json()
         return decoded
 
-    async def register(self, username: str, password: str) -> dict[str, Any]:
-        """Create an account. Returns the session ``{id, username, token}``."""
+    async def register(
+        self, username: str, password: str, email: str
+    ) -> dict[str, Any]:
+        """Phase 1: request a verification code for the email. Returns the
+        ``{"status": "code_sent", ...}`` envelope -- no account is created yet."""
         return await self._request(
             "POST",
             "/api/auth/register",
-            json={"username": username, "password": password},
+            json={"username": username, "password": password, "email": email},
+        )
+
+    async def confirm_registration(
+        self, username: str, password: str, email: str, code: str
+    ) -> dict[str, Any]:
+        """Phase 2: verify the emailed code and create the account. Returns
+        the session ``{id, username, token}``."""
+        return await self._request(
+            "POST",
+            "/api/auth/register/confirm",
+            json={
+                "username": username,
+                "password": password,
+                "email": email,
+                "code": code,
+            },
         )
 
     async def login(self, username: str, password: str) -> dict[str, Any]:
