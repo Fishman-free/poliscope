@@ -1,28 +1,23 @@
-/* 账号设置弹层：Apple 风格 sheet（hairline 卡片、毛玻璃遮罩、负字距）。 */
-
-.account-settings__backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.25);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 60;
-  padding: var(--space-5);
-}
+/* 账号设置弹层：头像下方的下拉面板（Apple 风格——白色 surface、
+   hairline 边框、radius-3、软阴影、负字距）。不再是全屏 fixed 遮罩。 */
 
 .account-settings {
-  width: min(100%, 26rem);
-  max-height: 90vh;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 21rem;
+  max-height: min(80vh, 34rem);
   overflow-y: auto;
   background: var(--surface-0);
   border: 1px solid var(--line);
-  border-radius: var(--radius-4);
-  box-shadow: var(--shadow-1);
-  padding: var(--space-5);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
+  z-index: 60;
+  text-align: left;
 }
 
 .account-settings__head {

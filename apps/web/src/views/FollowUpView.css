@@ -1,0 +1,130 @@
+/* 补充提问（round-9）：AI 对话框视图。Apple 语言——白色表面、hairline
+   分隔、唯一 Action Blue 交互色、pill 发送按钮；问答气泡为浅表面 + 发丝线，
+   无装饰渐变与重阴影。 */
+
+.followup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 100%;
+}
+
+.followup__head h3 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-title);
+  letter-spacing: -0.02em;
+}
+
+.followup__hint {
+  margin: 0;
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+
+.followup__thread {
+  flex: 1;
+  min-height: 18rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-1);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.followup__empty {
+  margin: auto;
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  text-align: center;
+  max-width: 24rem;
+}
+
+.followup__exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.followup__q,
+.followup__a {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 100%;
+}
+
+.followup__q {
+  align-items: flex-end;
+}
+
+.followup__q p {
+  margin: 0;
+  max-width: 85%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  font-size: var(--text-small);
+  color: var(--ink-1);
+  line-height: 1.5;
+}
+
+.followup__a p {
+  margin: 0;
+  max-width: 100%;
+  font-size: var(--text-small);
+  color: var(--ink-1);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.followup__role {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.followup__pending {
+  color: var(--ink-3);
+}
+
+.followup__failed {
+  color: var(--refuted);
+}
+
+.followup__error {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--refuted);
+}
+
+.followup__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.followup__input {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-0);
+  color: var(--ink-1);
+  font: inherit;
+  font-size: var(--text-small);
+  resize: vertical;
+}
+
+.followup__input:disabled {
+  opacity: 0.55;
+}
+
+.followup__send {
+  align-self: flex-end;
+}

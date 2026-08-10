@@ -224,10 +224,12 @@ export function NewTaskView({
   const [mode, setMode] = useState<"deep_research" | "paper_review">(
     "deep_research",
   );
-  // 上传（claims 阶段，任务已创建后才可能挂对象）：本会话已上传列表
-  // 只存在组件状态里，不做回读端点（YAGNI——已上传管理的完整视图留给知识库页）。
+  // 上传：论文审查模式下，上传入口在 question 阶段第一步就出现。上传端点
+  // 要求任务已存在（ObjectModel.task_id NOT NULL），所以选文件时先本地暂存
+  // （pendingFiles），点「开始审查」先建任务、拿 taskId、再逐个上传。
   // 多格式自 round-7：PDF/DOCX/PPTX/XLSX/HTML/TXT/MD/CSV，格式与大小由
   // 服务端校验（magic bytes + 试提取 + 20 MB），前端 accept 只做第一道过滤。
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploads, setUploads] = useState<{ name: string; size: number }[]>([]);
@@ -235,12 +237,36 @@ export function NewTaskView({
   const UPLOAD_ACCEPT =
     ".pdf,.docx,.pptx,.xlsx,.html,.htm,.txt,.md,.csv,application/pdf";
 
+  /** question 阶段：选文件后本地暂存（不上传），用户可继续加选或移除。 */
+  function stageFiles(files: FileList | null) {
+    if (!files) return;
+    setUploadError(null);
+    setPendingFiles((prev) => {
+      const seen = new Set(prev.map((f) => f.name + f.size));
+      const added = Array.from(files).filter(
+        (file) => !seen.has(file.name + file.size),
+      );
+      return [...prev, ...added];
+    });
+  }
+
+  function removeStaged(index: number) {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  /** claims 阶段：任务已存在，逐个真正上传到该任务。 */
   async function handleFiles(files: FileList | null) {
     if (!taskId || !files || uploading) return;
+    await uploadStaged(Array.from(files));
+  }
+
+  /** 上传一批文件到已创建的任务（taskId 必须已存在）。 */
+  async function uploadStaged(files: File[]) {
+    if (!taskId || uploading) return;
     setUploading(true);
     setUploadError(null);
     const fresh: { name: string; size: number }[] = [];
-    for (const file of Array.from(files)) {
+    for (const file of files) {
       // 格式校验交给服务端（magic bytes + 试提取，422 带原因），前端不再
       // 按扩展名自行判断——伪装扩展名的文件必须由字节级校验拒绝。
       try {
@@ -299,6 +325,15 @@ export function NewTaskView({
         ? "审查上传论文的论证严谨性与证据充分性，并给出改进建议"
         : question.trim();
     if (!effectiveQuestion || submitting) return;
+    // 论文审查必须至少有一篇论文：question 阶段暂存的文件，或 claims
+    // 阶段已上传的文件。都没有则不让创建任务（避免进到 claims 才发现
+    // 无论文可审——上传入口前置的意义就是先选文件再继续）。
+    if (mode === "paper_review" && pendingFiles.length === 0 && uploads.length === 0) {
+      setError(
+        t("论文审查必须先上传至少一篇论文，才能开始。请先选择待审查的文件。"),
+      );
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -321,6 +356,13 @@ export function NewTaskView({
       setClaims(created.suggested_claims);
       setSelected(new Set(created.suggested_claims.map((claim) => claim.id)));
       setPhase("claims");
+      // 任务已存在，现在把 question 阶段暂存的文件真正上传到该任务。
+      // 先清空暂存，避免 uploadStaged 内读取旧 taskId 前 pendingFiles 还引用。
+      const staged = pendingFiles;
+      setPendingFiles([]);
+      if (staged.length > 0) {
+        await uploadStaged(staged);
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -506,6 +548,60 @@ export function NewTaskView({
           {t("论文审查")}
         </button>
       </div>
+
+      {/* 论文审查：上传入口第一步就出现（round-9）。先选文件（本地暂存），
+          再填审查要求；点「开始审查」时建任务并上传。格式与大小由服务端
+          校验（magic bytes + 试提取 + 20 MB）。 */}
+      {mode === "paper_review" ? (
+        <section className="newtask__upload newtask__upload--pre">
+          <h4>{t("上传待审查论文（必填，单个不超过 20 MB）")}</h4>
+          <p className="newtask__upload-hint">
+            {t(
+              "支持 PDF / DOCX / PPTX / XLSX / HTML / TXT / MD / CSV。论文全文会交给议会核验并按 Level A 进入证据图，审查报告将指出其中不严谨、证据不充分之处并给出改进建议。",
+            )}
+          </p>
+          <input
+            type="file"
+            accept={UPLOAD_ACCEPT}
+            multiple
+            disabled={submitting || uploading}
+            onChange={(event) => {
+              stageFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          {pendingFiles.length > 0 ? (
+            <ul className="newtask__upload-list">
+              {pendingFiles.map((file, index) => (
+                <li key={`${file.name}-${index}`}>
+                  <span className="newtask__upload-name">
+                    {file.name}（{(file.size / 1024).toFixed(0)} KB）
+                  </span>
+                  <button
+                    type="button"
+                    className="newtask__upload-remove"
+                    onClick={() => removeStaged(index)}
+                    disabled={submitting}
+                    aria-label={t("移除 {0}", file.name)}
+                  >
+                    {t("移除")}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="newtask__upload-required">
+              {t("论文审查必须先上传至少一篇论文，才能开始审查。")}
+            </p>
+          )}
+          {uploadError ? (
+            <p className="newtask__error" role="alert">
+              {uploadError}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       <form className="newtask__form" onSubmit={submitQuestion}>
         <label className="newtask__label" htmlFor="new-task-question">
           {mode === "paper_review" ? t("审查要求（可选）") : t("研究问题")}

@@ -241,32 +241,46 @@ async def test_a_completed_task_writes_the_paper_event(
     assert {node.node_type for node in node_rows} == {"ResearchQuestion"}
 
 
-async def test_a_run_without_gateway_writes_no_paper_and_keeps_the_status(
+async def test_a_run_without_gateway_writes_fallback_paper_and_keeps_the_status(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
     account: dict[str, Any],
 ) -> None:
-    """No model provider -> no paper event, terminal status unchanged."""
+    """No model provider -> a fallback integrated paper, status unchanged.
+
+    Round-9 「最终论文总是整合结论」: with no gateway the researcher still
+    asked a question and must see an integrated conclusion, so the worker
+    assembles one from the brief alone (``fallback: true``). The terminal
+    status stays a function of evidence gaps -- COMPLETED_WITH_GAPS is not a
+    failure to admit absence, it is the honest state of the run.
+    """
     task_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
     await _run_to_completion(app_sessions, projector_sessions, task_id)
 
     events = await _events(app_sessions, task_id)
-    assert not any(
-        event.event_type in ("FINAL_PAPER_DRAFTED", "FINAL_PAPER_FAILED")
-        for event in events
-    )
+    drafted = [
+        event for event in events if event.event_type == "FINAL_PAPER_DRAFTED"
+    ]
+    assert len(drafted) == 1
+    assert drafted[0].payload.get("fallback") is True
     assert await _status(app_sessions, task_id) in (
         TaskStatus.COMPLETED_WITH_GAPS,
         TaskStatus.COMPLETED,
     )
 
 
-async def test_a_failed_synthesis_records_the_failure_and_keeps_the_status(
+async def test_a_failed_synthesis_falls_back_to_an_integrated_paper(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
     account: dict[str, Any],
 ) -> None:
-    """A vendor failure writes FINAL_PAPER_FAILED and does not fail the task."""
+    """A vendor failure writes FINAL_PAPER_FAILED *and* a fallback paper.
+
+    Round-9: a failed or quarantined synthesis must not leave the researcher
+    with the "综合论文尚未生成" stub. The failure is recorded honestly as
+    FINAL_PAPER_FAILED; the integrated conclusion is assembled from the brief
+    and written as a fallback FINAL_PAPER_DRAFTED.
+    """
     task_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
     gateway = _PaperGateway(fail=True)
     await _run_to_completion(app_sessions, projector_sessions, task_id, gateway=gateway)
@@ -277,9 +291,11 @@ async def test_a_failed_synthesis_records_the_failure_and_keeps_the_status(
     ]
     assert len(failed) == 1
     assert "vendor unreachable" in str(failed[0].payload.get("reason", ""))
-    assert not any(
-        event.event_type == "FINAL_PAPER_DRAFTED" for event in events
-    )
+    drafted = [
+        event for event in events if event.event_type == "FINAL_PAPER_DRAFTED"
+    ]
+    assert len(drafted) == 1
+    assert drafted[0].payload.get("fallback") is True
     assert await _status(app_sessions, task_id) in (
         TaskStatus.COMPLETED_WITH_GAPS,
         TaskStatus.COMPLETED,
@@ -312,26 +328,35 @@ async def test_the_paper_endpoint_serves_paper_and_stub(
     assert "https://doi.org/10.1000/x" in markdown_response.text
 
 
-async def test_the_paper_endpoint_answers_honestly_when_missing(
+async def test_the_paper_endpoint_answers_with_a_fallback_when_missing(
     api_client: Any,
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
     account: dict[str, Any],
 ) -> None:
-    """A task that never synthesised gets a stub, not a 404 or a fake paper."""
+    """A task whose synthesis never ran gets a fallback paper, not a stub.
+
+    Round-9 「最终论文总是整合结论」: with no model provider the researcher
+    still asked a question, so the endpoint serves an integrated paper
+    assembled from the brief (``fallback: true``) instead of the old
+    "综合论文尚未生成" stub. Honesty is preserved: the paper says it is a
+    template integration, and the markdown renders the fallback notice.
+    """
     task_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
     await _run_to_completion(app_sessions, projector_sessions, task_id)
 
     json_response = await api_client.get(f"/api/reports/{task_id}/paper")
     assert json_response.status_code == 200
     body = json_response.json()
-    assert body["available"] is False
-    assert body["paper"] is None
+    assert body["available"] is True
+    assert body["paper"] is not None
+    assert body["paper"].get("fallback") is True
 
     markdown_response = await api_client.get(
         f"/api/reports/{task_id}/paper", params={"format": "markdown"}
     )
-    assert "综合论文未生成" in markdown_response.text
+    assert markdown_response.status_code == 200
+    assert "整合结论" in markdown_response.text
 
 
 async def test_the_workspace_snapshot_carries_paper_and_consensus(

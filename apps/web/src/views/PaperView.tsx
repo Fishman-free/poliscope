@@ -254,6 +254,14 @@ export function PaperView({
           </button>
         }
       >
+        {paper.fallback ? (
+          <p className="paper__fallback-note" role="status">
+            {t(
+              "本文由系统依据议会产出模板整合（综合模型调用{0}）。整合结论完整，但行文为系统生成，建议结合 Research Brief 与审计轨迹复核。",
+              paper.fallback_reason ? `未成功（${paper.fallback_reason}）` : "未成功",
+            )}
+          </p>
+        ) : null}
         <section className="paper__abstract">
           <h3>{t("摘要")}</h3>
           <p>{paper.abstract}</p>

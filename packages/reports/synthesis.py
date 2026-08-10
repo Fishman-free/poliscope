@@ -118,6 +118,147 @@ def _parse_references(value: object) -> tuple[PaperReference, ...]:
     return tuple(references)
 
 
+def _fallback_integrated_paper(
+    brief: ResearchBrief,
+    consensus: dict[str, object],
+    question: str,
+) -> FinalPaper:
+    """Assemble an integrated paper from the brief alone, no model involved.
+
+    Round-9 「最终论文总是整合结论」: when the synthesis model call fails or is
+    quarantined (a weak vendor, a transient outage), the task must still end
+    with a readable integrated conclusion -- the researcher asked a question
+    and must see an answer, not the "综合论文尚未生成" stub (CLAUDE.md 7: a gap
+    is reported honestly, but the integration conclusion itself is a
+    first-class product, not a privilege of a healthy model). Every section is
+    assembled from the same ``ResearchBrief`` the model would have been fed,
+    so this fallback and the model path can never disagree about what the
+    council concluded.
+
+    ``consensus`` is optional material (absent on a run where joint modeling
+    did not complete); every other field comes straight off the brief.
+    """
+    confirmed_lines = [
+        f"- {claim.statement}（{claim.claim_type}；"
+        f"证伪条件：{claim.falsification_condition}）"
+        for claim in brief.confirmed_claims
+    ]
+    finding_lines = [
+        f"- {_as_str(item.payload.get('statement') or item.node_id)}"
+        for item in brief.findings
+    ]
+    blindspot_lines = [
+        f"- {_as_str(item.payload.get('statement') or item.node_id)}"
+        for item in brief.blindspots
+    ]
+    dissent_lines = [
+        f"- {_as_str(item.payload.get('statement') or item.node_id)}"
+        for item in brief.dissents
+    ]
+    consensus_lines = _consensus_lines(consensus)
+
+    sections: list[PaperSection] = []
+
+    background: list[str] = [
+        f"研究问题：{question}",
+        "",
+        "本结论由七人议会依据已确认原子主张、已采纳证据与条件化共识整合而成。",
+    ]
+    if confirmed_lines:
+        background.append("")
+        background.append("已确认的原子主张：")
+        background.extend(confirmed_lines)
+    sections.append(
+        PaperSection(heading="研究背景与已确认主张", paragraphs=tuple(background))
+    )
+
+    if finding_lines:
+        sections.append(
+            PaperSection(
+                heading="已采纳发现",
+                paragraphs=(
+                    "以下发现均已绑定来源并通过证据门三层审计（来源真实性、引用蕴含、方法质量）：",
+                    *finding_lines,
+                ),
+            )
+        )
+
+    if consensus_lines:
+        sections.append(
+            PaperSection(heading="条件化共识", paragraphs=tuple(consensus_lines))
+        )
+
+    controversy: list[str] = []
+    if dissent_lines:
+        controversy.append("少数意见（异议保真，未静默删除）：")
+        controversy.extend(dissent_lines)
+    if blindspot_lines:
+        controversy.append("")
+        controversy.append("已识别的盲点：")
+        controversy.extend(blindspot_lines)
+    if not controversy:
+        controversy.append("未记录到少数异议或盲点。")
+    sections.append(
+        PaperSection(heading="争议、盲点与异议", paragraphs=tuple(controversy))
+    )
+
+    limitations = list(brief.limitations)
+    if brief.has_gaps:
+        gap_parts: list[str] = []
+        if brief.absent_seats:
+            gap_parts.append(f"{len(set(brief.absent_seats))} 席缺席")
+        if brief.failed_phases:
+            gap_parts.append(f"{len(brief.failed_phases)} 个阶段失败")
+        if brief.skipped_phases:
+            gap_parts.append(f"{len(brief.skipped_phases)} 个阶段未执行")
+        if brief.unadmitted_events:
+            gap_parts.append(f"{len(brief.unadmitted_events)} 项证据被证据门拒绝")
+        limitations.append(
+            "；".join(gap_parts) + "。结论基于已完成部分，需结合审计轨迹复核。"
+        )
+    sections.append(
+        PaperSection(
+            heading="结论与局限",
+            paragraphs=("整合结论如上；局限如下。", *limitations),
+        )
+    )
+
+    process: list[str] = [
+        f"证据覆盖：{brief.paper_count} 篇论文，"
+        f"{brief.independent_cluster_count} 个独立证据簇。",
+        f"议会阶段：{_phase_coverage(brief)}。",
+    ]
+    if brief.absent_seats:
+        process.append(f"缺席席位：{', '.join(brief.absent_seats)}。")
+    references: tuple[PaperReference, ...] = ()
+
+    title = f"关于「{question}」的议会整合结论"
+    return FinalPaper(
+        title=title,
+        abstract="、".join(background[:3])[:200] or title,
+        sections=tuple(sections),
+        references=references,
+        limitations=tuple(limitations),
+        investigation_process=tuple(process),
+    )
+
+
+def _phase_coverage(brief: ResearchBrief) -> str:
+    """A one-line account of which protocol phases ran, for the fallback
+    paper's process section. Mirrors the brief's own gap vocabulary so the
+    fallback never reads as a full run when seats were absent."""
+    skipped = len(brief.skipped_phases)
+    failed = len(brief.failed_phases)
+    if not skipped and not failed:
+        return "全部阶段完成"
+    parts = []
+    if skipped:
+        parts.append(f"{skipped} 个阶段未执行")
+    if failed:
+        parts.append(f"{failed} 个阶段失败")
+    return "；".join(parts)
+
+
 def _parse_paper(payload: dict[str, object]) -> FinalPaper:
     """Parse a model payload into a FinalPaper, or raise on a broken shape.
 
@@ -579,6 +720,50 @@ def _review_payload_dict(report: PaperReviewReport) -> dict[str, object]:
     }
 
 
+async def _emit_fallback_paper(
+    session: AsyncSession,
+    task_id: UUID,
+    brief: ResearchBrief,
+    consensus: dict[str, object],
+    question: str,
+    *,
+    fallback_reason: str,
+) -> SynthesisOutcome:
+    """Write an integrated paper assembled from the brief alone, no model.
+
+    Round-9 「最终论文总是整合结论」. Both the no-gateway path and the
+    failed-model path converge here so a finished task always ends with a
+    readable conclusion. The paper carries ``fallback: true`` so the frontend
+    and export can say "整合结论由系统依据议会产出模板生成" instead of
+    presenting it as a model-written paper, and ``fallback_reason`` records
+    why the model path did not run -- both honest, per CLAUDE.md 7.
+    """
+    paper = _fallback_integrated_paper(brief, consensus, question)
+    stored_payload: dict[str, object] = {
+        "title": paper.title,
+        "abstract": paper.abstract,
+        "sections": [
+            {"heading": section.heading, "paragraphs": list(section.paragraphs)}
+            for section in paper.sections
+        ],
+        "references": [
+            {"id": ref.id, "title": ref.title, "doi": ref.doi}
+            for ref in paper.references
+        ],
+        "limitations": list(paper.limitations),
+        "investigation_process": list(paper.investigation_process),
+        "fallback": True,
+        "fallback_reason": fallback_reason,
+    }
+    await SqlEventLedger(session).append(
+        task_id,
+        FINAL_PAPER_DRAFTED,
+        stored_payload,
+        _PAPER_IDEMPOTENCY_KEY,
+    )
+    return SynthesisOutcome(available=True)
+
+
 async def synthesize_paper(
     session: AsyncSession,
     task_id: UUID,
@@ -614,12 +799,18 @@ async def synthesize_paper(
     judgments = await _load_final_judgments(session, task_id)
 
     if gateway is None:
-        # No model provider: nothing to call, nothing failed -- the honest
-        # state is "no synthesis attempted". The presentation layer derives
-        # the reason from the brief's absent seats.
-        return SynthesisOutcome(
-            available=False,
-            reason="no model provider connected to the Model Gateway",
+        # No model provider: nothing to call, nothing failed -- but the
+        # researcher still asked a question and must see an integrated
+        # conclusion. Round-9: assemble the paper from the brief alone so the
+        # "综合论文尚未生成" stub never appears; the honest reason travels in
+        # the fallback's investigation process.
+        return await _emit_fallback_paper(
+            session,
+            task_id,
+            brief,
+            consensus,
+            task.question,
+            fallback_reason="no model provider connected to the Model Gateway",
         )
 
     is_review = getattr(task, "task_type", "deep_research") == "paper_review"
@@ -709,7 +900,18 @@ async def synthesize_paper(
             logger.error(
                 "failed to record FINAL_PAPER_FAILED: %s", ledger_error
             )
-        return SynthesisOutcome(available=False, reason=reason)
+        # Round-9 「最终论文总是整合结论」: a failed model call must not leave
+        # the researcher with the "综合论文尚未生成" stub. Assemble the paper
+        # from the brief alone so the integrated conclusion always exists; the
+        # FINAL_PAPER_FAILED event above stays as the honest process record.
+        return await _emit_fallback_paper(
+            session,
+            task_id,
+            brief,
+            consensus,
+            task.question,
+            fallback_reason=reason,
+        )
 
     stored_payload: dict[str, object] = (
         _review_payload_dict(paper)

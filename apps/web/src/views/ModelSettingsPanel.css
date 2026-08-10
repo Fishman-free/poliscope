@@ -46,6 +46,25 @@
   gap: var(--space-2);
 }
 
+/* 免费体验按钮：与「清除 Key」并排的醒目按钮。保持全站 pill 按钮形态
+   （DESIGN.md：按钮必须是按钮），用绿色（admitted）区分「免费」语义，
+   非装饰色、仍是实底按钮——唯一交互色 Action Blue 之外的有意例外。 */
+.settings__trial-btn {
+  background: var(--admitted);
+  border: 1px solid var(--admitted);
+  color: #ffffff;
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+}
+.settings__trial-btn:hover:not(:disabled) {
+  background: #14602e;
+  border-color: #14602e;
+}
+.settings__trial-btn:disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 /* 连接测试结果：成功/失败两态与表单同宽，不挤在按钮行里。 */
 .settings__test-ok,
 .settings__test-fail {

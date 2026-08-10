@@ -299,6 +299,21 @@ export function ModelSettingsPanel() {
                 {t("清除 Key")}
               </button>
             ) : null}
+            {/* 免费体验（round-7）：紧挨「清除 Key」的醒目按钮。启用后
+                把部署方的 qwen3.8-max 端点存为账号设置；激活本身不消耗
+                额度（服务端语义：每次确认开始研究才扣一次）。 */}
+            {freeTrial && freeTrial.enabled && !freeTrial.active && freeTrial.available ? (
+              <button
+                type="button"
+                className="button settings__trial-btn"
+                onClick={activateTrial}
+                disabled={busy || activatingTrial}
+              >
+                {activatingTrial
+                  ? t("启用中…")
+                  : t("免费体验（剩余 {0} 次）", freeTrial.remaining)}
+              </button>
+            ) : null}
           </div>
 
           {!verified ? (
@@ -334,21 +349,9 @@ export function ModelSettingsPanel() {
                   freeTrial.limit,
                 )
               : t(
-                  "每个账号可使用部署方提供的免费 qwen3.8-max 模型提问 2 次，之后需要填写自己的 API Key。",
+                  "每个账号可使用部署方提供的免费 qwen3.8-max 模型提问 2 次，之后需要填写自己的 API Key。点上方「免费体验」按钮启用。",
                 )}
           </p>
-          {freeTrial.enabled && !freeTrial.active && freeTrial.available ? (
-            <button
-              type="button"
-              className="button button--primary"
-              onClick={activateTrial}
-              disabled={busy || activatingTrial}
-            >
-              {activatingTrial
-                ? t("启用中…")
-                : t("使用免费模型提问（剩余 {0} 次）", freeTrial.remaining)}
-            </button>
-          ) : null}
           {freeTrial.enabled && freeTrial.used >= freeTrial.limit ? (
             <p className="settings__trial-exhausted" role="alert">
               {t("免费额度已用尽，请填写你自己的api-key")}

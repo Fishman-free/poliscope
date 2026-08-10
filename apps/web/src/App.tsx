@@ -32,6 +32,7 @@ import { BriefView } from "./views/BriefView";
 import { CheckpointGate } from "./views/CheckpointGate";
 import { CouncilView } from "./views/CouncilView";
 import { EvolutionView } from "./views/EvolutionView";
+import { FollowUpView } from "./views/FollowUpView";
 import { KnowledgeBaseView } from "./views/KnowledgeBaseView";
 import { LiveView } from "./views/LiveView";
 import { MapView } from "./views/MapView";
@@ -52,7 +53,8 @@ type Tab =
   | "evolution"
   | "audit"
   | "paper"
-  | "knowledge";
+  | "knowledge"
+  | "followup";
 
 /** No-task home has two screens behind a small segmented control. */
 type HomeView = "newtask" | "knowledge";
@@ -70,6 +72,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "audit", label: "Audit Trail", hint: "事件账本与拒绝记录" },
   { id: "paper", label: "最终论文", hint: "整合结论与参考文献" },
   { id: "knowledge", label: "知识库", hint: "长期记忆与检索" },
+  { id: "followup", label: "补充提问", hint: "完成后追问模型" },
 ];
 
 /** While the task sits at this checkpoint, poll for the status change that
@@ -684,6 +687,9 @@ export function App() {
                       />
                     ) : null}
                     {tab === "knowledge" ? <KnowledgeBaseView /> : null}
+                    {tab === "followup" && taskId ? (
+                      <FollowUpView taskId={taskId} status={snapshot.task.status} />
+                    ) : null}
                   </div>
                 </>
               ) : null}

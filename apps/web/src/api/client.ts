@@ -10,6 +10,7 @@ import type {
   AuthSession,
   ConfirmClaimsResult,
   CreateTaskResult,
+  FollowUpResult,
   KnowledgeBaseDetail,
   KnowledgeBaseSummary,
   KnowledgeDocumentDetail,
@@ -422,6 +423,12 @@ export function reResearch(taskId: string): Promise<{ task_id: string; status: s
     `/api/tasks/${taskId}/re-research`,
     {},
   );
+}
+
+/** 「补充提问」: ask a finished task a follow-up question; the answer is
+ * grounded in the task's Research Brief and confirmed claims (round-9). */
+export function followUp(taskId: string, question: string): Promise<FollowUpResult> {
+  return postJson<FollowUpResult>(`/api/tasks/${taskId}/followup`, { question });
 }
 
 /** Permanently delete a task and all its records (server confirms the task

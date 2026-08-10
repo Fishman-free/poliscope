@@ -88,6 +88,19 @@
   padding-top: var(--space-3);
 }
 
+/* round-9 模板整合论文的诚实标注：整合结论在，但明确它不是模型行文。
+   用 provisional 色系（「需要核验」的信号），hairline 卡片承载。 */
+.paper__fallback-note {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-small);
+  line-height: 1.5;
+  color: var(--ink-2);
+  background: color-mix(in srgb, var(--provisional) 8%, transparent);
+  border-left: 3px solid var(--provisional);
+  border-radius: var(--radius-2);
+}
+
 /* 审查报告（round-7）：复述论文观点、列出不严谨/证据不足/改进建议。
    视觉上延续全站科研仪器风格：hairline 分隔、发丝线卡片、唯一交互色。 */
 .paper__subsection {

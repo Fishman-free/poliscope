@@ -7,9 +7,11 @@ the council will investigate, which is the control point CLAUDE.md 2 requires.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, HTTPException, status
 
 from apps.api.dependencies import CurrentUserDep, SessionDep
@@ -18,6 +20,7 @@ from apps.api.schemas import (
     ConfirmClaimsRequest,
     CouncilGuidanceRequest,
     CreateTaskRequest,
+    FollowUpRequest,
 )
 from apps.api.task_lifecycle import delete_task_cascade
 from packages.accounts.repository import StoredUser
@@ -29,7 +32,9 @@ from packages.models.free_trial import (
     FREE_TRIAL_LIMIT,
 )
 from packages.models.settings import ModelSettingsRepository, StoredModelSettings
-from packages.research.contracts import ResearchContract
+from packages.reports.json_export import to_dict
+from packages.reports.service import ReportService
+from packages.research.contracts import ResearchContract, TaskModelConfig
 from packages.research.language import detect_output_language
 from packages.research.repository import ResearchRepository, StoredTask, TaskNotFound
 from packages.research.service import (
@@ -343,6 +348,196 @@ async def confirm_claims(
             {"id": str(claim.claim_id), "status": claim.status} for claim in claims
         ],
     }
+
+
+def _followup_endpoint(
+    task: StoredTask,
+) -> tuple[str, str, str] | None:
+    """The (base_url, api_key, model_name) the task actually ran with.
+
+    The follow-up must be answered by the same model that produced the
+    research (same endpoint, same key, same model name) so it shares the
+    task's frame of reference -- asking a *different* model about the run
+    would give a stranger's opinion. ``None`` when the task ran the
+    deployment default (no per-task config).
+    """
+    config = task.model_config
+    if not config or not config.get("base_url") or not config.get("api_key"):
+        return None
+    parsed = TaskModelConfig.model_validate(dict(config))
+    model_name = (
+        parsed.model_name
+        or os.environ.get("POLISCOPE_MODEL_NAME")
+        or "deepseek-v4-flash"
+    )
+    base_url, _ = normalize_base_url(parsed.base_url)
+    return base_url, parsed.api_key, model_name
+
+
+def _followup_context(brief: dict[str, object]) -> str:
+    """Render the Research Brief into the follow-up's grounding context.
+
+    The model is told what the council actually concluded -- confirmed claims,
+    admitted findings, blindspots, dissents, limitations, absent seats -- so
+    an answer stays grounded in the run rather than being a fresh opinion
+    (CLAUDE.md 2: evidence over fluent prose).
+    """
+    lines: list[str] = []
+    claims = brief.get("confirmed_claims")
+    if isinstance(claims, list):
+        lines.append("### 已确认的原子主张")
+        for claim in claims:
+            if isinstance(claim, dict):
+                lines.append(f"- {claim.get('statement')}（{claim.get('claim_type')}）")
+    findings = brief.get("findings")
+    if isinstance(findings, list):
+        lines.append("### 已采纳发现")
+        for finding in findings:
+            if isinstance(finding, dict):
+                payload = finding.get("payload")
+                text = payload.get("statement") if isinstance(payload, dict) else None
+                if text:
+                    lines.append(f"- {text}")
+    for label, key in (
+        ("盲点", "blindspots"),
+        ("少数异议", "dissents"),
+        ("局限", "limitations"),
+    ):
+        items = brief.get(key)
+        if isinstance(items, list) and items:
+            lines.append(f"### {label}")
+            for item in items:
+                if isinstance(item, dict):
+                    text = item.get("statement") or item.get("payload")
+                    if isinstance(text, dict):
+                        text = text.get("statement")
+                    if text:
+                        lines.append(f"- {text}")
+    absent = brief.get("absent_seats")
+    if isinstance(absent, list) and absent:
+        lines.append(f"### 缺席席位\n{', '.join(map(str, absent))}")
+    if not lines:
+        return "（该任务尚无已采纳的结论材料。）"
+    return "\n".join(lines)
+
+
+@router.post("/{task_id}/followup")
+async def follow_up(
+    task_id: UUID,
+    request: FollowUpRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Answer a post-completion question about a finished task (round-9).
+
+    Only a terminal task may be asked: the researcher must see the integrated
+    conclusion first, and a running task has no settled state to answer from.
+    The answer is grounded in the Research Brief (confirmed claims, findings,
+    blindspots, dissents, limitations) and threaded to the same model that ran
+    the research. Never the API key, never a fresh-model opinion.
+    """
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="补充提问不能为空",
+        )
+    if len(question) > 2000:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="补充提问不能超过 2000 字",
+        )
+    task = await _owned_task(session, task_id, current_user)
+    if task.status not in ("COMPLETED", "COMPLETED_WITH_GAPS"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"任务尚未完成（当前状态 {task.status}），完成后方可补充提问",
+        )
+
+    endpoint = _followup_endpoint(task)
+    if endpoint is None:
+        # Task ran the deployment default: fall back to the deployment's
+        # configured gateway if present, else the honest "no model configured"
+        # answer (CLAUDE.md 7: admit the gap, never improvise).
+        env = os.environ
+        if env.get("POLISCOPE_MODEL_API_KEY") and env.get("POLISCOPE_MODEL_BASE_URL"):
+            endpoint = (
+                env["POLISCOPE_MODEL_BASE_URL"].rstrip("/"),
+                env["POLISCOPE_MODEL_API_KEY"],
+                env.get("POLISCOPE_MODEL_NAME") or "deepseek-v4-flash",
+            )
+        else:
+            return {
+                "answer": (
+                    "此任务运行的系统默认模型网关未配置，无法回答补充提问。"
+                    "请在右侧模型设置中配置模型后重试。"
+                ),
+                "available": False,
+            }
+
+    base_url, api_key, model_name = endpoint
+    brief = to_dict(await ReportService(session).build(task_id))
+    context = _followup_context(brief)
+    language = detect_output_language(task.question)
+
+    system_prompt = (
+        "你是七人议会研究成果的讲解员。研究者针对已完成的议会研究向你追问，"
+        "你必须基于下方提供的议会产出（已确认主张、已采纳发现、盲点、异议、局限）回答，"
+        "不得编造研究中不存在的来源、数字或结论。若研究本身有缺口（缺席、未执行阶段），"
+        "如实说明，不要假装完整。回答用"
+        + ("中文。" if language.startswith("zh") else "English.")
+    )
+    user_prompt = (
+        f"研究问题：{task.question}\n\n"
+        f"议会产出：\n{context}\n\n"
+        f"研究者的追问：{question}\n\n"
+        "请给出清晰、准确的回答。"
+    )
+
+    request_body = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "max_tokens": 1500,
+    }
+    try:
+        async with httpx.AsyncClient(
+            base_url=base_url,
+            timeout=60.0,
+            headers={"Authorization": f"Bearer {api_key}"},
+        ) as client:
+            response = await client.post("/chat/completions", json=request_body)
+            response.raise_for_status()
+            data = response.json()
+            answer = data["choices"][0]["message"]["content"]
+    except httpx.HTTPStatusError as error:
+        detail = _followup_error_detail(error.response)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"模型调用失败（HTTP {error.response.status_code}）：{detail}",
+        ) from error
+    except (httpx.HTTPError, KeyError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"模型调用失败：{error}",
+        ) from error
+
+    return {"answer": answer, "available": True}
+
+
+def _followup_error_detail(response: httpx.Response) -> str:
+    """Extract the vendor's error message for the follow-up endpoint."""
+    try:
+        data = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    error = data.get("error")
+    message = str(error.get("message", "")) if isinstance(error, dict) else str(error)
+    return message.strip()[:200]
 
 
 @router.post("/{task_id}/pause")

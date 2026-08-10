@@ -126,6 +126,19 @@ class CouncilGuidanceRequest(ContractModel):
     guidance_text: str = ""
 
 
+class FollowUpRequest(ContractModel):
+    """Body for a post-completion follow-up question (round-9 「补充提问」).
+
+    The researcher asks a question about the *finished* research; the answer
+    must stay grounded in what the task actually produced, so the server
+    threads the task question, the Research Brief and the confirmed claims
+    into the model prompt -- never a bare chat with a fresh model that knows
+    nothing about the run.
+    """
+
+    question: str = ""
+
+
 class TaskResponse(ContractModel):
     id: UUID
     question: str

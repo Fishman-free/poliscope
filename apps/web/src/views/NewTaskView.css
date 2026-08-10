@@ -216,6 +216,34 @@
   color: var(--ink-2);
 }
 
+/* question 阶段的上传入口（round-9）：paper_review 模式下第一步就出现。
+   Apple 语言：hairline 卡片、负字距、唯一 Action Blue 用于交互（移除按钮）。 */
+.newtask__upload--pre {
+  margin-bottom: var(--space-4);
+}
+
+.newtask__upload-name {
+  margin-right: var(--space-2);
+}
+
+.newtask__upload-remove {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-micro);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.newtask__upload-remove:hover:not(:disabled) {
+  color: var(--accent-focus);
+}
+.newtask__upload-remove:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .newtask__field--checkbox {
   flex-direction: row;
   align-items: center;

@@ -120,19 +120,13 @@ export function AccountSettings({
   }
 
   return (
-    <div className="account-settings__backdrop" onClick={onClose}>
-      <div
-        className="account-settings"
-        role="dialog"
-        aria-label={t("账号设置")}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="account-settings__head">
-          <h2>{t("账号设置")}</h2>
-          <button type="button" className="account-settings__close" onClick={onClose}>
-            ✕
-          </button>
-        </div>
+    <div className="account-settings" role="dialog" aria-label={t("账号设置")}>
+      <div className="account-settings__head">
+        <h2>{t("账号设置")}</h2>
+        <button type="button" className="account-settings__close" onClick={onClose}>
+          ✕
+        </button>
+      </div>
 
         {/* 头像 */}
         <section className="account-settings__section">
@@ -279,7 +273,6 @@ export function AccountSettings({
             </>
           )}
         </section>
-      </div>
     </div>
   );
 }

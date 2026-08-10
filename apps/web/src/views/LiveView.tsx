@@ -353,6 +353,30 @@ function ToolPending({ group }: { group: { startedAt: number } }) {
   );
 }
 
+/** 检索/文献卡片里的科学家徽标组：多个科学家共享同一次动作时折叠为
+ * 「第一个 + …」，悬停显示全部 —— 检索与文献的科学家列表是全宽平铺的
+ * 长字符串，多个席位挤在一起时字都看不见（用户反馈）。单个科学家直接
+ * 显示；全部通过 title 悬停提示与一个 visually-hidden 的可读文本给到。
+ */
+function SeatCluster({ seats }: { seats: string[] }) {
+  const labelled = seats.map((seat) => SEAT_LABELS[seat as Seat] ?? seat);
+  if (labelled.length === 1) {
+    return <span className="live__tool-seats mono">{labelled[0]}</span>;
+  }
+  const preview = `${labelled[0]} +${labelled.length - 1}`;
+  const full = labelled.join("、");
+  return (
+    <span
+      className="live__tool-seats mono live__tool-seats--cluster"
+      data-seats={full}
+      title={full}
+      aria-label={full}
+    >
+      {preview}
+    </span>
+  );
+}
+
 /** 排队中的队列信息（App.tsx 轮询计算后传入）：本任务前面还有几个
  * 任务、Worker 当前正在跑哪个、已跑多久。 */
 export interface QueueInfo {
@@ -637,9 +661,7 @@ export function LiveView({
                             {group.query}
                           </span>
                           {group.seats.length > 0 ? (
-                            <span className="live__tool-seats mono">
-                              {group.seats.join(", ")}
-                            </span>
+                            <SeatCluster seats={group.seats} />
                           ) : null}
                         </div>
                         {group.results.length === 0 ? (

@@ -42,16 +42,21 @@ export function AccountMenu({
     };
   }, []);
 
-  // 外部点击 / Escape 关闭菜单。
+  // 外部点击 / Escape 关闭菜单与账号设置弹层。设置打开时按外部/Escape
+  // 应关闭的是设置弹层本身（它叠在菜单之上），而不是回到菜单。
   useEffect(() => {
-    if (!open) return;
+    if (!open && !settingsOpen) return;
     function onDown(event: MouseEvent) {
       if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
         setOpen(false);
+        setSettingsOpen(false);
       }
     }
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        setSettingsOpen(false);
+      }
     }
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -59,7 +64,7 @@ export function AccountMenu({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, settingsOpen]);
 
   async function signOut() {
     setOpen(false);

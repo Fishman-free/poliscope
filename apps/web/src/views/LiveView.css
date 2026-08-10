@@ -323,6 +323,40 @@
   color: var(--ink-4);
 }
 
+/* 折叠的科学家徽标（round-9）：多个席位共享同一动作时显示「第一个 + N」，
+   悬停在下方弹出一行小字列出全部科学家 —— Apple 式轻 tooltip（白底、
+   hairline 边框、radius、软阴影），不抢占卡片空间。 */
+.live__tool-seats--cluster {
+  position: relative;
+  cursor: default;
+  border-bottom: 1px dotted var(--ink-4);
+  padding-bottom: 1px;
+}
+
+.live__tool-seats--cluster::after {
+  content: attr(data-seats);
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: none;
+  max-width: 16rem;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  color: var(--ink-2);
+  white-space: normal;
+  text-align: left;
+}
+
+.live__tool-seats--cluster:hover::after {
+  display: block;
+}
+
 .live__tool-results {
   margin: 0;
   padding: 0;

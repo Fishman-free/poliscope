@@ -352,7 +352,18 @@ export interface PaperReference {
   doi: string | null;
 }
 
-/** The final paper written by the report synthesizer (FINAL_PAPER_DRAFTED). */
+/** A post-completion follow-up answer (round-9 「补充提问」). `available:
+ * false` means the task's model endpoint could not be resolved (no per-task
+ * config and no deployment gateway), with the reason in `answer`. */
+export interface FollowUpResult {
+  answer: string;
+  available: boolean;
+}
+
+/** The final paper written by the report synthesizer (FINAL_PAPER_DRAFTED).
+ * `fallback: true` marks a paper the system assembled from the brief alone
+ * (round-9: the synthesis model call failed or was absent) -- the integrated
+ * conclusion is still there, but it must not read as a model-written paper. */
 export interface FinalPaper {
   title: string;
   abstract: string;
@@ -360,6 +371,8 @@ export interface FinalPaper {
   references: PaperReference[];
   limitations: string[];
   investigation_process: string[];
+  fallback?: boolean;
+  fallback_reason?: string;
 }
 
 /** One claim the reviewed paper makes, with the paper's own support for it. */
