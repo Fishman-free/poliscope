@@ -662,6 +662,11 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
                 "seat": seat.value,
                 "confidence": submission.confidence,
                 "update_condition": submission.update_condition,
+                # 科学家的主要观点（initial_judgment）随预承诺一起展示——
+                # 实时进展只有质询而没有「被质询的是什么」就无法阅读
+                # （round-8 用户反馈）。此前它只进 carry 传给最终复判，
+                # 前端拿不到；现在同时写进事件，LiveView 直接呈现。
+                "initial_judgment": submission.initial_judgment,
             },
             idempotency_key=context.key("sealed", seat.value),
         )
@@ -1503,11 +1508,26 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                 if len(fork_events) == 2:
                     forked_claim_id = fork_events[1].claim_id
                     if forked_claim_id is not None:
+                        # 分支主张的说明要包含「它说了什么」，而不是一串
+                        # claim_id（round-8 用户反馈：裸 UUID 无法阅读）。
+                        # fork 映射里有座位自报的 statement（_fork_events
+                        # 用它建 Claim 节点），这里直接复用；找不到则退
+                        # 回主张标识，前端会用 claim_labels 把它换成可读
+                        # 文本（apps/web/src/views/LiveView.tsx）。
+                        fork_statement = str(fork.get("statement", "")).strip()
+                        if fork_statement:
+                            note = (
+                                f"作为对「{fork_statement}」的分支主张被提出。"
+                            )
+                        else:
+                            note = (
+                                f"作为对 {entry.claim_id} 的分支主张被提出。"
+                            )
                         events.append(
                             _confidence_marker(
                                 context,
                                 forked_claim_id,
-                                f"作为对 {entry.claim_id} 的分支主张被提出。",
+                                note,
                                 "fork_confidence", seat.value, index,
                             )
                         )

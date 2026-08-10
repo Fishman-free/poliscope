@@ -11,7 +11,6 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import delete, select
 
 from apps.api.dependencies import CurrentUserDep, SessionDep
 from apps.api.routers.workspace import _seats
@@ -20,20 +19,8 @@ from apps.api.schemas import (
     CouncilGuidanceRequest,
     CreateTaskRequest,
 )
+from apps.api.task_lifecycle import delete_task_cascade
 from packages.accounts.repository import StoredUser
-from packages.council.models import (
-    CouncilRoundModel,
-    RoundOutputModel,
-    ScientistRunModel,
-)
-from packages.evidence.models import (
-    EventAuditModel,
-    GraphEdgeModel,
-    GraphNodeModel,
-    ProcessStreamModel,
-    ProjectionCheckpointModel,
-    ScientificEventModel,
-)
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
 from packages.models.endpoint_config import normalize_base_url
 from packages.models.free_trial import (
@@ -41,16 +28,9 @@ from packages.models.free_trial import (
     FREE_TRIAL_EXTRA_BODY,
     FREE_TRIAL_LIMIT,
 )
-from packages.models.models import ModelCallModel
 from packages.models.settings import ModelSettingsRepository, StoredModelSettings
-from packages.papers.models import ObjectModel, SourceModel, SourceVersionModel
 from packages.research.contracts import ResearchContract
 from packages.research.language import detect_output_language
-from packages.research.models import (
-    AtomicClaimModel,
-    ResearchScopeModel,
-    ResearchTaskModel,
-)
 from packages.research.repository import ResearchRepository, StoredTask, TaskNotFound
 from packages.research.service import (
     InvalidCouncilGuidanceState,
@@ -59,7 +39,6 @@ from packages.research.service import (
     UnconfirmedClaims,
 )
 from packages.skills.repository import SkillsRepository
-from packages.tools.models import ToolCallModel
 
 router = APIRouter()
 
@@ -412,6 +391,33 @@ async def resume_task(
     return {"task_id": str(task_id), "status": new_status}
 
 
+@router.post("/{task_id}/re-research")
+async def re_research_task(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Move a FAILED task back to QUEUED so the worker can claim it again.
+
+    「重新研究」(round-8): the worker resumes from the stored council
+    checkpoint when one exists (already-run phases are not re-run, and their
+    ledger events replay as no-ops via stable idempotency keys); a task that
+    failed before reaching the checkpoint re-runs its early phases -- an
+    honest restart rather than pretending nothing happened.
+    """
+    await _owned_task(session, task_id, current_user)
+    try:
+        new_status = await _service(session).re_research(task_id)
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
+    except InvalidPauseState as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    return {"task_id": str(task_id), "status": new_status}
+
+
 @router.get("/{task_id}/council-preview")
 async def council_preview(
     task_id: UUID,
@@ -478,67 +484,11 @@ async def delete_task(
     no-physical-delete rule governs quarantined *evidence*, not a researcher
     destroying their own session).
 
-    The records span every module's tables, which is why this lives in the
-    API layer rather than one module's repository: no single module owns the
-    task's lifecycle. Order matters only where one child FK-references
-    another (event_audits → scientific_events, source_versions → sources,
-    scientist_runs/round_outputs → council_rounds); those go first via a
-    join, then every task-scoped child, then the task row itself.
+    The cascade lives in apps/api/task_lifecycle.py, shared with account
+    deletion: no single module owns the task's lifecycle (CLAUDE.md 9).
     """
     await _owned_task(session, task_id, current_user)
-    await session.execute(
-        delete(EventAuditModel).where(
-            EventAuditModel.event_id.in_(
-                select(ScientificEventModel.id).where(
-                    ScientificEventModel.task_id == task_id
-                )
-            )
-        )
-    )
-    await session.execute(
-        delete(SourceVersionModel).where(
-            SourceVersionModel.source_id.in_(
-                select(SourceModel.id).where(SourceModel.task_id == task_id)
-            )
-        )
-    )
-    await session.execute(
-        delete(ScientistRunModel).where(
-            ScientistRunModel.round_id.in_(
-                select(CouncilRoundModel.id).where(
-                    CouncilRoundModel.task_id == task_id
-                )
-            )
-        )
-    )
-    await session.execute(
-        delete(RoundOutputModel).where(
-            RoundOutputModel.round_id.in_(
-                select(CouncilRoundModel.id).where(
-                    CouncilRoundModel.task_id == task_id
-                )
-            )
-        )
-    )
-    children: tuple[type[Any], ...] = (
-        ScientificEventModel,
-        ProcessStreamModel,
-        ModelCallModel,
-        ToolCallModel,
-        ObjectModel,
-        SourceModel,
-        CouncilRoundModel,
-        GraphEdgeModel,
-        GraphNodeModel,
-        ProjectionCheckpointModel,
-        AtomicClaimModel,
-        ResearchScopeModel,
-    )
-    for model in children:
-        await session.execute(delete(model).where(model.task_id == task_id))
-    await session.execute(
-        delete(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
-    )
+    await delete_task_cascade(session, task_id)
     await session.commit()
     return {"deleted": str(task_id)}
 

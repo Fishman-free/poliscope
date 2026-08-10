@@ -252,6 +252,8 @@ python scripts/seed_demo_task.py     # 用真实 Worker 跑一个演示任务
 
 ## 自建部署：Docker Compose + Caddy
 
+作者当前维护一份公开演示实例：**`http://39.96.197.238/`**（阿里云 ECS，纯 HTTP、无域名）。以下是一键自建部署的完整说明，想部署自己的实例时照着做即可。
+
 不想手动起五个进程，可以直接用根目录的 `docker-compose.yml`：
 
 ```bash
@@ -292,6 +294,27 @@ docker compose up --build -d
 变量。账号模型（`users` / `auth_tokens`，PBKDF2 密码哈希、token 仅存 sha256）在
 `packages/accounts/`，API 端点在 `apps/api/routers/auth.py`，按账号隔离的数据列由迁移 0012–0014
 管理。
+
+### 邮箱验证注册（round-8）
+
+注册改为两段式邮箱验证：`POST /api/auth/register`（202）先向邮箱发 6 位数字验证码，
+`POST /api/auth/register/confirm`（201）验码后才创建账号（并自动登录）。验证码只绑定邮箱、
+不预建用户；`users.email` 列可空，**邮箱验证上线前的老账号不受影响**（email 为 NULL，唯一约束
+对多 NULL 不冲突，登录流程不变）。
+
+**SMTP 配置**（`.env`）：`SMTP_HOST`（必填，缺则注册 503）、`SMTP_PORT`（默认 587）、
+`SMTP_USER`/`SMTP_PASSWORD`（认证，本地中继可空）、`SMTP_FROM`（发件人，必填）。
+发码只发生在 API 进程（`docker-compose.yml` 的 `api` 服务透传 `SMTP_*`），worker 无需。
+未配置时 `POST /register` 返回 503「邮件服务未配置」——**不静默跳过、不创建无邮箱账号**（诚实原则）。
+
+**安全设计**：验证码只存 sha256（复用 `packages/accounts/security.hash_token`），5 分钟过期；
+`verified_at` 置位后防重放；重发间隔 60 秒、每邮箱每日最多 5 次；验证码错误 5 次后失效
+（`attempts` 原子 +1，失败路径先提交计数再拒绝，防刷计数器不被回滚）；阶段一不校验邮箱唯一
+（防邮箱枚举），唯一性在阶段二——调用方已持有效验证码——才校验（409）。实现见
+`packages/accounts/verification.py`（`EmailVerificationRepository` 的原子
+`INSERT ... ON CONFLICT ... WHERE` / `UPDATE ... WHERE ... RETURNING`，复用
+`consume_free_trial` 的防并发思路）与 `packages/accounts/email_sender.py`（标准库 `smtplib` +
+`asyncio.to_thread`，零新依赖）。迁移 `0022_email_verification`。
 
 ### 域名与 HTTPS：只改一行
 
@@ -334,6 +357,14 @@ docker compose up -d --build        # 首次手动部署
 
 之后每次 `git push origin main`，服务器自动更新。工作流用 `--ff-only` 而非 `reset --hard`：
 如果服务器 checkout 意外偏离 `origin/main`，部署会显式失败并需要人工处理，而不是被自动化静默覆盖。
+
+**部署完成后的健康检查**（在服务器本机或浏览器中）：
+
+```bash
+curl -I http://39.96.197.238/          # 落地页公开：200
+curl -I http://39.96.197.238/workspace # 未登录：200（SPA 页面）
+curl http://39.96.197.238/api/auth/me  # 无 token：401 —— 访问控制由 API 层账号系统承担
+```
 
 ### 任务级模型设置：研究者自带接口
 

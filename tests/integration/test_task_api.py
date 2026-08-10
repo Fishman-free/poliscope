@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.api.schemas import ConfirmClaimsRequest, CreateTaskRequest
@@ -206,6 +206,56 @@ async def test_resuming_an_unknown_task_returns_404(
 ) -> None:
     assert (
         await api_client.post(f"/api/tasks/{uuid4()}/resume")
+    ).status_code == 404
+
+
+async def test_re_research_moves_a_failed_task_back_to_queued(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """「重新研究」(round-8): a FAILED task is requeued so the worker can
+    resume it from the stored council checkpoint."""
+    created = await _create(api_client)
+    task_id = created["task_id"]
+    chosen = created["suggested_claims"][0]["id"]
+    await api_client.post(
+        f"/api/tasks/{task_id}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+
+    # Force the task into FAILED the way the worker's watchdog would.
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(status=TaskStatus.FAILED)
+        )
+        await session.commit()
+
+    response = await api_client.post(f"/api/tasks/{task_id}/re-research")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == TaskStatus.QUEUED
+
+    readback = await api_client.get(f"/api/tasks/{task_id}")
+    assert readback.json()["status"] == TaskStatus.QUEUED
+
+
+async def test_re_research_refused_for_non_failed_task(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """A task that is not FAILED cannot be re-researched (409)."""
+    created = await _create(api_client)
+    response = await api_client.post(
+        f"/api/tasks/{created['task_id']}/re-research"
+    )
+    assert response.status_code == 409
+
+
+async def test_re_research_unknown_task_returns_404(
+    api_client: httpx.AsyncClient,
+) -> None:
+    assert (
+        await api_client.post(f"/api/tasks/{uuid4()}/re-research")
     ).status_code == 404
 
 

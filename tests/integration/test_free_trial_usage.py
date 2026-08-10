@@ -60,15 +60,15 @@ async def trial_account(migrated_db: str) -> AsyncIterator[dict[str, Any]]:
         async with httpx.AsyncClient(
             transport=transport, base_url="http://poliscope.test"
         ) as client:
-            response = await client.post(
-                "/api/auth/register",
-                json={
-                    "username": f"trial-user-{uuid4().hex[:12]}",
-                    "password": "trial-password",
-                },
+            from tests.conftest import register_user
+
+            body = await register_user(
+                client,
+                f"trial-user-{uuid4().hex[:12]}",
+                "trial-password",
+                f"trial-{uuid4().hex[:12]}@poliscope.test",
             )
-            assert response.status_code == 201, response.text
-            yield response.json()
+            yield body
     finally:
         await state.dispose()
 

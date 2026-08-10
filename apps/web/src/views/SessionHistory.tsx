@@ -15,7 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { deleteTask, fetchTasks } from "../api/client";
+import { deleteTask, fetchTasks, reResearch } from "../api/client";
 import type { TaskSummary } from "../api/types";
 import { Badge, Empty, Spinner, TASK_STATUS_TONE } from "../components/primitives";
 import { t } from "../i18n";
@@ -94,6 +94,7 @@ export function SessionHistory({
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingClear, setPendingClear] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [reResearching, setReResearching] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // 每次展开都重新拉列表：刚创建的任务（或新回到列表的会话）必须立刻
@@ -152,6 +153,22 @@ export function SessionHistory({
     } finally {
       setDeleting(false);
       setPendingDelete(null);
+    }
+  }
+
+  /** 「重新研究」：把 FAILED 任务交回队列，worker 从 checkpoint 续跑。 */
+  async function rerunOne(taskId: string) {
+    setReResearching(true);
+    setError(null);
+    try {
+      await reResearch(taskId);
+      // 刷新列表让状态从 FAILED 变回 QUEUED。
+      const fresh = await fetchTasks();
+      setTasks(fresh);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setReResearching(false);
     }
   }
 
@@ -249,19 +266,32 @@ export function SessionHistory({
                         </button>
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        className="session__delete"
-                        onClick={() => {
-                          setPendingDelete(task.task_id);
-                          setPendingClear(false);
-                        }}
-                        disabled={deleting}
-                        title={t("删除这个会话（不可恢复）")}
-                        aria-label={t("删除会话")}
-                      >
-                        ✕
-                      </button>
+                      <>
+                        {task.status === "FAILED" ? (
+                          <button
+                            type="button"
+                            className="session__rerun"
+                            onClick={() => rerunOne(task.task_id)}
+                            disabled={reResearching}
+                            title={t("从失败节点重新研究")}
+                          >
+                            {reResearching ? t("请稍候…") : t("重新研究")}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="session__delete"
+                          onClick={() => {
+                            setPendingDelete(task.task_id);
+                            setPendingClear(false);
+                          }}
+                          disabled={deleting}
+                          title={t("删除这个会话（不可恢复）")}
+                          aria-label={t("删除会话")}
+                        >
+                          ✕
+                        </button>
+                      </>
                     )}
                   </li>
                 ))}

@@ -410,16 +410,30 @@ async def test_auth_commands_request_the_endpoints_that_actually_exist() -> None
 
     transport = httpx.MockTransport(handler)
     async with CLIClient("http://poliscope.test", transport=transport) as client:
-        await client.register("alice", "pw")
+        await client.register("alice", "pw", "alice@example.com")
+        await client.confirm_registration(
+            "alice", "pw", "alice@example.com", "123456"
+        )
         await client.login("alice", "pw")
         await client.logout()
 
     assert [request.url.path for request in seen] == [
         "/api/auth/register",
+        "/api/auth/register/confirm",
         "/api/auth/login",
         "/api/auth/logout",
     ]
-    assert json.loads(seen[0].content) == {"username": "alice", "password": "pw"}
+    assert json.loads(seen[0].content) == {
+        "username": "alice",
+        "password": "pw",
+        "email": "alice@example.com",
+    }
+    assert json.loads(seen[1].content) == {
+        "username": "alice",
+        "password": "pw",
+        "email": "alice@example.com",
+        "code": "123456",
+    }
 
 
 def test_login_command_saves_the_token(
@@ -464,13 +478,32 @@ def test_register_with_flags_saves_the_token(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr("apps.cli.main.CREDENTIALS_FILE", tmp_path / "credentials.json")
+    monkeypatch.setattr("apps.cli.main.getpass.getpass", lambda _prompt="": "654321")
 
-    async def do_register(*_: object, **__: object) -> dict[str, object]:
+    async def do_register(
+        _self: object, _u: str, _p: str, _e: str
+    ) -> dict[str, object]:
+        return {"status": "code_sent", "retry_after": 60}
+
+    async def do_confirm(
+        _self: object, _u: str, _p: str, _e: str, _c: str
+    ) -> dict[str, object]:
         return {"id": "u2", "username": "bob", "token": "tok-bob"}
 
     monkeypatch.setattr(CLIClient, "register", do_register)
+    monkeypatch.setattr(CLIClient, "confirm_registration", do_confirm)
     assert (
-        main(["register", "--username", "bob", "--password", "pw"])
+        main(
+            [
+                "register",
+                "--username",
+                "bob",
+                "--password",
+                "pw",
+                "--email",
+                "bob@example.com",
+            ]
+        )
         == exit_codes.OK
     )
     assert _load_token("http://localhost:8000") == "tok-bob"

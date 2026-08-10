@@ -57,8 +57,16 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def generate_verification_code() -> str:
+    """A fresh 6-digit numeric code, sent to the user's inbox for registration
+    (and later password reset). Never stored in plaintext -- only its sha256
+    (hash_token) is persisted."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
 __all__ = [
     "generate_token",
+    "generate_verification_code",
     "hash_password",
     "hash_token",
     "verify_password",

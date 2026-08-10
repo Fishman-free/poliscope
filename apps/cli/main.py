@@ -100,16 +100,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     register = subparsers.add_parser(
         "register",
-        help="create an account and log in",
+        help="create an account and log in (email verification)",
         description=(
             "Registers a new account and stores the session token like login "
             "does. Interactive mode asks for the password twice; --password "
             "skips the confirmation (and leaves the password in shell "
-            "history -- prefer the interactive prompt)."
+            "history -- prefer the interactive prompt). Registration emails "
+            "a 6-digit code to --email; the code is then prompted for."
         ),
     )
     register.add_argument("--username", default=None, metavar="NAME")
     register.add_argument("--password", default=None, metavar="PASSWORD")
+    register.add_argument("--email", default=None, metavar="EMAIL")
     register.set_defaults(handler=_cmd_register)
 
     logout = subparsers.add_parser(
@@ -562,10 +564,20 @@ async def _cmd_login(client: CLIClient, args: argparse.Namespace) -> int:
 async def _cmd_register(client: CLIClient, args: argparse.Namespace) -> int:
     try:
         username, password = _ask_username_password(args, confirm=True)
+        email = args.email if args.email else input("email: ").strip()
+        if not email:
+            raise ValueError("email is required for registration")
     except ValueError as error:
         print(f"poliscope: {error}", file=sys.stderr)
         return exit_codes.FAILED
-    result = await client.register(username, password)
+    try:
+        await client.register(username, password, email)
+        print(f"a verification code was emailed to {email}")
+        code = getpass.getpass("verification code: ").strip()
+        result = await client.confirm_registration(username, password, email, code)
+    except APIError as error:
+        print(f"poliscope: {error}", file=sys.stderr)
+        return exit_codes.REQUEST_REJECTED
     _save_token(args.base_url, result["token"])
     print(f"registered and logged in as {result['username']}")
     print(f"token saved to {CREDENTIALS_FILE} (base URL {args.base_url.rstrip('/')})")
