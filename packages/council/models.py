@@ -59,6 +59,12 @@ class ScientistRunModel(Base):
     )
     # Set when this seat fails. The round degrades rather than aborting.
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # How many times the seat was asked in this round before it answered or was
+    # given up on (round-9 seat retry). Default 1: the usual case is a seat that
+    # answered on its first call.
+    attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, server_default=sa.text("1")
+    )
 
     __table_args__ = (
         sa.UniqueConstraint("round_id", "seat", name="uq_scientist_run_seat"),

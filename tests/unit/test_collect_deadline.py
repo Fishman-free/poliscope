@@ -57,7 +57,7 @@ async def test_a_slow_seat_does_not_stall_the_phase() -> None:
     """A seat slower than the deadline is absent; the phase returns in time."""
     deliberator = _SlowDeliberator(delay=0.3)
     started = monotonic()
-    outputs, unfilled, absent, reasons = await _collect(
+    outputs, unfilled, absent, reasons, attempts = await _collect(
         _context(deliberator),
         deadline_seconds=0.1,
     )
@@ -73,12 +73,17 @@ async def test_a_slow_seat_does_not_stall_the_phase() -> None:
         reasons[seat] == _COLLECT_DEADLINE_REASON for seat in absent
     )
     assert any(f"CROSS_EXAMINATION:{seat.value}" in unfilled for seat in absent)
+    # The retry budget still bounds the extra work: no seat is asked more than
+    # MAX_SEAT_ATTEMPTS times, and the whole pass returns fast regardless.
+    from packages.council.rounds.registry import MAX_SEAT_ATTEMPTS
+
+    assert all(attempts[seat] <= MAX_SEAT_ATTEMPTS for seat in Seat)
 
 
 async def test_a_fast_phase_runs_all_seats() -> None:
     """Well within the deadline, every seat answers as before."""
     deliberator = _SlowDeliberator(delay=0)
-    outputs, unfilled, absent, reasons = await _collect(
+    outputs, unfilled, absent, reasons, attempts = await _collect(
         _context(deliberator),
         deadline_seconds=5.0,
     )
@@ -86,6 +91,7 @@ async def test_a_fast_phase_runs_all_seats() -> None:
     assert not absent
     assert not unfilled
     assert deliberator.calls == 7
+    assert all(v == 1 for v in attempts.values())
 
 
 async def test_deadline_cancels_a_mid_call_seat() -> None:
@@ -94,7 +100,7 @@ async def test_deadline_cancels_a_mid_call_seat() -> None:
     # starts but is cancelled mid-call, and the rest are skipped.
     deliberator = _SlowDeliberator(delay=0.15)
     started = monotonic()
-    outputs, unfilled, absent, reasons = await _collect(
+    outputs, unfilled, absent, reasons, attempts = await _collect(
         _context(deliberator),
         deadline_seconds=0.35,
     )
@@ -102,6 +108,10 @@ async def test_deadline_cancels_a_mid_call_seat() -> None:
 
     assert len(outputs) == 2
     assert len(absent) == 5
+    # The seats that answered were never retried (they succeeded first time);
+    # no seat exceeds the retry budget, whatever the exact deadline boundary was.
+    assert all(attempts[seat] == 1 for seat in outputs)
+    assert all(attempts[seat] <= 2 for seat in Seat)
     assert all(
         reasons[seat] == _COLLECT_DEADLINE_REASON for seat in absent
     )

@@ -23,6 +23,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -145,6 +146,29 @@ class EventSink(Protocol):
     ) -> object: ...
 
 
+# Per-seat run statuses, persisted to scientist_runs by the worker (round-9).
+SEAT_RUN_COMPLETED = "completed"
+SEAT_RUN_ABSENT = "absent"
+
+
+@dataclass(frozen=True, slots=True)
+class SeatRunRecord:
+    """One seat's participation in one phase, for the scientist_runs audit.
+
+    The worker persists these to ``council_rounds`` / ``scientist_runs`` so a
+    later researcher can reconstruct exactly who attended, how many times they
+    were asked, and why an absent seat could not answer.
+    """
+
+    phase: TaskPhase
+    seat: Seat
+    status: str
+    attempts: int
+    error_code: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
 @dataclass
 class TaskRunReport:
     """What one pass over the protocol did.
@@ -163,6 +187,10 @@ class TaskRunReport:
     absent_seats: frozenset[Seat] = frozenset()
     failures: tuple[str, ...] = ()
     stop_reason: StopReason = StopReason.CONTINUE
+    # Per-seat attendance for the phases this pass actually ran (a resumed pass
+    # only reports its own phases -- the worker persists each pass separately).
+    # Empty when nothing ran (e.g. the whole run was skipped for budget).
+    seat_runs: tuple[SeatRunRecord, ...] = ()
     # Populated only when final_status is AWAITING_COUNCIL_INPUT -- the caller
     # (apps/worker/jobs.py) persists this to the checkpoint column so a later
     # call can pass it back in as run()'s resume_from argument.
@@ -182,6 +210,7 @@ class _Accumulator:
     failures: list[str] = field(default_factory=list)
     carried: dict[str, object] = field(default_factory=dict)
     events: int = 0
+    seat_runs: list[SeatRunRecord] = field(default_factory=list)
 
 
 class CouncilOrchestrator:
@@ -302,6 +331,7 @@ class CouncilOrchestrator:
                 report.unfilled_slots = tuple(state.unfilled)
                 report.absent_seats = frozenset(state.absent)
                 report.failures = tuple(state.failures)
+                report.seat_runs = tuple(state.seat_runs)
                 report.stop_reason = stop
                 report.final_status = TaskStatus.AWAITING_COUNCIL_INPUT
                 report.checkpoint = CouncilCheckpoint(
@@ -352,6 +382,7 @@ class CouncilOrchestrator:
         report.unfilled_slots = tuple(state.unfilled)
         report.absent_seats = frozenset(state.absent)
         report.failures = tuple(state.failures)
+        report.seat_runs = tuple(state.seat_runs)
         report.stop_reason = stop
         report.final_status = (
             TaskStatus.COMPLETED_WITH_GAPS if report.has_gaps else TaskStatus.COMPLETED
@@ -423,6 +454,7 @@ class CouncilOrchestrator:
             idempotency_key=f"{phase.value}:started",
         )
         state.events += 1
+        phase_started = datetime.now(UTC)
 
         context = PhaseContext(
             task_id=task_id,
@@ -466,6 +498,38 @@ class CouncilOrchestrator:
         state.unfilled.extend(outcome.unfilled_slots)
         state.absent.update(outcome.absent_seats)
         state.carried.update(outcome.carry)
+        # Per-seat attendance for the scientist_runs audit (round-9): every seat
+        # in this phase is recorded once, with how many attempts it took and --
+        # for an absent one -- the final honest error. A whole-phase failure
+        # (the except branch above) records nothing, because the ledger already
+        # carries PHASE_FAILED and there is no per-seat detail to report.
+        #
+        # REPORTING is skipped here: it assembles the report from the graph and
+        # never polls a seat, so its ``outcome.attempts`` is empty -- writing a
+        # row would falsely claim seven scientists attended the synthesis.
+        # Guarding on ``outcome.attempts`` rather than the phase name keeps this
+        # honest if a future phase stops polling seats too.
+        if outcome.attempts:
+            phase_completed = datetime.now(UTC)
+            for seat in self._seats:
+                absent_seat = seat in outcome.absent_seats
+                state.seat_runs.append(
+                    SeatRunRecord(
+                        phase=phase,
+                        seat=seat,
+                        status=(
+                            SEAT_RUN_ABSENT if absent_seat else SEAT_RUN_COMPLETED
+                        ),
+                        attempts=outcome.attempts.get(seat, 0),
+                        error_code=(
+                            outcome.absence_reasons.get(seat)
+                            if absent_seat
+                            else None
+                        ),
+                        started_at=phase_started,
+                        completed_at=phase_completed,
+                    )
+                )
         await self._remember(phase, outcome)
 
         await self._ledger.append(

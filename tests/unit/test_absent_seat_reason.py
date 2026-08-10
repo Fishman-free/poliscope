@@ -92,18 +92,25 @@ def _context(deliberator: object) -> PhaseContext:
 
 async def test_unavailable_event_reports_the_real_reason() -> None:
     context = _context(_FailingDeliberator())
-    _, _, absent, reasons = await _collect(context)
+    _, _, absent, reasons, attempts = await _collect(context)
     assert absent == frozenset({Seat.CAUSAL_SCIENTIST})
     assert "DNS lookup failed" in reasons[Seat.CAUSAL_SCIENTIST]
-    events = _unavailable_events(context, absent, reasons)
+    events = _unavailable_events(context, absent, reasons, attempts)
     assert events[0].event_type == SEAT_UNAVAILABLE
     assert events[0].payload["reason"] == "connection error: DNS lookup failed"
+    # The seat was asked both times (retry budget exhausted) before giving up.
+    assert attempts[Seat.CAUSAL_SCIENTIST] == 2
+    # The attempts count rides along on the event so the researcher can tell a
+    # single failure from a retried-and-still-down one.
+    assert events[0].payload["attempts"] == 2
 
 
 async def test_unavailable_event_defaults_when_no_reason_was_recorded() -> None:
     context = _context(_SilentDeliberator())
-    _, _, absent, reasons = await _collect(context)
+    _, _, absent, reasons, attempts = await _collect(context)
     events = _unavailable_events(context, absent, reasons)
     assert str(events[0].payload["reason"]).startswith(
         "no model provider is connected"
     )
+    # No provider configured: the truthful "cannot answer" case is not retried.
+    assert attempts[Seat.CAUSAL_SCIENTIST] == 1

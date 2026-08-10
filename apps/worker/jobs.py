@@ -22,20 +22,28 @@ import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.council.contracts import Seat
 from packages.council.deliberation import GatewayDeliberator, ReasoningCallback
+from packages.council.models import CouncilRoundModel, ScientistRunModel
 from packages.council.rounds.registry import (
     MODEL_REASONING_CAPTURED,
     SeatDeliberator,
 )
 from packages.epistemo.budget import BudgetTracker, ResearchBudget
-from packages.epistemo.contracts import CouncilCheckpoint, TaskPhase, TaskStatus
+from packages.epistemo.contracts import (
+    PHASE_SEQUENCE,
+    CouncilCheckpoint,
+    TaskPhase,
+    TaskStatus,
+)
 from packages.epistemo.orchestrator import CouncilOrchestrator, TaskRunReport
 from packages.evidence.ledger import EventConflict
 from packages.evidence.lifecycle import QuarantinedNode
@@ -593,6 +601,12 @@ async def _deliberate_impl(
             council_guidance=checkpoint.guidance,
         )
 
+    # Per-seat attendance audit (round-9): persist which seats ran in which
+    # phases, how many attempts each took, and why the absent ones are absent.
+    # Same transaction as everything else in this function -- the caller's
+    # session.commit() makes the audit trail atomic with the ledger and task row.
+    await _persist_council_runs(session, task_id, report)
+
     repository = ResearchRepository(session)
     if report.final_status == TaskStatus.AWAITING_COUNCIL_INPUT:
         assert report.checkpoint is not None
@@ -632,6 +646,100 @@ async def _deliberate_impl(
 async def project(session: AsyncSession, task_id: UUID) -> ProjectionReport:
     """Admit the committed events into the graph under the projector identity."""
     return await SqlGraphProjector(session).project_pending(task_id)
+
+
+async def _persist_council_runs(
+    session: AsyncSession, task_id: UUID, report: TaskRunReport
+) -> None:
+    """Write one pass's seat attendance into council_rounds / scientist_runs.
+
+    Round-9 audit trail. The rows are keyed by a deterministic round id derived
+    from ``(task_id, phase)``, and both writes are upserts keyed on that id, so a
+    replay (e.g. a requeued task re-running an already-completed phase) updates
+    the same row to its latest attempts/status instead of stacking a second
+    copy -- the same idempotency philosophy as the ledger (0005's "a retry
+    updates the row it already owns"). Each pass of ``run()`` reports only the
+    phases it actually ran, so a checkpoint-resumed pass adds its later phases
+    on top of the first pass's rows.
+
+    ``round_outputs`` is deliberately not written here: this is an absence /
+    retry audit, and the seats' structured actions already live on the ledger
+    (JSONB payload, no 64-char truncation).
+    """
+    if not report.phases_run:
+        return
+    now = datetime.now(UTC)
+    for phase in report.phases_run:
+        round_id = uuid5(
+            NAMESPACE_URL, f"poliscope/council-round/{task_id}/{phase.value}"
+        )
+        phase_records = [
+            record for record in report.seat_runs if record.phase is phase
+        ]
+        started_at = (
+            phase_records[0].started_at if phase_records else now
+        )
+        completed_at = (
+            phase_records[0].completed_at if phase_records else now
+        )
+        phase_index = PHASE_SEQUENCE.index(phase)
+        next_phase = (
+            PHASE_SEQUENCE[phase_index + 1].value
+            if phase_index + 1 < len(PHASE_SEQUENCE)
+            else None
+        )
+        await session.execute(
+            pg_insert(CouncilRoundModel)
+            .values(
+                id=round_id,
+                task_id=task_id,
+                phase=phase.value,
+                status="completed",
+                started_at=started_at,
+                completed_at=completed_at,
+                next_phase=next_phase,
+            )
+            .on_conflict_do_update(
+                index_elements=[CouncilRoundModel.id],
+                set_={
+                    "status": "completed",
+                    "started_at": started_at,
+                    "completed_at": completed_at,
+                    "next_phase": next_phase,
+                },
+            )
+        )
+        for record in phase_records:
+            error_code = (
+                str(record.error_code)[:64] if record.error_code else None
+            )
+            await session.execute(
+                pg_insert(ScientistRunModel)
+                .values(
+                    id=uuid5(
+                        NAMESPACE_URL,
+                        f"poliscope/scientist-run/{task_id}/{phase.value}/"
+                        f"{record.seat.value}",
+                    ),
+                    round_id=round_id,
+                    seat=record.seat.value,
+                    status=record.status,
+                    started_at=record.started_at or now,
+                    completed_at=record.completed_at or now,
+                    error_code=error_code,
+                    attempts=record.attempts,
+                )
+                .on_conflict_do_update(
+                    constraint="uq_scientist_run_seat",
+                    set_={
+                        "status": record.status,
+                        "started_at": record.started_at or now,
+                        "completed_at": record.completed_at or now,
+                        "error_code": error_code,
+                        "attempts": record.attempts,
+                    },
+                )
+            )
 
 
 async def _mark_failed(

@@ -26,6 +26,7 @@ from apps.worker.main import (
     recover_stale_running,
 )
 from packages.council.contracts import Seat
+from packages.council.models import CouncilRoundModel, ScientistRunModel
 from packages.council.rounds.registry import (
     PHASE_STARTED,
     SEAT_UNAVAILABLE,
@@ -33,6 +34,10 @@ from packages.council.rounds.registry import (
     SeatDeliberator,
 )
 from packages.epistemo.contracts import PHASE_SEQUENCE, TaskPhase, TaskStatus
+from packages.epistemo.orchestrator import (
+    SEAT_RUN_ABSENT,
+    SEAT_RUN_COMPLETED,
+)
 from packages.evidence.contracts import EvidenceNodeType
 from packages.evidence.ledger import EventConflict
 from packages.evidence.models import (
@@ -218,6 +223,32 @@ class _DivergingScriptedDeliberator(_ScriptedDeliberator):
                 "confidence": 0.9,
                 "update_condition": "a different preregistered cohort study",
             }
+        return await super().deliberate(seat, phase, context)
+
+
+class _RetryingScriptedDeliberator(_ScriptedDeliberator):
+    """Stands in for a transient provider hiccup: each seat's first call times
+    out, the retry answers with the normal scripted output.
+
+    The retry in ``_collect`` (round-9) is what re-admits the seat, so a run
+    driven by this deliberator should persist ``attempts == 2`` rows with
+    ``status == completed`` instead of avoidable absences.
+    """
+
+    def __init__(self, blindspot_id: UUID) -> None:
+        super().__init__(blindspot_id)
+        self.first_calls: set[tuple[Seat, TaskPhase]] = set()
+
+    async def deliberate(
+        self,
+        seat: Seat,
+        phase: TaskPhase,
+        context: PhaseContext,
+    ) -> Mapping[str, object] | None:
+        key = (seat, phase)
+        if key not in self.first_calls:
+            self.first_calls.add(key)
+            raise TimeoutError
         return await super().deliberate(seat, phase, context)
 
 
@@ -625,3 +656,106 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
 
     # The reclaimed task can be claimed and run again.
     assert task_id in await claim_queued_tasks(app_sessions, limit=10)
+
+
+async def test_seat_attendance_is_persisted_to_scientist_runs(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Round-9 audit: every deliberating round and every seat is persisted.
+
+    The orphan ``scientist_runs`` / ``council_rounds`` tables now have a writer
+    (``apps/worker/jobs.py::_persist_council_runs``). A full pass must record one
+    round per phase (REPORTING included, though it polls no seat) and one run row
+    per seat per deliberating phase, with honest error codes on the absent ones.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions)
+    blindspot_id = uuid4()
+
+    await _run_to_completion(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        deliberator=_ScriptedDeliberator(blindspot_id),
+    )
+
+    async with app_sessions() as session:
+        rounds = (
+            (
+                await session.execute(
+                    select(CouncilRoundModel).where(
+                        CouncilRoundModel.task_id == task_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        runs = (
+            (
+                await session.execute(
+                    select(ScientistRunModel)
+                    .join(CouncilRoundModel)
+                    .where(CouncilRoundModel.task_id == task_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    # REPORTING never polls a seat, so only the seven deliberating phases have
+    # round rows; every one of them records all seven seats.
+    assert len(rounds) == 8
+    assert len(runs) == 7 * 7
+    # No provider hiccup in this run, so every seat answered on its first call.
+    assert all(run.attempts == 1 for run in runs)
+    # The scripted deliberator only answers PRECOMMITMENT, ACQUISITION, and
+    # BLINDSPOT_BOUNTY (falsifier); the rest return None with no last_error and
+    # are honestly absent with a reason, never invented as attended.
+    completed = [run for run in runs if run.status == SEAT_RUN_COMPLETED]
+    assert len(completed) == 7 + 7 + 1
+    absent = [run for run in runs if run.status == SEAT_RUN_ABSENT]
+    assert absent
+    assert all(run.error_code for run in absent)
+
+
+async def test_a_retried_seat_is_persisted_with_attempts_two(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """A seat whose first call times out is asked again, and the retry shows.
+
+    Driven by ``_RetryingScriptedDeliberator`` (every seat's first call raises
+    ``TimeoutError``), the round-9 retry in ``_collect`` re-admits the seat, so
+    the persisted run row must say ``attempts == 2`` and ``status == completed``
+    instead of recording an avoidable absence.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions)
+    blindspot_id = uuid4()
+
+    await _run_to_completion(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        deliberator=_RetryingScriptedDeliberator(blindspot_id),
+    )
+
+    async with app_sessions() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(ScientistRunModel)
+                    .join(CouncilRoundModel)
+                    .where(
+                        CouncilRoundModel.task_id == task_id,
+                        CouncilRoundModel.phase
+                        == TaskPhase.PRECOMMITMENT.value,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 7
+    assert all(run.attempts == 2 for run in rows)
+    assert all(run.status == SEAT_RUN_COMPLETED for run in rows)

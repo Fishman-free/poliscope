@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -127,6 +128,13 @@ class PhaseOutcome:
     carry: Mapping[str, object] = field(default_factory=dict)
     unfilled_slots: tuple[str, ...] = ()
     absent_seats: frozenset[Seat] = frozenset()
+    # Per-seat audit for the seat-retry feature: how many times each seat was
+    # asked in this phase (successful or not), and -- for the absent ones --
+    # the final honest reason (surfaced on SEAT_UNAVAILABLE and persisted to
+    # scientist_runs.error_code). Seats that answered are present in ``attempts``
+    # but not in ``absence_reasons``.
+    attempts: Mapping[Seat, int] = field(default_factory=dict)
+    absence_reasons: Mapping[Seat, str] = field(default_factory=dict)
 
 
 class SeatDeliberator(Protocol):
@@ -473,16 +481,42 @@ class PhaseContext:
 _COLLECT_DEADLINE_SECONDS = 900.0  # 15 minutes for the whole pass
 _COLLECT_DEADLINE_REASON = "phase collection deadline exceeded"
 
+# Seat-retry tuning (round-9). ``SEAT_ATTEMPT_TIMEOUT_SECONDS`` bounds a single
+# model call per seat, overridable via POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS;
+# ``MAX_SEAT_ATTEMPTS`` is how many times a seat is asked in one phase (initial
+# call plus retries). An absent seat is asked again immediately -- the retry
+# budget is the natural backpressure, so no sleep is inserted by default.
+SEAT_ATTEMPT_TIMEOUT_SECONDS = 120.0
+_SEAT_ATTEMPT_TIMEOUT_ENV = "POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS"
+_SEAT_ATTEMPT_TIMEOUT_REASON = "seat attempt timed out"
+MAX_SEAT_ATTEMPTS = 2
+_SEAT_RETRY_PAUSE_SECONDS = 0.0
+
+
+def _seat_attempt_timeout_seconds() -> float:
+    """The per-call timeout, honouring the env override for operators."""
+    raw = os.environ.get(_SEAT_ATTEMPT_TIMEOUT_ENV)
+    if raw is not None:
+        try:
+            return max(float(raw), 0.0)
+        except ValueError:
+            pass
+    return SEAT_ATTEMPT_TIMEOUT_SECONDS
+
 
 async def _collect(
     context: PhaseContext,
     *,
     deadline_seconds: float = _COLLECT_DEADLINE_SECONDS,
+    attempt_timeout_seconds: float | None = None,
+    max_attempts: int = MAX_SEAT_ATTEMPTS,
+    retry_pause_seconds: float = _SEAT_RETRY_PAUSE_SECONDS,
 ) -> tuple[
     dict[Seat, Mapping[str, object]],
     tuple[str, ...],
     frozenset[Seat],
     dict[Seat, str],
+    dict[Seat, int],
 ]:
     """Ask every seat for its output, recording the ones that cannot answer.
 
@@ -497,41 +531,82 @@ async def _collect(
     a seat that could not answer before it is reported absent. This is what
     makes a slow provider degrade the round instead of stalling it -- the
     "交叉质询卡死" failure mode where one phase held the task for an hour.
+
+    A seat that fails -- times out against ``attempt_timeout_seconds`` (default
+    120s) or returns ``None`` with a non-empty ``last_error`` -- is asked again
+    immediately, up to ``max_attempts`` times in total, so a transient provider
+    hiccup re-admits the scientist to the round instead of recording an
+    avoidable absence (round-9). Two failures are deliberately NOT retried:
+
+    * a seat that returns ``None`` with no ``last_error`` (e.g. the
+      ``UnavailableDeliberator`` with no provider configured) is the truthful
+      "no answer is possible" case -- retrying would just re-burn the round's
+      budget asking the same question;
+    * a seat whose call outlives the whole ``deadline_seconds`` is cut off by
+      the phase ceiling, not given a second chance.
+
+    The fifth element, ``attempts``, records how many times each seat was asked
+    (0 for a seat never reached because the deadline had already expired).
     """
     deadline = time.monotonic() + deadline_seconds
+    attempt_timeout = (
+        attempt_timeout_seconds
+        if attempt_timeout_seconds is not None
+        else _seat_attempt_timeout_seconds()
+    )
     outputs: dict[Seat, Mapping[str, object]] = {}
     unfilled: list[str] = []
     absent: set[Seat] = set()
     reasons: dict[Seat, str] = {}
+    attempts: dict[Seat, int] = {seat: 0 for seat in context.seats}
     for seat in context.seats:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            unfilled.append(f"{context.phase.value}:{seat.value}")
-            absent.add(seat)
-            reasons[seat] = _COLLECT_DEADLINE_REASON
+        reason: str | None = None
+        while attempts[seat] < max_attempts:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                reason = _COLLECT_DEADLINE_REASON
+                break
+            timeout = min(attempt_timeout, remaining)
+            attempts[seat] += 1
+            try:
+                result = await asyncio.wait_for(
+                    context.deliberator.deliberate(seat, context.phase, context),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                # Distinguish a single attempt that outlived its 120s window
+                # (retryable) from one cut short by the whole-pass deadline
+                # (not). Comparing the actual timeout used against the
+                # configured per-attempt value tells the two apart.
+                reason = (
+                    _SEAT_ATTEMPT_TIMEOUT_REASON
+                    if timeout == attempt_timeout
+                    else _COLLECT_DEADLINE_REASON
+                )
+                if attempts[seat] >= max_attempts:
+                    break
+                await asyncio.sleep(retry_pause_seconds)
+                continue
+            if result is None:
+                err = getattr(context.deliberator, "last_error", None)
+                reason = str(err) if err else None
+                if reason is None:
+                    # The truthful "no provider / cannot answer at all" case:
+                    # retrying would re-burn budget without a chance of a
+                    # different answer. Report absent, do not loop.
+                    break
+                if attempts[seat] >= max_attempts:
+                    break
+                await asyncio.sleep(retry_pause_seconds)
+                continue
+            outputs[seat] = result
+            break
+        if seat in outputs:
             continue
-        try:
-            result = await asyncio.wait_for(
-                context.deliberator.deliberate(seat, context.phase, context),
-                timeout=remaining,
-            )
-        except TimeoutError:
-            # The seat's model call did not finish within the phase deadline.
-            # The deliberator's own call was cancelled; the seat is absent and
-            # the reason says exactly that (not "provider down").
-            unfilled.append(f"{context.phase.value}:{seat.value}")
-            absent.add(seat)
-            reasons[seat] = _COLLECT_DEADLINE_REASON
-            continue
-        if result is None:
-            unfilled.append(f"{context.phase.value}:{seat.value}")
-            absent.add(seat)
-            reason = getattr(context.deliberator, "last_error", None)
-            if reason:
-                reasons[seat] = str(reason)
-            continue
-        outputs[seat] = result
-    return outputs, tuple(unfilled), frozenset(absent), reasons
+        unfilled.append(f"{context.phase.value}:{seat.value}")
+        absent.add(seat)
+        reasons[seat] = reason or _DEFAULT_ABSENCE_REASON
+    return outputs, tuple(unfilled), frozenset(absent), reasons, attempts
 
 
 # What a seat's absence event says when no specific failure was recorded.
@@ -542,11 +617,14 @@ def _unavailable_events(
     context: PhaseContext,
     absent: frozenset[Seat],
     reasons: dict[Seat, str],
+    attempts: Mapping[Seat, int] | None = None,
 ) -> tuple[EmittedEvent, ...]:
     """Make each missing seat visible on the stream.
 
     CLAUDE.md 7 requires the system to admit what it does not know, and a silent
-    absence reads to the researcher as agreement.
+    absence reads to the researcher as agreement. ``attempts`` (when given)
+    reports how many times the seat was asked before giving up, so the
+    researcher can tell a single failure from a retried-and-still-down one.
     """
     return tuple(
         EmittedEvent(
@@ -555,6 +633,7 @@ def _unavailable_events(
                 "seat": seat.value,
                 "phase": context.phase.value,
                 "reason": reasons.get(seat) or _DEFAULT_ABSENCE_REASON,
+                "attempts": (attempts or {}).get(seat, 0),
             },
             idempotency_key=context.key("unavailable", seat.value),
         )
@@ -633,7 +712,7 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
     handler refuses a read before the seal, which is the property that makes the
     independence real rather than declared.
     """
-    outputs, unfilled, absent, reasons = await _collect(context)
+    outputs, unfilled, absent, reasons, attempts = await _collect(context)
     handler = PrecommitmentHandler()
     events: list[EmittedEvent] = [
         EmittedEvent(
@@ -672,7 +751,7 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
         )
         for seat, submission in sorted(sealed.items(), key=lambda kv: kv[0].value)
     )
-    events.extend(_unavailable_events(context, absent, reasons))
+    events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
         carry={
@@ -691,6 +770,8 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
         },
         unfilled_slots=unfilled,
         absent_seats=absent,
+        attempts=attempts,
+        absence_reasons=reasons,
     )
 
 
@@ -719,7 +800,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     table. See ``packages.evidence.adversarial_retrieval`` for the honest
     scope note on what these queries can and cannot do today.
     """
-    outputs, unfilled, absent, reasons = await _collect(context)
+    outputs, unfilled, absent, reasons, attempts = await _collect(context)
     round_ = AcquisitionRound()
     events: list[EmittedEvent] = []
     # Values later phases read; the knowledge-search pass adds
@@ -1204,12 +1285,14 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
             # explicitly non-evidence process context).
             carry["knowledge_base_context"] = outcome_hits
 
-    events.extend(_unavailable_events(context, absent, reasons))
+    events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
         carry=carry,
         unfilled_slots=tuple(slots),
         absent_seats=absent,
+        attempts=attempts,
+        absence_reasons=reasons,
     )
 
 
@@ -1274,7 +1357,7 @@ def _resurrection_events(
 
 async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
     """Publish each seat's evidence projection with private fields stripped."""
-    outputs, unfilled, absent, reasons = await _collect(context)
+    outputs, unfilled, absent, reasons, attempts = await _collect(context)
     round_ = ExchangeRound()
     events: list[EmittedEvent] = []
     slots: list[str] = list(unfilled)
@@ -1316,7 +1399,7 @@ async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
         )
         events.extend(resurrection_events)
         slots.extend(resurrection_slots)
-    events.extend(_unavailable_events(context, absent, reasons))
+    events.extend(_unavailable_events(context, absent, reasons, attempts))
     if published_item_count:
         # A marker per confirmed claim, not per published item: this round has
         # no claim_id on an evidence item (EvidenceProjectionItem carries a
@@ -1332,6 +1415,8 @@ async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
         events=tuple(events),
         unfilled_slots=tuple(slots),
         absent_seats=absent,
+        attempts=attempts,
+        absence_reasons=reasons,
     )
 
 
@@ -1456,7 +1541,7 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
     forks a parallel Claim node instead of just blocking the original; see
     ``_fork_events``.
     """
-    outputs, unfilled, absent, reasons = await _collect(context)
+    outputs, unfilled, absent, reasons, attempts = await _collect(context)
     handler = CrossExaminationHandler()
     events: list[EmittedEvent] = []
     blocked: list[str] = []
@@ -1531,12 +1616,14 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                                 "fork_confidence", seat.value, index,
                             )
                         )
-    events.extend(_unavailable_events(context, absent, reasons))
+    events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
         carry={"blocked_claim_ids": tuple(blocked)},
         unfilled_slots=unfilled,
         absent_seats=absent,
+        attempts=attempts,
+        absence_reasons=reasons,
     )
 
 
@@ -1546,7 +1633,7 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
     The scoring is the one part of the protocol that is fully deterministic, so
     it runs for real on whatever the seats supplied.
     """
-    outputs, unfilled, absent, reasons = await _collect(context)
+    outputs, unfilled, absent, reasons, attempts = await _collect(context)
     handler = BlindspotBountyHandler()
     items: list[BlindspotItem] = []
     for output in outputs.values():
@@ -1622,11 +1709,13 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
                 idempotency_key=context.key("assignments"),
             )
         )
-    events.extend(_unavailable_events(context, absent, reasons))
+    events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
         unfilled_slots=unfilled,
         absent_seats=absent,
+        attempts=attempts,
+        absence_reasons=reasons,
     )
 
 
@@ -1637,7 +1726,7 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
     falsification conditions are missing. That refusal is the mechanism behind
     CLAUDE.md 4's ban on settling scientific truth by majority.
     """
-    outputs, unfilled, absent, reasons = await _collect(context)
+    outputs, unfilled, absent, reasons, attempts = await _collect(context)
     handler = JointModelingHandler()
     merged: dict[str, list[str]] = {
         "boundary_conditions": [],
@@ -1744,18 +1833,20 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
             *unfilled,
             *(f"JOINT_MODELING:{name}" for name in result.missing_fields),
         )
-    events.extend(_unavailable_events(context, absent, reasons))
+    events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
         carry={"consensus_ready": result.ready},
         unfilled_slots=unfilled,
         absent_seats=absent,
+        attempts=attempts,
+        absence_reasons=reasons,
     )
 
 
 async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
     """Let each seat judge again independently, and keep every dissent."""
-    outputs, unfilled, absent, reasons = await _collect(context)
+    outputs, unfilled, absent, reasons, attempts = await _collect(context)
     handler = FinalRejudgmentHandler()
     initial = context.carried.get("initial_judgments")
     judgments = {
@@ -1770,9 +1861,11 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
         }
     if not judgments:
         return PhaseOutcome(
-            events=_unavailable_events(context, absent, reasons),
+            events=_unavailable_events(context, absent, reasons, attempts),
             unfilled_slots=unfilled,
             absent_seats=absent,
+            attempts=attempts,
+            absence_reasons=reasons,
         )
     result = handler.run(
         FinalRejudgmentInput(
@@ -1852,11 +1945,13 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
             )
     elif dissenters:
         unfilled = (*unfilled, "FINAL_REJUDGMENT:no_dissent_target")
-    events.extend(_unavailable_events(context, absent, reasons))
+    events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
         unfilled_slots=unfilled,
         absent_seats=absent,
+        attempts=attempts,
+        absence_reasons=reasons,
     )
 
 
