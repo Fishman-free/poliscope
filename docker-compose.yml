@@ -18,7 +18,10 @@
 # `service_completed_successfully`.
 services:
   postgres:
-    image: postgres:16-alpine
+    # Pulled from AWS ECR Public instead of Docker Hub: Hub is intermittently
+    # unreachable from mainland-China hosts, and this deployment targets such a
+    # host. The image is the same official postgres:16-alpine, just mirrored.
+    image: public.ecr.aws/docker/library/postgres:16-alpine
     environment:
       POSTGRES_USER: ${POLISCOPE_DB_SUPERUSER:-poliscope_admin}
       POSTGRES_PASSWORD: ${POLISCOPE_DB_SUPERUSER_PASSWORD:?set in .env}
