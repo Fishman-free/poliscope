@@ -643,10 +643,14 @@ async def _mark_failed(
     rolled back and about to be closed by its own ``async with`` block in
     :func:`run_task` -- writing through a rolled-back session would silently
     no-op or reuse a dead transaction.
+
+    The council checkpoint is deliberately kept: ``reResearch`` (round-8)
+    moves a FAILED task back to QUEUED, and the worker then resumes from the
+    stored checkpoint instead of re-running the phases that already completed
+    (a checkpoint exists only once the run has reached AWAITING_COUNCIL_INPUT).
     """
     async with app_sessions() as session:
         repository = ResearchRepository(session)
-        await repository.set_checkpoint(task_id, None)
         await repository.set_status(task_id, TaskStatus.FAILED)
         await session.commit()
 

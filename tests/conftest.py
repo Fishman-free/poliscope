@@ -6,7 +6,7 @@ import subprocess
 from collections.abc import AsyncIterator, Iterator
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -29,6 +29,49 @@ APP_ROLE = "poliscope_app"
 PROJECTOR_ROLE = "poliscope_projector"
 APP_PASSWORD = "isolated-app-test-password"
 PROJECTOR_PASSWORD = "isolated-projector-test-password"
+
+# Email verification (migration 0022): the SMTP sender is stubbed at session
+# scope to record the code per recipient instead of touching the network;
+# every test that registers a fresh account reads the code back from here.
+RECORDED_CODES: dict[str, str] = {}
+
+
+async def _record_send(
+    self: object, to_email: str, code: str, purpose: str = "register"
+) -> None:
+    RECORDED_CODES[to_email] = code
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _stub_email() -> Iterator[None]:
+    """Provide a configured-but-recording SMTP sender for the whole session.
+
+    SMTP_HOST + SMTP_FROM make ``SmtpConfig.is_configured`` true (so the
+    register endpoint sees a sender), while the class method is replaced with
+    a recorder -- no real mail is ever sent, and tests that need the code
+    read it from ``RECORDED_CODES``. Scope is session so the session-scoped
+    ``account`` fixture can register; we mutate ``os.environ`` directly
+    because ``pytest.MonkeyPatch`` is function-scoped.
+    """
+    import packages.accounts.email_sender as email_sender_mod
+
+    previous = {
+        "SMTP_HOST": os.environ.get("SMTP_HOST"),
+        "SMTP_FROM": os.environ.get("SMTP_FROM"),
+    }
+    original = email_sender_mod.SmtpEmailSender.send_verification_code
+    os.environ["SMTP_HOST"] = "smtp.test"
+    os.environ["SMTP_FROM"] = "test@poliscope.test"
+    email_sender_mod.SmtpEmailSender.send_verification_code = _record_send
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        email_sender_mod.SmtpEmailSender.send_verification_code = original
 
 
 def _role_url(admin_url: str, username: str, password: str) -> str:
@@ -236,6 +279,40 @@ TEST_ACCOUNT_USERNAME = "integration-test-user"
 TEST_ACCOUNT_PASSWORD = "integration-test-password"
 
 
+async def register_user(
+    client: Any,
+    username: str,
+    password: str = "test-password-123",
+    email: str | None = None,
+) -> dict[str, Any]:
+    """Two-phase registration against the real ASGI app.
+
+    Registration now emails a code first (202) and only creates the account
+    after the code is confirmed (201) -- see apps/api/routers/auth.py. The
+    code was recorded by the session-scoped SMTP stub into ``RECORDED_CODES``;
+    tests reuse this helper so the two-phase contract is exercised once.
+    """
+    address = email or f"{username}@poliscope.test"
+    sent = await client.post(
+        "/api/auth/register",
+        json={"username": username, "password": password, "email": address},
+    )
+    assert sent.status_code == 202, sent.text
+    code = RECORDED_CODES.get(address)
+    assert code, f"no verification code recorded for {address}"
+    confirmed = await client.post(
+        "/api/auth/register/confirm",
+        json={
+            "username": username,
+            "password": password,
+            "email": address,
+            "code": code,
+        },
+    )
+    assert confirmed.status_code == 201, confirmed.text
+    return cast(dict[str, Any], confirmed.json())
+
+
 @pytest_asyncio.fixture(scope="session")
 async def account(migrated_db: str) -> AsyncIterator[dict[str, Any]]:
     """One registered test account for the whole session.
@@ -258,15 +335,13 @@ async def account(migrated_db: str) -> AsyncIterator[dict[str, Any]]:
             transport=transport,
             base_url="http://poliscope.test",
         ) as client:
-            response = await client.post(
-                "/api/auth/register",
-                json={
-                    "username": TEST_ACCOUNT_USERNAME,
-                    "password": TEST_ACCOUNT_PASSWORD,
-                },
+            body = await register_user(
+                client,
+                TEST_ACCOUNT_USERNAME,
+                TEST_ACCOUNT_PASSWORD,
+                "integration@poliscope.test",
             )
-            assert response.status_code == 201, response.text
-            yield response.json()
+            yield body
     finally:
         await state.dispose()
 

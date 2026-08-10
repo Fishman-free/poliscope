@@ -154,6 +154,59 @@ class AuthCredentials(ContractModel):
     password: str
 
 
+class RegistrationRequest(ContractModel):
+    """Phase-1 registration body: validate and email a verification code.
+    No account is created until the code is confirmed."""
+
+    username: str
+    password: str
+    email: str
+
+
+class RegistrationConfirm(ContractModel):
+    """Phase-2 registration body: verify the emailed code and create the
+    account (auto-login with the returned bearer token)."""
+
+    username: str
+    password: str
+    email: str
+    code: str
+
+
+class ForgotPasswordRequest(ContractModel):
+    """Ask the server to email a password-reset code to this address."""
+
+    email: str
+
+
+class ResetPasswordRequest(ContractModel):
+    """Verify the emailed reset code and set a new password."""
+
+    email: str
+    code: str
+    password: str
+
+
+class ChangeUsernameRequest(ContractModel):
+    """Rename the account. The current password is required as proof."""
+
+    new_username: str
+    password: str
+
+
+class ChangePasswordRequest(ContractModel):
+    """Replace the password after verifying the old one."""
+
+    old_password: str
+    new_password: str
+
+
+class DeleteAccountRequest(ContractModel):
+    """Permanently delete the account. The password is required as proof."""
+
+    password: str
+
+
 class ModelSettingsUpdate(ContractModel):
     """The researcher's permanent model endpoint.
 

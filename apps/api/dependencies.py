@@ -19,6 +19,11 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from packages.accounts.email_sender import (
+    EmailSender,
+    SmtpConfig,
+    SmtpEmailSender,
+)
 from packages.accounts.repository import StoredUser
 from packages.accounts.service import AuthService
 from packages.kernel.config import DatabaseConfig
@@ -114,7 +119,19 @@ async def get_current_user(
     return user
 
 
+def get_email_sender() -> EmailSender | None:
+    """Resolve the deployment's SMTP sender, or None when SMTP is unconfigured.
+
+    ``None`` is the honest "registration is disabled" signal: the router maps
+    it to 503 rather than pretending mail can be sent (CLAUDE.md 2.7). Tests
+    override this dependency to inject a recording fake.
+    """
+    config = SmtpConfig.from_env()
+    return SmtpEmailSender(config) if config.is_configured else None
+
+
 CurrentUserDep = Annotated[StoredUser, Depends(get_current_user)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 StateDep = Annotated[AppState, Depends(get_state)]
 ObjectStoreDep = Annotated[PrivateObjectStore, Depends(get_object_store)]
+EmailSenderDep = Annotated[EmailSender | None, Depends(get_email_sender)]

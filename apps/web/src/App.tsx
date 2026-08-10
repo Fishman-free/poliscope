@@ -24,6 +24,7 @@ import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
 import { Badge, Spinner, TASK_STATUS_TONE } from "./components/primitives";
 import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "./i18n";
+import { AccountMenu } from "./views/AccountMenu";
 import { AuditView } from "./views/AuditView";
 import { AuthView } from "./views/AuthView";
 import { BlindspotRadarView } from "./views/BlindspotRadarView";
@@ -470,15 +471,12 @@ export function App() {
         </div>
         <div className="app__account">
           <LanguageSwitcher />
-          <span className="app__account-name">{username}</span>
+          <AccountMenu username={username} onSignedOut={signOut} />
           <SessionHistory
             currentTaskId={taskId}
             onOpen={open}
             onDeleted={handleTaskDeleted}
           />
-          <button type="button" className="button button--small" onClick={signOut}>
-            {t("退出登录")}
-          </button>
         </div>
       </header>
 
@@ -640,6 +638,8 @@ export function App() {
                         taskId={taskId}
                         seats={snapshot.seats}
                         queue={queue}
+                        claims={brief?.confirmed_claims ?? []}
+                        graph={snapshot.graph}
                         onGuidanceSubmitted={refresh}
                       />
                     ) : null}

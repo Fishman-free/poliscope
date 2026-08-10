@@ -43,12 +43,10 @@ def _probe_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _register(
     client: httpx.AsyncClient, username: str
 ) -> dict[str, Any]:
-    response = await client.post(
-        f"{AUTH_PATH}/register",
-        json={"username": username, "password": "test-password-123"},
-    )
-    assert response.status_code == 201, response.text
-    body = cast(dict[str, Any], response.json())
+    """Two-phase registration via the shared helper (see conftest.register_user)."""
+    from tests.conftest import register_user
+
+    body = await register_user(client, username)
     assert body["username"] == username
     assert body["token"]
     return body
@@ -108,9 +106,14 @@ async def test_duplicate_username_is_409(
     api_client: httpx.AsyncClient,
 ) -> None:
     await _register(api_client, "duplicate-user")
+    # Phase 1 (send code) checks username uniqueness before emailing.
     again = await api_client.post(
         f"{AUTH_PATH}/register",
-        json={"username": "duplicate-user", "password": "another-password"},
+        json={
+            "username": "duplicate-user",
+            "password": "another-password",
+            "email": "another@poliscope.test",
+        },
     )
     assert again.status_code == 409
 
@@ -118,14 +121,31 @@ async def test_duplicate_username_is_409(
 async def test_weak_registration_is_422(api_client: httpx.AsyncClient) -> None:
     short_password = await api_client.post(
         f"{AUTH_PATH}/register",
-        json={"username": "ok-name", "password": "123"},
+        json={
+            "username": "ok-name",
+            "password": "123",
+            "email": "ok@poliscope.test",
+        },
     )
     assert short_password.status_code == 422
     bad_name = await api_client.post(
         f"{AUTH_PATH}/register",
-        json={"username": "空格 名字", "password": "long-enough"},
+        json={
+            "username": "空格 名字",
+            "password": "long-enough",
+            "email": "bad@poliscope.test",
+        },
     )
     assert bad_name.status_code == 422
+    bad_email = await api_client.post(
+        f"{AUTH_PATH}/register",
+        json={
+            "username": "ok-name-2",
+            "password": "long-enough",
+            "email": "not-an-email",
+        },
+    )
+    assert bad_email.status_code == 422
 
 
 async def test_protected_endpoints_require_auth(

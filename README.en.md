@@ -3,6 +3,8 @@
 > **Language / 阅读语言 / 語言：** [简体中文](README.md) · [繁體中文](README.zh-Hant.md) · [English](README.en.md)
 
 > Seven AI scientists walk into a review. Nobody gets to paper over the disagreements.
+>
+> **Try it live:** [http://39.96.197.238/](http://39.96.197.238/) — the author's public deployment; open it and start, no install needed
 
 Imagine you are reviewing a study claiming that "social media causes adolescent depression." The conclusion is polished, the citations are plentiful — but nobody tells you that this paper and five others all rely on the same dataset; nobody tells you that the causal claim is really just a correlation; nobody tells you that the authors themselves admit they could not rule out reverse causation.
 
@@ -119,7 +121,9 @@ The workspace provides eight views. The center of the product is the **evidence 
 
 ### 4.1 The URL: Read This First
 
-Poliscope has no officially hosted public website — it is open source under the MIT license, so **the URL you visit depends on your deployment**:
+The author maintains a **public demo instance: `http://39.96.197.238/`** (hosted on Alibaba Cloud, always reachable). To try Poliscope immediately, just open that address; the research evidence workspace lives at `/workspace` — register an account and you are in.
+
+Poliscope is open source under the MIT license — you can also deploy it yourself, and **the URL you visit depends on your deployment**:
 
 - **Docker Compose one-command deployment (recommended)**: the default local address is **`http://localhost:8080/`** (the actual port is decided by `POLISCOPE_SITE_HOST_PORT` in `.env`).
 - After deploying to a server, change `POLISCOPE_SITE_ADDRESS` in `.env` to your domain and Caddy automatically issues HTTPS; the URL becomes your domain.
@@ -129,7 +133,7 @@ The root path `/` is a public landing page; the research evidence workspace live
 
 ### 4.2 Start Research in Three Steps
 
-1. **Enter the workspace.** Open `http://localhost:8080/`, click "进入工作台" (or visit `/workspace` directly). On first use, register an account (username + password); the browser stays logged in afterwards.
+1. **Enter the workspace.** Open the demo address `http://39.96.197.238/` above (or your self-deployed `http://localhost:8080/`), click "进入工作台" (or visit `/workspace` directly). On first use, register an account (username + password); the browser stays logged in afterwards.
 2. **Create a task.** Write your contested question clearly. Optionally:
    - Link a **knowledge base** (your literature participates in the council as Level A user-provided sources; click "管理知识库" to organize documents);
    - Upload a **PDF** (task-level; after full-text verification it enters the evidence graph as Level A);

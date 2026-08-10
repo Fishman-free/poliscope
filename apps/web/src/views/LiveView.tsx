@@ -12,10 +12,22 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { LedgerEvent, ProcessEvent, Seat, SeatSummary } from "../api/types";
+import type {
+  ConfirmedClaim,
+  EvidenceGraph,
+  LedgerEvent,
+  ProcessEvent,
+  Seat,
+  SeatSummary,
+} from "../api/types";
 import { SEAT_LABELS } from "../api/types";
 import { Empty } from "../components/primitives";
 import { t } from "../i18n";
+import {
+  buildClaimLabels,
+  humanizeText,
+  replaceClaimUuids,
+} from "./claimLabels";
 import { CheckpointGate } from "./CheckpointGate";
 
 import "./LiveView.css";
@@ -48,9 +60,14 @@ const ACTION_META: Record<
 
 /** 把账本事件折叠成一句可读的议会动作摘要。不是投票记录 —— 议会
  * 禁止多数投票裁决科研真理（CLAUDE.md 4），这里展示的是每位科学家
- * 的预承诺、质询与复判，以及它们引用的证据。 */
+ * 的预承诺、质询与复判，以及它们引用的证据。
+ *
+ * ``labels``（claim_id → 「主张：…」）把进展里出现的 UUID 换成研究者
+ * 看得懂的主张文本（round-8 用户反馈：裸 UUID 无法阅读）。识别不出的
+ * UUID 保留原样 —— 绝不臆造（claimLabels.ts）。 */
 function actionSummary(
   event: LedgerEvent,
+  labels: Map<string, string>,
 ): { meta: string; tone: string; body: string } | null {
   const payload = event.payload as Record<string, unknown>;
   const meta = ACTION_META[event.kind];
@@ -64,23 +81,51 @@ function actionSummary(
   switch (event.kind) {
     case "PRECOMMITMENT_SEALED": {
       const confidence = String(payload.confidence ?? t("未记录"));
+      const updateCondition = humanizeText(
+        String(payload.update_condition ?? ""),
+      );
+      const initialJudgment = replaceClaimUuids(
+        humanizeText(String(payload.initial_judgment ?? "")),
+        labels,
+      );
+      // 主要观点优先展示 —— 这是「科学家在质询开始前说了什么」，是完整
+      // 进展链路的起点（round-8 用户反馈：不能只有质询）。
+      if (seat && initialJudgment) {
+        return {
+          meta: meta.label,
+          tone: meta.tone,
+          body: t("{0} 预承诺：{1}（置信度 {2}）", seat, initialJudgment, confidence),
+        };
+      }
       return {
         meta: meta.label,
         tone: meta.tone,
         body: seat
-          ? t("{0} 预承诺置信度 {1}", seat, confidence)
+          ? updateCondition
+            ? t("{0} 预承诺置信度 {1}，更新条件：{2}", seat, confidence, updateCondition)
+            : t("{0} 预承诺置信度 {1}", seat, confidence)
           : t("预承诺置信度 {0}", confidence),
       };
     }
     case "CHALLENGE_RAISED": {
-      const statement = String(payload.statement ?? "");
+      const statement = replaceClaimUuids(
+        humanizeText(String(payload.statement ?? "")),
+        labels,
+      );
       const fatal = payload.is_fatal === true ? t("（致命）") : "";
+      const claimId =
+        typeof payload.claim_id === "string" ? payload.claim_id : null;
+      // 质询必须说明「针对什么」——claim_id 若指名一个已知主张，换成
+      // 「主张：…」，让质询与被质询者之间有来有回（round-8 用户反馈）。
+      const target = claimId
+        ? `，针对 ${replaceClaimUuids(claimId, labels)}`
+        : "";
       return {
         meta: meta.label,
         tone: meta.tone,
         body: seat
-          ? t("{0} 质询：{1}{2}", seat, statement, fatal)
-          : t("质询：{0}{1}", statement, fatal),
+          ? t("{0} 质询：{1}{2}{3}", seat, statement, fatal, target)
+          : t("质询：{0}{1}{2}", statement, fatal, target),
       };
     }
     case "FINAL_JUDGMENT": {
@@ -95,8 +140,16 @@ function actionSummary(
           : t("复判「{0}」置信度 {1}{2}", judgment, confidence, dissent),
       };
     }
-    case "CONFIDENCE_UPDATED":
-      return { meta: meta.label, tone: meta.tone, body: String(payload.confidence_delta_note ?? "") };
+    case "CONFIDENCE_UPDATED": {
+      // 置信度调整的说明（如「作为对 {claim} 的分支主张被提出」）里的
+      // UUID 换成主张文本；内部标识串（如 ACQUISITION:no_tool_provider）
+      // 换成中文。识别不出的 UUID 保留原样。
+      const note = replaceClaimUuids(
+        humanizeText(String(payload.confidence_delta_note ?? "")),
+        labels,
+      );
+      return { meta: meta.label, tone: meta.tone, body: note };
+    }
     case "EVIDENCE_REQUESTED":
       return {
         meta: meta.label,
@@ -107,7 +160,7 @@ function actionSummary(
       // 缺席原因来自账本事件本身（worker 记录的真实失败原因，如连接
       // 错误、401、schema 修复失败）——「席位缺席」必须说明缺席为什么，
       // 否则研究者无法区分「没有配置模型」与「模型调用失败」。
-      const reason = String(payload.reason ?? "");
+      const reason = humanizeText(String(payload.reason ?? ""));
       const clipped = reason.length > 90 ? `${reason.slice(0, 90)}…` : reason;
       const phase = String(payload.phase ?? "");
       return {
@@ -314,6 +367,8 @@ export function LiveView({
   taskId,
   seats,
   queue,
+  claims,
+  graph,
   onGuidanceSubmitted,
 }: {
   events: LedgerEvent[];
@@ -325,6 +380,9 @@ export function LiveView({
   seats?: SeatSummary[];
   /** 队列可见性：为什么「已入队」却迟迟不开始（round-6）。 */
   queue?: QueueInfo | null;
+  /** 已确认主张与证据图，用于把进展里的 UUID 换成可读的「主张：…」。 */
+  claims?: ConfirmedClaim[];
+  graph?: EvidenceGraph | null;
   onGuidanceSubmitted?: () => void;
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
@@ -336,14 +394,18 @@ export function LiveView({
     () => Object.values(streams).some((entry) => entry.running),
     [streams],
   );
+  const claimLabels = useMemo(
+    () => buildClaimLabels(claims ?? [], graph ?? { nodes: [], edges: [] }),
+    [claims, graph],
+  );
   const actions = useMemo(
     () =>
       events
-        .map(actionSummary)
+        .map((event) => actionSummary(event, claimLabels))
         .filter(
           (item): item is { meta: string; tone: string; body: string } => item !== null,
         ),
-    [events],
+    [events, claimLabels],
   );
 
   // 检索与文献：一次检索（tool_call）与其结果（tool_result）配对成一个
