@@ -512,6 +512,8 @@ export const en: Record<string, string> = {
   "移除 {0}": "Remove {0}",
   "论文审查必须先上传至少一篇论文，才能开始审查。": "Paper review requires at least one uploaded paper before it can start.",
   "论文审查必须先上传至少一篇论文，才能开始。请先选择待审查的文件。": "Paper review requires at least one uploaded paper to start. Please select the paper(s) to review first.",
+  "已上传的待审查论文": "Uploaded papers to review",
+  "论文上传未成功，请点下方「返回修改问题」回到第一步重新选择待审查论文。": "The paper upload did not succeed. Click \"Back to edit question\" below to return to the first step and re-select the paper(s) to review.",
   "本文由系统依据议会产出模板整合（综合模型调用{0}）。整合结论完整，但行文为系统生成，建议结合 Research Brief 与审计轨迹复核。": "This paper was assembled by the system from the council outputs (the synthesis model call {0}). The integrated conclusion is complete, but the prose is system-generated -- cross-check against the Research Brief and audit trail.",
   "补充提问": "Follow-up",
   "完成后追问模型": "Ask the model after completion",

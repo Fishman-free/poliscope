@@ -221,6 +221,26 @@ Workflow: describe the research question in natural language → the Skill gener
 
 The full CLI reference (including `pause`/`resume`, `council-preview`/`council-guidance`, `export-docs`) lives in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
+### 4.7 Access Troubleshooting: If You Cannot Open the Site
+
+**Symptom: the browser reports "This site can't be reached", "the connection was closed", or "the connection is not secure".**
+
+Modern browsers (especially Edge / Chrome) enable **"Automatically use HTTPS"** by default: typing `http://39.96.197.238/` in the address bar gets silently upgraded to `https://39.96.197.238/`. If the deployment only exposes port **80 (HTTP)** with no **443 (HTTPS)** configured, that upgrade fails — the page appears "unreachable" or the frontend fails to load.
+
+**Opening the homepage from GitHub but the frontend does not render** has the same root cause: the HTML shell arrives, but in-page `/api` requests are still treated as HTTPS by the browser, so all data loading fails.
+
+**Solutions (pick one):**
+
+1. **(Recommended) Deployer enables HTTPS on the server**:
+   - With a domain: set `POLISCOPE_SITE_ADDRESS` in `.env` to your domain; Caddy automatically obtains a trusted Let's Encrypt certificate, and `https://your-domain/` works in every browser.
+   - Without a domain (public-IP direct connection): add `tls internal` to `deploy/caddy/Caddyfile` (self-signed local CA), set `POLISCOPE_SITE_ADDRESS` to `https://<public-IP>`, and open TCP 443 in the security group. A self-signed cert makes browsers show a "connection is not secure" warning — click "Advanced → Continue" to proceed; that is normal for self-signed certs, not a fault. Note: **Chromium/Edge may refuse a self-signed cert for a bare IP with `ERR_SSL_PROTOCOL_ERROR` and offer no "Continue" option** (Chromium's trust logic for IP addresses); in that case use a domain or Cloudflare instead.
+2. **Temporary workaround (no server change)**: manually change `https://` back to `http://` in the address bar, or disable Edge's "Automatically use HTTPS" (Settings → Privacy, search and services), or use an InPrivate window.
+3. **Front with Cloudflare or another reverse proxy**: a free domain + automatic HTTPS back to your port 80, with no server change.
+
+**Symptom: `http://localhost:8080/` cannot be opened.**
+
+Check two things: `grep POLISCOPE_SITE_HOST_PORT .env` (the actual port) and `docker compose ps caddy` (the Caddy container binding). If port 80 is taken by another project, the real address is `http://localhost:<PORT>/`. After editing `deploy/caddy/Caddyfile`, you must **`docker compose up -d --build caddy`** — the Caddyfile is baked into the image and won't take effect without a rebuild.
+
 ---
 
 ## 5. Be Honest with Its Conclusions

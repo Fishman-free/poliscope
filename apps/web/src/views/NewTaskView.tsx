@@ -428,50 +428,70 @@ export function NewTaskView({
           </ul>
         )}
 
-        <section className="newtask__upload">
-          <h4>
-            {mode === "paper_review"
-              ? t("上传待审查论文（必填，单个不超过 20 MB）")
-              : t("补充 PDF 文献（可选，单个不超过 20 MB）")}
-          </h4>
-          <p className="newtask__upload-hint">
-            {mode === "paper_review"
-              ? t(
-                  "支持 PDF / DOCX / PPTX / XLSX / HTML / TXT / MD / CSV。论文全文会交给议会核验并按 Level A 进入证据图，审查报告将指出其中不严谨、证据不充分之处并给出改进建议。",
-                )
-              : t(
-                  "上传的 PDF 会作为用户提供的证据，交给议会做全文核验后按 Level A 进入证据图。",
+        {/* round-9 修复：论文审查的上传入口只在第一步（question 阶段）出现，
+            第二步（claims 阶段）不再重复展示文件选择框——第一步已选的文件已
+            在建任务时全部上传。此处只展示已上传的论文清单；若上传意外失败
+            （uploads 为空）则提示返回第一步重新选择，而不是让用户在第二步
+            再传一次（会与「先选文件再建任务」的入口设计矛盾）。 */}
+        {mode === "paper_review" ? (
+          <section className="newtask__upload">
+            <h4>{t("已上传的待审查论文")}</h4>
+            {uploads.length > 0 ? (
+              <ul className="newtask__upload-list">
+                {uploads.map((item, index) => (
+                  <li key={index}>
+                    {t(
+                      `${item.name}（${(item.size / 1024).toFixed(0)} KB，已加入证据）`,
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="newtask__upload-required">
+                {t(
+                  "论文上传未成功，请点下方「返回修改问题」回到第一步重新选择待审查论文。",
                 )}
-          </p>
-          <input
-            type="file"
-            accept={UPLOAD_ACCEPT}
-            multiple
-            disabled={submitting || uploading}
-            onChange={(event) => handleFiles(event.target.files)}
-          />
-          {mode === "paper_review" && uploads.length === 0 && !uploading ? (
-            <p className="newtask__upload-required">
-              {t("论文审查任务必须至少上传一篇论文，才能确认并开始研究。")}
+              </p>
+            )}
+            {uploadError ? (
+              <p className="newtask__error" role="alert">
+                {uploadError}
+              </p>
+            ) : null}
+          </section>
+        ) : (
+          <section className="newtask__upload">
+            <h4>{t("补充 PDF 文献（可选，单个不超过 20 MB）")}</h4>
+            <p className="newtask__upload-hint">
+              {t(
+                "上传的 PDF 会作为用户提供的证据，交给议会做全文核验后按 Level A 进入证据图。",
+              )}
             </p>
-          ) : null}
-          {uploads.length > 0 ? (
-            <ul className="newtask__upload-list">
-              {uploads.map((item, index) => (
-                <li key={index}>
-                  {t(
-                    `${item.name}（${(item.size / 1024).toFixed(0)} KB，已加入证据）`,
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {uploadError ? (
-            <p className="newtask__error" role="alert">
-              {uploadError}
-            </p>
-          ) : null}
-        </section>
+            <input
+              type="file"
+              accept={UPLOAD_ACCEPT}
+              multiple
+              disabled={submitting || uploading}
+              onChange={(event) => handleFiles(event.target.files)}
+            />
+            {uploads.length > 0 ? (
+              <ul className="newtask__upload-list">
+                {uploads.map((item, index) => (
+                  <li key={index}>
+                    {t(
+                      `${item.name}（${(item.size / 1024).toFixed(0)} KB，已加入证据）`,
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {uploadError ? (
+              <p className="newtask__error" role="alert">
+                {uploadError}
+              </p>
+            ) : null}
+          </section>
+        )}
 
         {error ? (
           <p className="newtask__error" role="alert">
