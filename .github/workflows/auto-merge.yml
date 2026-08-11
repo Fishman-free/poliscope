@@ -12,9 +12,16 @@ permissions:
 jobs:
   auto-approve-and-merge:
     runs-on: ubuntu-latest
-    # 建议加上过滤条件（例如指定触发者、指定 Label，或过滤 Dependabot 等）
-    # 如果希望对所有 PR 生效，可以去掉 if 条件
-    if: github.actor == 'dependabot[bot]' || contains(github.event.pull_request.labels.*.name, 'automerge')
+    # 自动合并范围：
+    # - 仓库 collaborator（有写权限的协作者）发起的 PR
+    # - dependabot 发起的 PR
+    # - 显式打了 automerge 标签的 PR
+    # 外部 fork 的陌生 PR（author_association 非 COLLABORATOR）不自动合并，
+    # 需人工审批——这是避免任何外部提交被直接合进主干的安全兜底。
+    if: >-
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.actor == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'automerge')
 
     steps:
       # 1. 自动 Approve 该 PR
