@@ -18,7 +18,7 @@
 import { flushSync } from "react-dom";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout } from "./api/client";
+import { cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout } from "./api/client";
 import type { ResearchBrief, TaskSummary } from "./api/types";
 import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
@@ -148,6 +148,18 @@ interface QueueInfo {
   ahead: number;
   running: { question: string; minutes: number } | null;
 }
+
+/** Statuses a task can be stopped from (round-10 「停止研究」). A terminal
+ * task is already over; a draft is still being shaped by the researcher.
+ * These are the ones where "stop it now" has a real meaning. */
+const STOPPABLE_STATUSES = new Set([
+  "QUEUED",
+  "RUNNING",
+  "DEGRADED_RUNNING",
+  "PAUSED",
+  "AWAITING_COUNCIL_INPUT",
+  "REPORTING",
+]);
 
 function computeQueue(
   tasks: TaskSummary[],
@@ -340,6 +352,12 @@ export function App() {
       snapshot.task.status === "COMPLETED_WITH_GAPS" ||
       snapshot.task.status === "FAILED";
     if (terminal) setTab("paper");
+    // CANCELLED (round-10): the researcher just stopped the run, so they are
+    // watching it go quiet -- a paper tab over a half-run council would be
+    // empty. Leave the current tab where it is.
+    else if (snapshot.task.status === "CANCELLED") {
+      return;
+    }
     // The shell's initial tab is "brief"; a still-running task must move the
     // researcher to the live view, not leave them reading an empty brief.
     else if (tab === "brief") setTab("live");
@@ -382,6 +400,33 @@ export function App() {
     if (deletedId === taskId) {
       setTaskId(null);
       window.history.replaceState({}, "", "/workspace");
+    }
+  }
+
+  /** 「新建研究」：回到首页，重新打开一个空白的新任务表单。 */
+  function handleNewResearch() {
+    withTransition(() => {
+      setTaskId(null);
+      window.history.replaceState({}, "", "/workspace");
+      setHomeView("newtask");
+    });
+  }
+
+  const [cancelling, setCancelling] = useState(false);
+
+  /** 「停止研究」（round-10）：停止当前正在运行或排队的任务。 */
+  async function handleStopResearch() {
+    if (!taskId || cancelling) return;
+    setCancelling(true);
+    try {
+      await cancelTask(taskId);
+      // 状态由 stream / snapshot 驱动刷新；这里立即拉一次让界面快速反映。
+      await refresh();
+    } catch (cause) {
+      // 停止失败保留现状，不把界面推进到一个没发生的状态。
+      console.error(cause);
+    } finally {
+      setCancelling(false);
     }
   }
 
@@ -568,6 +613,32 @@ export function App() {
                         </span>
                       </span>
                     ) : null}
+                  </div>
+                  <div className="app__task-actions">
+                    {/* 「停止研究」(round-10): only a task that can still move
+                        forward can be stopped -- a terminal task is already
+                        over, and a draft is still being shaped by the
+                        researcher, not running. */}
+                    {snapshot &&
+                    STOPPABLE_STATUSES.has(snapshot.task.status) ? (
+                      <button
+                        type="button"
+                        className="app__stop"
+                        onClick={handleStopResearch}
+                        disabled={cancelling}
+                        title={t("停止研究：当前任务的议会运行将停止")}
+                      >
+                        {cancelling ? t("停止中…") : t("停止研究")}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="app__new"
+                      onClick={handleNewResearch}
+                      title={t("新建研究：回到首页开始一个全新的任务")}
+                    >
+                      {t("新建研究")}
+                    </button>
                   </div>
                 </div>
 

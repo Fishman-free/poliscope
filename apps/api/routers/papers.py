@@ -34,9 +34,16 @@ from packages.research.service import ResearchService
 router = APIRouter()
 
 TASK_NOT_FOUND = "unknown task"
-EMPTY_FILE = "uploaded file is empty"
-UNPARSEABLE = "uploaded file cannot be read as text"
-TOO_LARGE = "uploaded file exceeds the 20 MB limit"
+EMPTY_FILE = "上传的文件为空，请重新选择文件"
+UNPARSEABLE = "无法读取上传的文件"
+TOO_LARGE = "上传的文件超过 20 MB 上限"
+# Shown as a suffix on a refused upload so the researcher knows the failure
+# is about the file, not about the system (round-10 report: "document closed
+# or encrypted" read as a broken uploader). Appended after UNPARSEABLE.
+UNPARSEABLE_HINT = (
+    "如果这是 PDF 且设置了打开密码，请先在本地解密（「打印为 PDF」或阅读器中"
+    "移除密码）后再上传；只读权限加密的 PDF 可以直接上传。"
+)
 
 # Same ceiling as the nginx `client_max_body_size 20m;` in apps/web/nginx.conf:
 # nginx rejects the request before it reaches us, this check is the
@@ -90,9 +97,14 @@ async def upload_paper(
     try:
         extract_text(content, filename)
     except InvalidDocument as error:
+        # error.reason already carries a concrete, user-facing reason (e.g. the
+        # password-protected-PDF message from packages/papers/parser.py); the
+        # hint tells the researcher the fix without burying the specific cause.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"{UNPARSEABLE}：{error.reason}",
+            detail=(
+                f"{UNPARSEABLE}：{error.reason}。{UNPARSEABLE_HINT}"
+            ),
         ) from error
 
     suffix, content_type = file_type(content, filename)

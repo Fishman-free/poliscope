@@ -219,3 +219,61 @@ async def test_budget_exhaustion_takes_priority_over_checkpoint_halt() -> None:
     assert report.phases_run == ()
     assert report.phases_skipped == PHASE_SEQUENCE
     assert report.stop_reason.value == "BUDGET_EXHAUSTED"
+
+
+async def test_cancel_check_halts_run_with_cancelled_status() -> None:
+    """A researcher's stop request halts the run at a phase boundary (round-10).
+
+    The cancel-check closure returns True from the second phase onward, so the
+    first phase runs and the second is never reached. The report must say
+    exactly which phases completed and carry CANCELLED as a terminal status --
+    a stop is a redirection, not a failure, so COMPLETED_WITH_GAPS and FAILED
+    would both be the wrong verdict.
+    """
+    sink = _FakeEventSink()
+    budget = BudgetTracker(limits=_GENEROUS_BUDGET)
+    # The cancel check runs *before* each phase. Return False for the first
+    # phase so PRECOMMITMENT runs to completion, then True so ACQUISITION and
+    # everything after it never starts.
+    checks = 0
+
+    async def cancel_check() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks > 1
+
+    orchestrator = CouncilOrchestrator(
+        ledger=sink, budget=budget, cancel_check=cancel_check
+    )
+    task_id = uuid4()
+
+    report = await orchestrator.run(task_id=task_id, question="does X cause Y?")
+
+    assert report.final_status == TaskStatus.CANCELLED
+    assert report.stop_reason.value == "CANCELLED"
+    assert report.phases_run == (TaskPhase.PRECOMMITMENT,)
+    # ACQUISITION and everything after it never ran: no PHASE_STARTED event
+    # carries any phase after PRECOMMITMENT.
+    started_keys = [key for key in sink.recorded_keys() if key.endswith(":started")]
+    assert started_keys == ["PRECOMMITMENT:started"]
+    # PRECOMMITMENT's own events were appended exactly once.
+    assert sink.recorded_keys().count("PRECOMMITMENT:started") == 1
+
+
+async def test_cancel_check_never_fires_returns_normal_completion() -> None:
+    """No stop request -> the cancel channel changes nothing."""
+    sink = _FakeEventSink()
+    budget = BudgetTracker(limits=_GENEROUS_BUDGET)
+
+    async def cancel_check() -> bool:
+        return False
+
+    orchestrator = CouncilOrchestrator(
+        ledger=sink, budget=budget, cancel_check=cancel_check
+    )
+
+    report = await orchestrator.run(task_id=uuid4(), question="does X cause Y?")
+
+    assert report.phases_run == PHASE_SEQUENCE
+    assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
+    assert report.stop_reason.value == "CONTINUE"

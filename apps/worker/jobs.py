@@ -490,10 +490,18 @@ async def _deliberate_impl(
     # reach every model call of the run -- the council's prompts and the
     # finding extractor alike (round-5 request).
     skills = await _skills_context(session, task)
+    repository = ResearchRepository(session)
     orchestrator = CouncilOrchestrator(
         ledger=SqlEventLedger(session),
         budget=budget,
         deliberator=deliberator,
+        # Round-10 「停止研究」: the researcher's stop request lives in
+        # task_cancel_requests (the API writes it because the worker holds this
+        # task's row locked for the whole run). Polled between phases; on a
+        # request the orchestrator halts early with CANCELLED. The closure
+        # reuses this session -- the same one the run's ledger appends to, so
+        # the check and the events it stops share one transaction.
+        cancel_check=lambda: repository.check_cancel_request(task_id),
         # Process memory, per CLAUDE.md 6. It is created per run rather than per
         # process so one task's recall can never leak into another's.
         memory=CouncilMemory(create_memory_adapter(), task_id),
@@ -616,6 +624,11 @@ async def _deliberate_impl(
     else:
         await repository.set_checkpoint(task_id, None)
     await repository.set_status(task_id, report.final_status)
+    # Round-10: a CANCELLED terminal status means this run *was* stopped by a
+    # cancel request -- clear it so a later re-research starts clean, and so a
+    # stray request row can never stop a future run of the same task.
+    if report.final_status == TaskStatus.CANCELLED:
+        await repository.clear_cancel_request(task_id)
 
     # The synthesis step only runs once the council reached a terminal
     # status: a task parked at the AWAITING_COUNCIL_INPUT checkpoint has not

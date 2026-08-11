@@ -5,14 +5,15 @@
  * 任务实际运行的模型 + 该任务的研究简报（已确认主张、已采纳发现、盲点、
  * 异议、局限）作为上下文回答，因此回答锚定在这次研究上，而不是一个对
  * 研究一无所知的陌生模型的新鲜意见（CLAUDE.md 2：证据优先于流畅文本）。
+ * 论文审查任务还会把上传论文的理解与全文注入上下文（round-10）。
  *
- * 对话框形态：上方滚动问答列表，下方输入框 + 发送。回答非流式（YAGNI）；
- * 一次一问一答，历史保留在本会话组件状态里。
+ * 对话框形态：上方滚动问答列表，下方输入框 + 发送。回答流式（round-10）：
+ * delta 逐字到达并就地追加，无需等待完整答案。
  */
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { followUp } from "../api/client";
+import { followUpStream } from "../api/client";
 import { t } from "../i18n";
 
 import "./FollowUpView.css";
@@ -59,24 +60,32 @@ export function FollowUpView({
     if (!text || sending || !terminal) return;
     setSending(true);
     setError(null);
-    // 先渲染一条 pending 的追问，让研究者看到问题已发出。
+    // 先渲染一条 pending 的追问，让研究者看到问题已发出；流式 delta 会
+    // 就地追加到这条 answer。
     setExchanges((prev) => [
       ...prev,
-      { question: text, answer: "", ok: false, pending: true },
+      { question: text, answer: "", ok: true, pending: true },
     ]);
     setQuestion("");
     try {
-      const result = await followUp(taskId, text);
+      await followUpStream(taskId, text, (delta) => {
+        setExchanges((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last && last.pending) {
+            next[next.length - 1] = {
+              ...last,
+              answer: last.answer + delta,
+            };
+          }
+          return next;
+        });
+      });
       setExchanges((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
         if (last && last.pending) {
-          next[next.length - 1] = {
-            question: last.question,
-            answer: result.answer,
-            ok: result.available,
-            pending: false,
-          };
+          next[next.length - 1] = { ...last, pending: false };
         }
         return next;
       });

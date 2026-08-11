@@ -7,6 +7,10 @@ class StopReason(StrEnum):
     CONTINUE = "CONTINUE"
     EVIDENCE_SATURATION = "EVIDENCE_SATURATION"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    # The researcher requested a stop (round-10 「停止研究」). Read between
+    # phases from task_cancel_requests, so a stop lands at a phase boundary
+    # rather than mid-round.
+    CANCELLED = "CANCELLED"
 
 
 class StopDecision:

@@ -20,8 +20,8 @@ from packages.papers.parser import PageText
 from packages.papers.understanding import (
     MAX_PAPER_TEXT_CHARS,
     _build_user_prompt,
-    _load_paper_text,
     _render_text_blocks,
+    load_paper_text,
 )
 from packages.reports.contracts import PaperReviewReport
 from packages.reports.paper_markdown import render_paper_markdown
@@ -105,7 +105,7 @@ async def test_load_paper_text_extracts_uploaded_pdf(tmp_path: Path) -> None:
     )
     session = _FakeScalarSession([(stored.object_key, "paper.pdf")])
 
-    text, truncated, error = await _load_paper_text(
+    text, truncated, error = await load_paper_text(
         session,  # type: ignore[arg-type]
         store,
         [uuid4()],
@@ -121,7 +121,7 @@ async def test_load_paper_text_missing_object_records_gap(tmp_path: Path) -> Non
     store = PrivateObjectStore(root=str(tmp_path))
     session = _FakeScalarSession([("tasks/never-written/abc.pdf", "paper.pdf")])
 
-    text, truncated, error = await _load_paper_text(
+    text, truncated, error = await load_paper_text(
         session,  # type: ignore[arg-type]
         store,
         [uuid4()],
@@ -144,7 +144,7 @@ async def test_load_paper_text_truncates_overlong_text(tmp_path: Path) -> None:
     )
     session = _FakeScalarSession([(stored.object_key, "paper.txt")])
 
-    text, truncated, error = await _load_paper_text(
+    text, truncated, error = await load_paper_text(
         session,  # type: ignore[arg-type]
         store,
         [uuid4()],

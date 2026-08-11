@@ -127,7 +127,7 @@ def _build_user_prompt(
     return sanitize_export("\n".join(lines))
 
 
-async def _load_paper_text(
+async def load_paper_text(
     session: AsyncSession,
     object_store: PrivateObjectStore,
     object_ids: Sequence[UUID],
@@ -223,7 +223,7 @@ async def understand_paper(
         language = detect_output_language(task.question)
 
     object_ids = (task.user_evidence or {}).get("pdf_object_ids") or ()
-    paper_text, truncated, error = await _load_paper_text(
+    paper_text, truncated, error = await load_paper_text(
         session, object_store, [canonical_uuid(oid) for oid in object_ids]
     )
     if error is not None:
@@ -376,5 +376,6 @@ __all__ = [
     "PAPER_UNDERSTANDING_FAILED",
     "PaperUnderstandingResult",
     "load_paper_understanding",
+    "load_paper_text",
     "understand_paper",
 ]

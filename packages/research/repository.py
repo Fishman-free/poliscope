@@ -18,7 +18,8 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, select, update
+from sqlalchemy import CursorResult, delete, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.epistemo.contracts import TaskStatus
@@ -28,6 +29,7 @@ from packages.research.models import (
     AtomicClaimModel,
     ResearchScopeModel,
     ResearchTaskModel,
+    TaskCancelRequestModel,
 )
 
 CLAIM_SUGGESTED = "SUGGESTED"
@@ -357,4 +359,37 @@ class ResearchRepository:
             existing_ids.append(object_id_str)
         current["pdf_object_ids"] = existing_ids
         row.user_evidence = current
+        await self._session.flush()
+
+    async def request_cancel(self, task_id: UUID, requested_by: str) -> None:
+        """Record a stop request for a task, idempotently.
+
+        The worker holds a RUNNING task's row locked for its whole run, so the
+        API cannot flip the status directly (the write would block). This is
+        the side channel the worker polls between phases; a second request for
+        the same task is a no-op via the unique constraint.
+        """
+        await self._session.execute(
+            pg_insert(TaskCancelRequestModel)
+            .values(task_id=task_id, requested_by=requested_by)
+            .on_conflict_do_nothing(index_elements=["task_id"])
+        )
+        await self._session.flush()
+
+    async def check_cancel_request(self, task_id: UUID) -> bool:
+        """Whether a stop request exists for this task (worker, between phases)."""
+        row = await self._session.scalar(
+            select(TaskCancelRequestModel.task_id).where(
+                TaskCancelRequestModel.task_id == task_id
+            )
+        )
+        return row is not None
+
+    async def clear_cancel_request(self, task_id: UUID) -> None:
+        """Remove a stop request once the task reached a terminal status."""
+        await self._session.execute(
+            delete(TaskCancelRequestModel).where(
+                TaskCancelRequestModel.task_id == task_id
+            )
+        )
         await self._session.flush()

@@ -155,6 +155,7 @@ PROCESS_TERMINAL_STATUSES = frozenset(
         TaskStatus.COMPLETED.value,
         TaskStatus.COMPLETED_WITH_GAPS.value,
         TaskStatus.FAILED.value,
+        TaskStatus.CANCELLED.value,
     }
 )
 

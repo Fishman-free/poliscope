@@ -31,6 +31,11 @@ class TaskStatus(StrEnum):
     COMPLETED_WITH_GAPS = "COMPLETED_WITH_GAPS"
     PAUSED = "PAUSED"
     FAILED = "FAILED"
+    # The researcher stopped the run on purpose (round-10 「停止研究」). A
+    # terminal status like the others, so the report shows what ran before the
+    # stop and the worker never re-claims it. Distinct from FAILED: nothing
+    # broke, the human redirected.
+    CANCELLED = "CANCELLED"
 
 
 class TaskPhase(StrEnum):
@@ -49,6 +54,7 @@ TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
         TaskStatus.COMPLETED,
         TaskStatus.COMPLETED_WITH_GAPS,
         TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
     }
 )
 

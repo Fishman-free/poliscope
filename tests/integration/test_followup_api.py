@@ -169,3 +169,86 @@ async def test_followup_rejects_empty_question(
         FOLLOWUP_PATH.format(task_id=task_id), json={"question": "   "}
     )
     assert response.status_code == 422
+
+
+async def test_followup_stream_returns_sse_deltas(
+    api_client: Any,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-10 streaming follow-up: the same grounding, delivered as deltas."""
+    task_id = await _seed_completed_task(app_sessions, UUID(account["id"]))
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self._lines = [
+                ("data: " + '{"choices":[{"delta":{"content":"第"}}]}').encode("utf-8"),
+                (
+                    "data: " + '{"choices":[{"delta":{"content":"一段"}}]}'
+                ).encode("utf-8"),
+                b"data: [DONE]",
+            ]
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def __aenter__(self) -> _FakeStream:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def aiter_lines(self) -> Any:
+            async def _gen() -> Any:
+                for line in self._lines:
+                    yield line.decode("utf-8")
+
+            return _gen()
+
+    class _FakeStreamClient:
+        def __init__(self) -> None:
+            self.posts: list[tuple[str, dict[str, object]]] = []
+
+        async def __aenter__(self) -> _FakeStreamClient:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def stream(self, method: str, path: str, json: dict[str, object]) -> Any:
+            self.posts.append((path, json))
+            return _FakeStream()
+
+    fake = _FakeStreamClient()
+    monkeypatch.setattr(
+        "apps.api.routers.tasks.httpx.AsyncClient", lambda **kwargs: fake
+    )
+
+    response = await api_client.post(
+        f"/api/tasks/{task_id}/followup/stream", json={"question": "结论？"}
+    )
+
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    body = response.text
+    assert "第" in body
+    assert "一段" in body
+    assert "[DONE]" in body
+    # The request streamed and carried the task's own model name.
+    assert fake.posts
+    _path, request_body = fake.posts[0]
+    assert request_body["stream"] is True
+    assert request_body["model"] == "qwen3.8-max"
+
+
+async def test_followup_stream_rejects_unfinished_task(
+    api_client: Any,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+) -> None:
+    task_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
+    response = await api_client.post(
+        f"/api/tasks/{task_id}/followup/stream", json={"question": "结论？"}
+    )
+    assert response.status_code == 409

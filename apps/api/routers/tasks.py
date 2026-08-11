@@ -7,14 +7,21 @@ the council will investigate, which is the control point CLAUDE.md 2 requires.
 
 from __future__ import annotations
 
+import json
 import os
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 
-from apps.api.dependencies import CurrentUserDep, SessionDep
+from apps.api.dependencies import (
+    CurrentUserDep,
+    ObjectStoreDep,
+    SessionDep,
+)
 from apps.api.routers.workspace import _seats
 from apps.api.schemas import (
     ConfirmClaimsRequest,
@@ -32,6 +39,8 @@ from packages.models.free_trial import (
     FREE_TRIAL_LIMIT,
 )
 from packages.models.settings import ModelSettingsRepository, StoredModelSettings
+from packages.papers.object_store import PrivateObjectStore
+from packages.papers.understanding import load_paper_text, load_paper_understanding
 from packages.reports.json_export import to_dict
 from packages.reports.service import ReportService
 from packages.research.contracts import ResearchContract, TaskModelConfig
@@ -421,20 +430,75 @@ def _followup_context(brief: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-@router.post("/{task_id}/followup")
-async def follow_up(
+async def _followup_paper_context(
+    session: SessionDep,
+    object_store: PrivateObjectStore,
+    task: StoredTask,
+) -> str:
+    """The uploaded paper's understanding and full text, for paper-review follow-ups.
+
+    Round-10 report: a researcher asked a paper-review task "does the paper's
+    sample support its conclusion?" and the follow-up model answered "I cannot
+    see the paper" -- the follow-up context carried only the Research Brief
+    (claims, findings, blindspots) and never the paper itself. A follow-up
+    about an uploaded paper must be grounded in that paper, so this injects
+    the machine's reading (the same ``PAPER_UNDERSTANDING_CAPTURED`` event the
+    council used) plus the extracted text, explicitly labelled as the uploaded
+    paper, never as the council's verdict.
+    """
+    if task.task_type != "paper_review":
+        return ""
+    object_ids = (task.user_evidence or {}).get("pdf_object_ids") or ()
+    if not object_ids:
+        return "（论文审查任务，但未找到已上传论文的对象记录。）"
+    understanding = await load_paper_understanding(session, task.task_id)
+    paper_text, truncated, error = await load_paper_text(
+        session, object_store, [UUID(str(oid)) for oid in object_ids]
+    )
+    lines: list[str] = ["### 研究者上传的论文全文（Level A 证据）"]
+    if understanding:
+        title = understanding.get("title")
+        if isinstance(title, str) and title:
+            lines.append(f"标题：{title}")
+        research_question = understanding.get("research_question")
+        if isinstance(research_question, str) and research_question:
+            lines.append(f"论文研究问题：{research_question}")
+        main_claims = understanding.get("main_claims")
+        if isinstance(main_claims, (list, tuple)):
+            lines.append("论文主要观点（机器摘要）：")
+            for claim in main_claims:
+                # Mapping, not dict: the event payload is JSONB (plain dict on
+                # read), but a checkpoint-resumed path can hand back FrozenDict.
+                if isinstance(claim, Mapping):
+                    statement = claim.get("statement", "?")
+                    support = claim.get("supporting_evidence")
+                    if isinstance(support, (list, tuple)) and support:
+                        lines.append(
+                            f"- {statement}（论文佐证：{'；'.join(map(str, support))}）"
+                        )
+                    else:
+                        lines.append(f"- {statement}（论文未提供可辨识佐证）")
+    if error:
+        lines.append(f"（论文全文未能提取：{error}）")
+    elif paper_text:
+        lines.append(f"## 论文文本\n\n{paper_text[:MAX_PAPER_FOLLOWUP_CHARS]}")
+        if truncated:
+            lines.append("\n（论文过长，此处仅引用前一部分。）")
+    return "\n".join(lines)
+
+
+async def _prepare_followup(
     task_id: UUID,
     request: FollowUpRequest,
     session: SessionDep,
-    current_user: CurrentUserDep,
-) -> dict[str, Any]:
-    """Answer a post-completion question about a finished task (round-9).
+    current_user: StoredUser,
+    object_store: PrivateObjectStore,
+) -> tuple[str, str, str, str, str] | None:
+    """Validate a follow-up and build its prompt; ``None`` when no model gateway.
 
-    Only a terminal task may be asked: the researcher must see the integrated
-    conclusion first, and a running task has no settled state to answer from.
-    The answer is grounded in the Research Brief (confirmed claims, findings,
-    blindspots, dissents, limitations) and threaded to the same model that ran
-    the research. Never the API key, never a fresh-model opinion.
+    Shared by the plain and streaming follow-up endpoints so the two cannot
+    drift apart on what grounds the answer (round-10: the streaming path must
+    carry the same paper context the non-streaming one does).
     """
     question = request.question.strip()
     if not question:
@@ -467,17 +531,17 @@ async def follow_up(
                 env.get("POLISCOPE_MODEL_NAME") or "deepseek-v4-flash",
             )
         else:
-            return {
-                "answer": (
-                    "此任务运行的系统默认模型网关未配置，无法回答补充提问。"
-                    "请在右侧模型设置中配置模型后重试。"
-                ),
-                "available": False,
-            }
+            return None
 
     base_url, api_key, model_name = endpoint
     brief = to_dict(await ReportService(session).build(task_id))
     context = _followup_context(brief)
+    # For a paper-review task, ground the answer in the paper itself too --
+    # round-10 report: without it the follow-up model answers "I cannot see
+    # the uploaded paper" to any question about the paper's content.
+    paper_context = await _followup_paper_context(
+        session, object_store, task
+    )
     language = detect_output_language(task.question)
 
     system_prompt = (
@@ -490,9 +554,42 @@ async def follow_up(
     user_prompt = (
         f"研究问题：{task.question}\n\n"
         f"议会产出：\n{context}\n\n"
+        f"{paper_context}\n\n"
         f"研究者的追问：{question}\n\n"
         "请给出清晰、准确的回答。"
     )
+    return base_url, api_key, model_name, system_prompt, user_prompt
+
+
+@router.post("/{task_id}/followup")
+async def follow_up(
+    task_id: UUID,
+    request: FollowUpRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    object_store: ObjectStoreDep,
+) -> dict[str, Any]:
+    """Answer a post-completion question about a finished task (round-9).
+
+    Only a terminal task may be asked: the researcher must see the integrated
+    conclusion first, and a running task has no settled state to answer from.
+    The answer is grounded in the Research Brief (confirmed claims, findings,
+    blindspots, dissents, limitations) -- and, for a paper-review task, the
+    uploaded paper itself (round-10) -- and threaded to the same model that
+    ran the research. Never the API key, never a fresh-model opinion.
+    """
+    prepared = await _prepare_followup(
+        task_id, request, session, current_user, object_store
+    )
+    if prepared is None:
+        return {
+            "answer": (
+                "此任务运行的系统默认模型网关未配置，无法回答补充提问。"
+                "请在右侧模型设置中配置模型后重试。"
+            ),
+            "available": False,
+        }
+    base_url, api_key, model_name, system_prompt, user_prompt = prepared
 
     request_body = {
         "model": model_name,
@@ -525,6 +622,113 @@ async def follow_up(
         ) from error
 
     return {"answer": answer, "available": True}
+
+
+@router.post("/{task_id}/followup/stream")
+async def follow_up_stream(
+    task_id: UUID,
+    request: FollowUpRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    object_store: ObjectStoreDep,
+    http_request: Request,
+) -> StreamingResponse:
+    """Stream a follow-up answer as SSE (round-10).
+
+    Same grounding as the plain endpoint (Research Brief + the uploaded paper
+    for a paper-review task), delivered as deltas so a long answer renders as
+    it is produced instead of after the fact. The stream is SSE with a final
+    ``[DONE]`` frame (and an ``error:`` frame when the vendor fails mid-way),
+    consumed by ``followUpStream`` on the client; a client that disconnects
+    cancels the upstream httpx stream.
+    """
+    prepared = await _prepare_followup(
+        task_id, request, session, current_user, object_store
+    )
+    if prepared is None:
+        error_frame = (
+            "event: error\ndata: "
+            + json.dumps(
+                {"detail": "模型网关未配置，无法回答补充提问。"}, ensure_ascii=False
+            )
+            + "\n\n"
+        )
+        return StreamingResponse(
+            iter([error_frame]),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    base_url, api_key, model_name, system_prompt, user_prompt = prepared
+
+    async def _event_stream() -> AsyncIterator[str]:
+        request_body = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "max_tokens": 1500,
+            "stream": True,
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=base_url,
+                timeout=120.0,
+                headers={"Authorization": f"Bearer {api_key}"},
+            ) as client, client.stream(
+                "POST", "/chat/completions", json=request_body
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if await http_request.is_disconnected():
+                        return
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line[5:].strip()
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(raw)
+                    except ValueError:
+                        continue
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    text = delta.get("content")
+                    if text:
+                        frame = json.dumps({"text": text}, ensure_ascii=False)
+                        yield f"data: {frame}\n\n"
+            yield "data: [DONE]\n\n"
+        except httpx.HTTPStatusError as error:
+            detail = _followup_error_detail(error.response)
+            message = (
+                f"模型调用失败（HTTP {error.response.status_code}）：{detail}"
+            )
+            frame = json.dumps({"detail": message}, ensure_ascii=False)
+            yield f"event: error\ndata: {frame}\n\n"
+        except (httpx.HTTPError, ValueError) as error:
+            message = f"模型调用失败：{error}"
+            frame = json.dumps({"detail": message}, ensure_ascii=False)
+            yield f"event: error\ndata: {frame}\n\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Without this a buffering reverse proxy holds the whole response
+            # and the stream never reaches the browser.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# How much of an uploaded paper's extracted text a follow-up question is
+# grounded in. The full paper can run far longer than a follow-up answer
+# needs; the context labels the truncation explicitly rather than pretending
+# the whole text was seen (CLAUDE.md 7).
+MAX_PAPER_FOLLOWUP_CHARS = 40_000
 
 
 def _followup_error_detail(response: httpx.Response) -> str:
@@ -592,13 +796,14 @@ async def re_research_task(
     session: SessionDep,
     current_user: CurrentUserDep,
 ) -> dict[str, Any]:
-    """Move a FAILED task back to QUEUED so the worker can claim it again.
+    """Move a FAILED (or CANCELLED) task back to QUEUED for another run.
 
     「重新研究」(round-8): the worker resumes from the stored council
     checkpoint when one exists (already-run phases are not re-run, and their
     ledger events replay as no-ops via stable idempotency keys); a task that
     failed before reaching the checkpoint re-runs its early phases -- an
-    honest restart rather than pretending nothing happened.
+    honest restart rather than pretending nothing happened. Round-10: a
+    researcher-stopped task is re-runnable the same way.
     """
     await _owned_task(session, task_id, current_user)
     try:
@@ -610,6 +815,30 @@ async def re_research_task(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         ) from error
+    return {"task_id": str(task_id), "status": new_status}
+
+
+@router.post("/{task_id}/cancel")
+async def cancel_task(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Stop a running or queued task (round-10 「停止研究」).
+
+    A QUEUED/PAUSED task flips straight to CANCELLED; a RUNNING task's stop is
+    recorded in ``task_cancel_requests`` and the worker halts it between
+    phases. The researcher must never be told "I stopped it" when the worker
+    might still be mid-run, so the endpoint returns the status the task *will*
+    reach, and the UI refreshes from the stream/snapshot.
+    """
+    await _owned_task(session, task_id, current_user)
+    try:
+        new_status = await _service(session).cancel(
+            task_id, requested_by=current_user.username
+        )
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
     return {"task_id": str(task_id), "status": new_status}
 
 

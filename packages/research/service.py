@@ -135,7 +135,7 @@ class ResearchService:
         return TaskStatus.QUEUED
 
     async def re_research(self, task_id: UUID) -> str:
-        """Move a FAILED task back to QUEUED so the worker can claim it again.
+        """Move a FAILED (or CANCELLED) task back to QUEUED for another run.
 
         ``重新研究`` (round-8): a task that ended in FAILED -- e.g. an
         unrecoverable event conflict or a watchdog timeout -- is requeued. The
@@ -143,15 +143,56 @@ class ResearchService:
         phases before it are not re-run, and their ledger events replay as
         no-ops via stable idempotency keys); a task that failed before reaching
         the checkpoint re-runs its early phases, which is an honest restart.
+        Round-10: a CANCELLED task (the researcher stopped it) is re-runnable
+        the same way -- stopping was a redirection, not a verdict on the work.
         """
         task = await self._repository.get_task(task_id)
-        if task.status != TaskStatus.FAILED:
+        if task.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
             raise InvalidPauseState(
-                f"task {task_id} is {task.status}, not {TaskStatus.FAILED}; "
-                "only a failed task can be re-researched"
+                f"task {task_id} is {task.status}, not {TaskStatus.FAILED} or "
+                f"{TaskStatus.CANCELLED}; only a failed or cancelled task can "
+                "be re-researched"
             )
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
+
+    async def cancel(self, task_id: UUID, requested_by: str = "researcher") -> str:
+        """Stop a task: QUEUED/PAUSED directly, RUNNING via the side channel.
+
+        ``停止研究`` (round-10). A QUEUED or PAUSED task is flipped to CANCELLED
+        right here -- nothing holds its row. A RUNNING (or checkpoint-halted)
+        task cannot be flipped (the worker holds the row locked while it runs),
+        so a cancel request is recorded in ``task_cancel_requests``; the worker
+        polls it between phases and halts the run early with CANCELLED as the
+        terminal status. Either way the caller gets a terminal status and the
+        task is never re-claimed.
+        """
+        task = await self._repository.get_task(task_id)
+        if task.status in (TaskStatus.COMPLETED, TaskStatus.COMPLETED_WITH_GAPS,
+                           TaskStatus.FAILED, TaskStatus.CANCELLED):
+            # Already terminal: nothing to stop, report the fact honestly
+            # rather than pretending a new stop happened.
+            return task.status
+        if task.status in (TaskStatus.QUEUED, TaskStatus.PAUSED,
+                           TaskStatus.AWAITING_COUNCIL_INPUT):
+            # Nothing holds these rows: QUEUED/PAUSED wait for a worker,
+            # AWAITING_COUNCIL_INPUT sits parked at the checkpoint (the
+            # worker's transaction already committed and released the lock).
+            # All three can be flipped straight to CANCELLED.
+            await self._repository.set_status(task_id, TaskStatus.CANCELLED)
+            return TaskStatus.CANCELLED
+        if task.status in (TaskStatus.RUNNING, TaskStatus.DEGRADED_RUNNING,
+                           TaskStatus.REPORTING):
+            # A worker is actively running this task and holds the row locked,
+            # so the API cannot flip the status directly. The stop is recorded
+            # in the side channel and the worker's between-phase poll halts the
+            # run with CANCELLED.
+            await self._repository.request_cancel(task_id, requested_by)
+            return TaskStatus.CANCELLED
+        # AWAITING_CLAIM_CONFIRMATION / DRAFT: never queued, never running --
+        # the researcher is still shaping it. Cancel is meaningless; deleting
+        # the draft is the honest action, so report it back as-is.
+        return task.status
 
     async def submit_council_guidance(self, task_id: UUID, guidance_text: str) -> str:
         """Attach the human's advisory steer to the halted checkpoint and resume.

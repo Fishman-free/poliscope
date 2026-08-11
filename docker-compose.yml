@@ -83,6 +83,14 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
+    # The private object store (uploaded PDFs, knowledge documents, avatars)
+    # must be shared with the worker: the API writes it on upload, the worker
+    # reads it during the run. Each container's /tmp is private, so without a
+    # shared volume an upload "succeeds" but the council can never see the
+    # paper (round-10 report: "uploaded object missing from store"). One named
+    # volume, mounted at the store's default root on both services.
+    volumes:
+      - poliscope-objects:/tmp/poliscope-objects
     # No `ports:` here on purpose: `caddy` is the only service allowed to
     # bind a host port (see its comment below), so the shared password at
     # the edge cannot be routed around by hitting this container directly.
@@ -117,6 +125,11 @@ services:
       # config, so this env is for the API's activation probe; a deployment
       # that skips the trial simply leaves it blank.
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+    # Shared with the API: the worker reads the uploaded papers the API wrote
+    # into the private object store (round-10 fix -- see the api service's
+    # volume comment). Mounted at the same default root.
+    volumes:
+      - poliscope-objects:/tmp/poliscope-objects
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -171,3 +184,4 @@ volumes:
   poliscope-postgres-data:
   poliscope-caddy-data:
   poliscope-caddy-config:
+  poliscope-objects:

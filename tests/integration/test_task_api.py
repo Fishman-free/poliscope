@@ -434,7 +434,7 @@ async def test_upload_rejects_empty_file(
     body = await _create(api_client)
     response = await _upload_pdf(api_client, body["task_id"], b"")
     assert response.status_code == 422
-    assert "empty" in response.text
+    assert "为空" in response.text
 
 
 async def test_upload_rejects_non_pdf_bytes(
@@ -448,7 +448,7 @@ async def test_upload_rejects_non_pdf_bytes(
         api_client, body["task_id"], b"PK\x03\x04 not a pdf at all"
     )
     assert response.status_code == 422
-    assert "cannot be read as text" in response.text
+    assert "无法读取上传的文件" in response.text
 
 
 async def test_upload_rejects_oversized_file(

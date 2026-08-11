@@ -137,12 +137,15 @@ The root path `/` is a public landing page; the research evidence workspace live
 2. **Create a task.** Write your contested question clearly. Optionally:
    - Link a **knowledge base** (your literature participates in the council as Level A user-provided sources; click "管理知识库" to organize documents);
    - Upload a **PDF** (task-level; after full-text verification it enters the evidence graph as Level A);
+   - **Paper review mode**: switch to "论文审查" and the upload step appears *first* — pick the paper, then (optionally) type what to focus on. The council reads the paper's claims and evidence, then critiques argument rigor, evidence sufficiency, and measurement / sample representativeness, producing an auditable review report.
    - No need to fill in models every time — the **Model Settings** panel in the right sidebar saves once and all future tasks use it; without a setting, the system default model is used.
 
    The system first lists the atomic claims it can decompose the question into; check the ones you care about and click "确认并开始研究" (Confirm and start research).
 3. **Track and export.** During the run the page auto-follows council progress, switching views per round, with every gap named in the task header. When it finishes, view conclusions on the page or export Markdown / JSON reports.
 
 The whole process usually takes tens of minutes — a seven-scientist council with per-item evidence verification is inherently slower than a one-line summary. That is a deliberate trade for reliability.
+
+**Round-10 additions:** after a task completes, the "补充提问" (follow-up) tab answers grounded in the Research Brief *and*, for a paper review, the uploaded paper's full text and machine summary — so asking "does the paper's sample support its conclusion?" lets the model actually see the paper. Follow-up answers stream as they are produced. Password-protected PDFs (those needing a password to *open*) cannot be decrypted by any tool without the password; the upload is refused with a clear message. The task header's "新建研究" (New research) and "停止研究" (Stop research) buttons start a fresh task or halt the current one at a phase boundary (stopped tasks land in a `CANCELLED` terminal state and can be re-run via "重新研究").
 
 ### 4.3 The Council Checkpoint: You Can Say a Word Mid-Run, But You Cannot Vote
 

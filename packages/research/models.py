@@ -142,3 +142,33 @@ class AtomicClaimModel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
+
+
+class TaskCancelRequestModel(Base):
+    """A researcher's request to stop a running task (round-10 「停止研究」).
+
+    One row per task (``uq_task_cancel_requests_task``). Written by the API
+    when the researcher clicks stop on a RUNNING task -- the worker holds the
+    task row-locked for its whole run, so this separate table is the side
+    channel the worker polls between phases (see migration 0025's docstring).
+    A row for a QUEUED/PAUSED task is never needed; the API flips those
+    directly. Rows cascade away when the task is deleted.
+    """
+
+    __tablename__ = "task_cancel_requests"
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("research_tasks.task_id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    requested_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+

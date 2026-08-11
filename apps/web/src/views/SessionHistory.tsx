@@ -156,7 +156,8 @@ export function SessionHistory({
     }
   }
 
-  /** 「重新研究」：把 FAILED 任务交回队列，worker 从 checkpoint 续跑。 */
+  /** 「重新研究」：把 FAILED / CANCELLED 任务交回队列，worker 从 checkpoint
+   *  续跑（round-8 原始；round-10 扩展——研究者主动停止也是重跑的一种）。 */
   async function rerunOne(taskId: string) {
     setReResearching(true);
     setError(null);
@@ -267,13 +268,13 @@ export function SessionHistory({
                       </span>
                     ) : (
                       <>
-                        {task.status === "FAILED" ? (
+                        {task.status === "FAILED" || task.status === "CANCELLED" ? (
                           <button
                             type="button"
                             className="session__rerun"
                             onClick={() => rerunOne(task.task_id)}
                             disabled={reResearching}
-                            title={t("从失败节点重新研究")}
+                            title={t("从失败/停止节点重新研究")}
                           >
                             {reResearching ? t("请稍候…") : t("重新研究")}
                           </button>

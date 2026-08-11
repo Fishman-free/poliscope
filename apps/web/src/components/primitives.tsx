@@ -46,6 +46,7 @@ export const TASK_STATUS_TONE: Record<string, Tone> = {
   COMPLETED: "admitted",
   COMPLETED_WITH_GAPS: "provisional",
   FAILED: "refuted",
+  CANCELLED: "refuted",
   RUNNING: "provisional",
   DEGRADED_RUNNING: "provisional",
   QUEUED: "unknown",

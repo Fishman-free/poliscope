@@ -21,7 +21,7 @@ honest description of what happened.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Protocol
@@ -230,6 +230,7 @@ class CouncilOrchestrator:
         memory: CouncilMemory | None = None,
         acquirer: SourceAcquirer | None = None,
         finding_extractor: FindingExtractor | None = None,
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._ledger = ledger
         self._budget = budget
@@ -241,6 +242,11 @@ class CouncilOrchestrator:
         self._acquirer = acquirer
         self._finding_extractor = finding_extractor
         self._run_started: float | None = None
+        # Round-10 「停止研究」: polled between phases. When it returns True
+        # the run halts at the next phase boundary with CANCELLED as the
+        # terminal status, recording the phases it did complete. None when no
+        # caller wired a cancel channel (unit tests, the evaluation harness).
+        self._cancel_check = cancel_check
 
     async def run(
         self,
@@ -347,6 +353,26 @@ class CouncilOrchestrator:
                 machine.transition_to(TaskStatus.AWAITING_COUNCIL_INPUT)
                 return report
             machine.transition_to(phase)
+            # Round-10 「停止研究」: check the side channel at the phase
+            # boundary. A stop lands between rounds, never mid-round, so the
+            # phases that ran keep their events and the report says exactly
+            # how far the run got before the researcher stopped it.
+            if (
+                self._cancel_check is not None
+                and stop is StopReason.CONTINUE
+                and await self._cancel_check()
+            ):
+                report.phases_run = tuple(run_phases)
+                report.phases_skipped = tuple(skipped)
+                report.events_appended = state.events
+                report.unfilled_slots = tuple(state.unfilled)
+                report.absent_seats = frozenset(state.absent)
+                report.failures = tuple(state.failures)
+                report.seat_runs = tuple(state.seat_runs)
+                report.stop_reason = StopReason.CANCELLED
+                report.final_status = TaskStatus.CANCELLED
+                machine.transition_to(TaskStatus.CANCELLED)
+                return report
             if stop is StopReason.CONTINUE:
                 stop = self._check_budget()
             if stop is not StopReason.CONTINUE:

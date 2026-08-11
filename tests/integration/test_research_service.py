@@ -202,3 +202,79 @@ async def test_pausing_an_unknown_task_raises_not_found(
     with pytest.raises(TaskNotFound):
         await _service(app_session).pause(uuid4())
     await app_session.rollback()
+
+
+async def test_cancelling_a_queued_task_flips_straight_to_cancelled(
+    app_session: AsyncSession,
+) -> None:
+    """Round-10 停止研究: a QUEUED task has no worker holding its row."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+
+    status = await service.cancel(created.task_id, requested_by="researcher")
+
+    assert status == TaskStatus.CANCELLED
+    assert (await service.get_task(created.task_id)).status == TaskStatus.CANCELLED
+    # The side-channel table holds no row for a direct flip.
+    assert not await ResearchRepository(app_session).check_cancel_request(
+        created.task_id
+    )
+    await app_session.rollback()
+
+
+async def test_cancelling_a_running_task_records_a_cancel_request(
+    app_session: AsyncSession,
+) -> None:
+    """A RUNNING task's row is locked by the worker; the stop goes to the
+    side channel the worker polls between phases."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_status(created.task_id, TaskStatus.RUNNING)
+
+    status = await service.cancel(created.task_id, requested_by="researcher")
+
+    assert status == TaskStatus.CANCELLED
+    # Status is still RUNNING (the worker owns it); the request is what the
+    # worker's between-phase poll will act on.
+    assert (await service.get_task(created.task_id)).status == TaskStatus.RUNNING
+    assert await ResearchRepository(app_session).check_cancel_request(created.task_id)
+    await app_session.rollback()
+
+
+async def test_cancelling_an_already_terminal_task_is_a_noop(
+    app_session: AsyncSession,
+) -> None:
+    """Stopping a finished task reports the existing terminal status honestly."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_status(created.task_id, TaskStatus.COMPLETED)
+
+    status = await service.cancel(created.task_id)
+
+    assert status == TaskStatus.COMPLETED
+    await app_session.rollback()
+
+
+async def test_re_research_accepts_a_cancelled_task(
+    app_session: AsyncSession,
+) -> None:
+    """A researcher-stopped task can be re-run (round-10 重新研究)."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_status(created.task_id, TaskStatus.CANCELLED)
+
+    assert await service.re_research(created.task_id) == TaskStatus.QUEUED
+    assert (await service.get_task(created.task_id)).status == TaskStatus.QUEUED
+    await app_session.rollback()

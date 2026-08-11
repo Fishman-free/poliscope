@@ -431,6 +431,92 @@ export function followUp(taskId: string, question: string): Promise<FollowUpResu
   return postJson<FollowUpResult>(`/api/tasks/${taskId}/followup`, { question });
 }
 
+/** 「停止研究」(round-10): stop a running or queued task. A QUEUED/PAUSED
+ * task flips straight to CANCELLED; a RUNNING task's stop is recorded server-
+ * side and the worker halts it at the next phase boundary. Returns the status
+ * the task will reach (CANCELLED for a stopable task). */
+export function cancelTask(taskId: string): Promise<{ task_id: string; status: string }> {
+  return postJson<{ task_id: string; status: string }>(
+    `/api/tasks/${taskId}/cancel`,
+    {},
+  );
+}
+
+/** 「补充提问·流式」: stream a follow-up answer (round-10).
+ *
+ * Uses fetch with a reader (not EventSource) because the endpoint needs the
+ * Authorization header, which EventSource cannot attach. Each SSE frame is
+ * ``data: {"text": "<delta>"}``; the stream ends with ``data: [DONE]`` or an
+ * ``event: error`` frame carrying ``{"detail": ...}``.
+ *
+ * @param onDelta called with each text delta as it arrives.
+ * @param signal lets the caller abort the stream (e.g. a stop button).
+ */
+export async function followUpStream(
+  taskId: string,
+  question: string,
+  onDelta: (text: string) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/api/tasks/${taskId}/followup/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ question }),
+      signal,
+    });
+  } catch (cause) {
+    throw new ApiError(0, `无法连接 API：${String(cause)}`);
+  }
+  if (!response.ok || !response.body) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // SSE frames end with a blank line; split on it and process whole frames.
+      let sep = buffer.indexOf("\n\n");
+      while (sep !== -1) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        let event = "message";
+        let raw = "";
+        for (const line of frame.split("\n")) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) raw = line.slice(5).trim();
+        }
+        if (event === "error") {
+          let detail = "模型流式回答失败";
+          try {
+            const payload = JSON.parse(raw) as { detail?: string };
+            if (payload.detail) detail = payload.detail;
+          } catch {
+            // fall through with the default message
+          }
+          throw new ApiError(0, detail);
+        }
+        if (raw === "[DONE]") return;
+        try {
+          const payload = JSON.parse(raw) as { text?: string; detail?: string };
+          if (payload.text) onDelta(payload.text);
+        } catch {
+          // A malformed frame is not worth failing the whole answer over.
+        }
+        sep = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** Permanently delete a task and all its records (server confirms the task
  * is owned by the caller). The UI must confirm with the researcher before
  * calling -- this cannot be undone. */

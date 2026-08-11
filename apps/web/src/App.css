@@ -204,6 +204,55 @@
   white-space: nowrap;
 }
 
+/* Task-header actions (round-10): 「新建研究」 and 「停止研究」 beside the
+   status/gap row. Stop is a warning-coloured small button, new-research is a
+   plain secondary -- the destructive action must not be the more prominent one. */
+.app__task-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.app__new {
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface-0);
+  font-size: var(--text-micro);
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.app__new:hover {
+  background: var(--surface-parchment);
+  color: var(--ink-1);
+}
+
+.app__stop {
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--refuted);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  font-size: var(--text-micro);
+  color: var(--refuted);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.app__stop:hover {
+  background: var(--refuted);
+  color: #ffffff;
+}
+
+.app__stop:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* Tab rail with a sliding indicator. The indicator is a positioned bar whose
  * transform is transitioned with the Apple ease-out, so moving between tabs
  * reads as one continuous glide rather than a jump (App.tsx measures the
