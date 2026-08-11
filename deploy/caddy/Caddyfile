@@ -11,11 +11,19 @@
 # shows the login screen when none is remembered. Caddy's job is purely
 # transport: forward everything, let the API decide who gets in.
 #
-# {$POLISCOPE_SITE_ADDRESS} is a bare port (":80") until a real domain is set
-# in .env, at which point Caddy's automatic HTTPS takes over with no other
-# change here -- that is the whole point of fronting with Caddy instead of
-# nginx directly.
+# 监听地址占位符：由 .env 的 POLISCOPE_SITE_ADDRESS 控制。
+# - 默认 ":80"：纯 HTTP，本机 / 局域网可用。
+# - 填真实域名（如 "example.com"）：Caddy 自动向 Let's Encrypt 签发受信
+#   HTTPS 证书，无需改本文件。
+# - 填 "https://<IP>"（无域名的公网 IP 直连）：配合下方 `tls internal`
+#   强制用 Caddy 本地 CA 签发自签证书，让浏览器"自动升级 HTTPS"后仍能
+#   访问（会提示证书不受信，点"继续访问"即可）。
 {$POLISCOPE_SITE_ADDRESS} {
+	# 无域名 IP 直连时，强制用本地 CA 签发自签证书（Let's Encrypt 拒绝为
+	# 纯 IP 签发证书，默认行为会失败）。配了真实域名时自动 HTTPS 优先，
+	# 此指令在域名模式下是安全的 no-op，不影响公网证书签发。
+	tls internal
+
 	handle {
 		reverse_proxy web:80
 	}
