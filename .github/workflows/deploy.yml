@@ -20,6 +20,14 @@
 #   cd /opt && git clone https://github.com/Fishman-free/poliscope.git
 #   cd poliscope && cp .env.example .env   # fill in real secrets
 #   docker compose up -d --build
+#
+# Reliability notes (round-9): the China-hosted server's outbound SSH to
+# GitHub is intermittently flaky (GnuTLS "recv error", `ssh-keyscan` timeouts,
+# "client_loop: send disconnect: Broken pipe" mid-deploy). A single SSH
+# attempt fails the whole deploy ~20-40% of the time, so every SSH step wraps
+# its command in a bounded retry loop (5 attempts, 5s + 10s*attempt backoff).
+# The deploy command itself is idempotent (`git pull --ff-only` + `docker
+# compose up -d --build`), so a retried run is safe to re-execute.
 
 name: Deploy Poliscope
 
@@ -41,20 +49,49 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts
+          # ssh-keyscan against a flaky host can time out on the first try;
+          # retry up to 5 times with backoff before giving up.
+          for i in $(seq 1 5); do
+            if ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "ssh-keyscan ok on attempt $i"
+              break
+            fi
+            echo "ssh-keyscan attempt $i failed, retrying in $((5 + 10 * i))s..."
+            sleep "$((5 + 10 * i))"
+            if [ "$i" = "5" ]; then
+              echo "ssh-keyscan failed after 5 attempts" >&2
+              exit 1
+            fi
+          done
 
       - name: Deploy
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 \
-            "$SERVER_USER@$SERVER_HOST" \
-            'set -eu; \
-             cd /opt/poliscope && \
-             git fetch origin main && \
-             git pull --ff-only origin main && \
-             docker compose up -d --build'
+          # Retry the whole SSH deploy command (bounded, idempotent): a
+          # mid-run "Broken pipe" kills the connection but leaves nothing
+          # half-done that a re-run can't finish, so re-issuing is safe.
+          for i in $(seq 1 5); do
+            echo "deploy attempt $i/5"
+            if ssh -i ~/.ssh/id_ed25519 \
+              -o ServerAliveInterval=30 \
+              -o ServerAliveCountMax=6 \
+              -o ConnectTimeout=30 \
+              "$SERVER_USER@$SERVER_HOST" \
+              'set -eu; \
+               cd /opt/poliscope && \
+               git fetch origin main && \
+               git pull --ff-only origin main && \
+               docker compose up -d --build'; then
+              echo "deploy ok on attempt $i"
+              exit 0
+            fi
+            echo "deploy attempt $i failed, retrying in $((5 + 10 * i))s..."
+            sleep "$((5 + 10 * i))"
+          done
+          echo "deploy failed after 5 attempts" >&2
+          exit 1
 
       - name: Health check
         env:
@@ -62,6 +99,18 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
           # Give caddy a moment, then confirm the landing page answers.
-          ssh -i ~/.ssh/id_ed25519 \
-            "$SERVER_USER@$SERVER_HOST" \
-            'sleep 8 && curl -fsS -o /dev/null -w "landing: %{http_code}\n" http://localhost/'
+          # Same retry loop: the health SSH itself can drop on a flaky link.
+          for i in $(seq 1 5); do
+            echo "health check attempt $i/5"
+            if ssh -i ~/.ssh/id_ed25519 \
+              -o ConnectTimeout=30 \
+              "$SERVER_USER@$SERVER_HOST" \
+              'sleep 8 && curl -fsS -o /dev/null -w "landing: %{http_code}\n" http://localhost/'; then
+              echo "health ok on attempt $i"
+              exit 0
+            fi
+            echo "health check attempt $i failed, retrying in $((5 + 10 * i))s..."
+            sleep "$((5 + 10 * i))"
+          done
+          echo "health check failed after 5 attempts" >&2
+          exit 1
