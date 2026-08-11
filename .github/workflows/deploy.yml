@@ -99,6 +99,48 @@ jobs:
           echo "volume-owner failed after 5 attempts" >&2
           exit 1
 
+      - name: Configure docker registry mirror
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          # The China-hosted server cannot reach Docker Hub, so `docker build`
+          # fails to resolve base images (python:3.12-slim / node:20-alpine)
+          # once the build cache needs their metadata again. Point the daemon
+          # at DaoCloud's public mirror (reachable, verified round-10) so every
+          # docker.io/* pull goes through it. Idempotent: only rewrites if the
+          # mirrors are not already set, and only restarts docker on a change
+          # (a restart briefly interrupts running containers).
+          for i in $(seq 1 5); do
+            echo "mirror attempt $i/5"
+            if ssh -i ~/.ssh/id_ed25519 \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -o ConnectTimeout=30 \
+              "$SERVER_USER@$SERVER_HOST" \
+              'set -eu; \
+               if grep -q "docker.m.daocloud.io" /etc/docker/daemon.json 2>/dev/null; then \
+                 echo "mirror already configured"; exit 0; \
+               fi; \
+               mkdir -p /etc/docker; \
+               printf "%s\n" \
+                 "{" \
+                 "  \"registry-mirrors\": [" \
+                 "    \"https://docker.m.daocloud.io\"," \
+                 "    \"https://docker.1ms.run\"" \
+                 "  ]" \
+                 "}" > /etc/docker/daemon.json; \
+               echo "daemon.json written:"; cat /etc/docker/daemon.json; \
+               systemctl restart docker || service docker restart; \
+               sleep 5; \
+               docker info 2>/dev/null | grep -A3 "Registry Mirrors"'; then
+              echo "mirror ok on attempt $i"
+              exit 0
+            fi
+            echo "mirror attempt $i failed, retrying in $((5 + 10 * i))s..."
+            sleep "$((5 + 10 * i))"
+          done
+          echo "mirror failed after 5 attempts" >&2
+          exit 1
+
       - name: Deploy
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
