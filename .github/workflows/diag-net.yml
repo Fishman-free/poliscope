@@ -1,0 +1,18 @@
+name: Diag Net
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test connectivity to server
+        run: |
+          echo "== 22 port =="
+          timeout 15 bash -c 'echo > /dev/tcp/39.96.197.238/22' && echo "TCP 22 OK" || echo "TCP 22 FAIL (exit $?)"
+          echo "== 80 port =="
+          timeout 15 bash -c 'echo > /dev/tcp/39.96.197.238/80' && echo "TCP 80 OK" || echo "TCP 80 FAIL (exit $?)"
+          echo "== ssh-keyscan verbose =="
+          timeout 20 ssh-keyscan -T 10 39.96.197.238; echo "keyscan exit=$?"
+          echo "== curl 80 =="
+          timeout 20 curl -s -o /dev/null -w "curl80: %{http_code} time=%{time_total}s\n" http://39.96.197.238/ || echo "curl80 FAIL"
