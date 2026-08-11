@@ -1,0 +1,42 @@
+name: Configure docker registry mirror
+
+on:
+  workflow_dispatch:
+
+jobs:
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Write daemon.json and restart docker
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o ConnectTimeout=30 \
+            "$SERVER_USER@$SERVER_HOST" \
+            'set -eu; \
+             echo "=== existing daemon.json ==="; cat /etc/docker/daemon.json 2>/dev/null || echo "(none)"; \
+             mkdir -p /etc/docker; \
+             cat > /etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": [
+    "https://docker.m.daocloud.io",
+    "https://docker.1ms.run"
+  ]
+}
+EOF
+             echo "=== written ==="; cat /etc/docker/daemon.json; \
+             echo "=== restarting docker (brief service interruption) ==="; \
+             systemctl restart docker; \
+             echo "=== verifying ==="; \
+             sleep 5; docker info 2>/dev/null | grep -A3 "Registry Mirrors"'
