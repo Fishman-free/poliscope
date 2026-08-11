@@ -1,0 +1,32 @@
+name: Auto Approve and Merge PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+# 赋予以 Bot 身份审批和合并 PR 的权限
+permissions:
+  pull-requests: write
+  contents: write
+
+jobs:
+  auto-approve-and-merge:
+    runs-on: ubuntu-latest
+    # 建议加上过滤条件（例如指定触发者、指定 Label，或过滤 Dependabot 等）
+    # 如果希望对所有 PR 生效，可以去掉 if 条件
+    if: github.actor == 'dependabot[bot]' || contains(github.event.pull_request.labels.*.name, 'automerge')
+
+    steps:
+      # 1. 自动 Approve 该 PR
+      - name: Auto Approve PR
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. 自动开启 Auto-Merge（等待 CI 测试通过后会自动合并）
+      - name: Enable Auto-Merge
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
