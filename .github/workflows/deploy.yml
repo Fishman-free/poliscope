@@ -76,14 +76,20 @@ jobs:
           # inside mkdir (round-10 report). A throwaway root container chowns
           # the volume root to the poliscope uid. Safe to re-run; only touches
           # the volume root, not the app.
+          #
+          # The container image is the compose stack's own postgres image
+          # (already on the host, no pull needed -- Docker Hub is flaky from
+          # China, which is exactly why the stack uses the ECR mirror for it).
+          # postgres's entrypoint starts as root, so a chown works.
           for i in $(seq 1 5); do
             echo "volume-owner attempt $i/5"
             if ssh -i ~/.ssh/id_ed25519 \
               -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -o ConnectTimeout=30 \
               "$SERVER_USER@$SERVER_HOST" \
               'docker run --rm -v poliscope_objects:/data \
-                 --entrypoint sh alpine:3.20 -c \
-                 "chown -R 1000:1000 /data"'; then
+                 --entrypoint /bin/sh \
+                 public.ecr.aws/docker/library/postgres:16-alpine \
+                 -c "chown -R 1000:1000 /data"'; then
               echo "volume-owner ok on attempt $i"
               exit 0
             fi
