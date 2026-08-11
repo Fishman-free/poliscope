@@ -237,15 +237,19 @@ export function NewTaskView({
   const UPLOAD_ACCEPT =
     ".pdf,.docx,.pptx,.xlsx,.html,.htm,.txt,.md,.csv,application/pdf";
 
-  /** question 阶段：选文件后本地暂存（不上传），用户可继续加选或移除。 */
-  function stageFiles(files: FileList | null) {
-    if (!files) return;
+  /** question 阶段：选文件后本地暂存（不上传），用户可继续加选或移除。
+   *
+   * 传入普通 ``File[]`` 而非 ``FileList``：``FileList`` 是 input 的 live
+   * 集合，onChange 里先 ``stageFiles`` 后 ``event.target.value = ""`` 会清空
+   * 这个 live 集合，而 ``setPendingFiles`` 的 updater 是异步执行的——等它
+   * 真正读 ``files`` 时集合已经空了，导致选了文件毫无反应（round-9 bug）。
+   * 调用方必须在 onChange 内同步 ``Array.from`` 拷贝。 */
+  function stageFiles(files: File[]) {
+    if (files.length === 0) return;
     setUploadError(null);
     setPendingFiles((prev) => {
       const seen = new Set(prev.map((f) => f.name + f.size));
-      const added = Array.from(files).filter(
-        (file) => !seen.has(file.name + file.size),
-      );
+      const added = files.filter((file) => !seen.has(file.name + file.size));
       return [...prev, ...added];
     });
   }
@@ -566,7 +570,12 @@ export function NewTaskView({
             multiple
             disabled={submitting || uploading}
             onChange={(event) => {
-              stageFiles(event.target.files);
+              // 同步拷贝：FileList 是 live 集合，value="" 前先 Array.from
+              // 存下文件，否则异步 updater 读到的是已被清空的空集合。
+              const picked = event.target.files
+                ? Array.from(event.target.files)
+                : [];
+              stageFiles(picked);
               event.target.value = "";
             }}
           />
