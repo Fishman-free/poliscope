@@ -64,6 +64,35 @@ jobs:
             fi
           done
 
+      - name: Fix object-store volume ownership
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          # One-time (idempotent) repair for the poliscope-objects named volume:
+          # volumes created before the Dockerfile pre-created the store root
+          # carry root:root 755 ownership, which the non-root poliscope user
+          # cannot write to -- uploads then die with a 500 FileNotFoundError
+          # inside mkdir (round-10 report). A throwaway root container chowns
+          # the volume root to the poliscope uid. Safe to re-run; only touches
+          # the volume root, not the app.
+          for i in $(seq 1 5); do
+            echo "volume-owner attempt $i/5"
+            if ssh -i ~/.ssh/id_ed25519 \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -o ConnectTimeout=30 \
+              "$SERVER_USER@$SERVER_HOST" \
+              'docker run --rm -v poliscope_objects:/data \
+                 --entrypoint sh alpine:3.20 -c \
+                 "chown -R 1000:1000 /data"'; then
+              echo "volume-owner ok on attempt $i"
+              exit 0
+            fi
+            echo "volume-owner attempt $i failed, retrying in $((5 + 10 * i))s..."
+            sleep "$((5 + 10 * i))"
+          done
+          echo "volume-owner failed after 5 attempts" >&2
+          exit 1
+
       - name: Deploy
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}

@@ -28,4 +28,7 @@ COPY --from=base --chown=poliscope:poliscope /app /app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 USER poliscope
+# Same pre-created, poliscope-owned object store root as the API image, so the
+# shared poliscope-objects volume keeps the app user's ownership on first mount.
+RUN mkdir -p /tmp/poliscope-objects
 CMD ["python", "-m", "apps.worker.main"]

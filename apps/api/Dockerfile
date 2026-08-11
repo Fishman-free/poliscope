@@ -30,5 +30,12 @@ COPY --from=base --chown=poliscope:poliscope /app /app
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 USER poliscope
+# Pre-create the private object store root as the app user. When the
+# poliscope-objects named volume is first mounted here (docker-compose.yml),
+# Docker copies this directory's ownership into the empty volume -- without
+# this, the volume root is root:root 755 and the non-root poliscope user
+# cannot create task/knowledge subdirectories, which broke uploads with a 500
+# (round-10 report). RUN as poliscope so the directory is owned by poliscope.
+RUN mkdir -p /tmp/poliscope-objects
 EXPOSE 8000
 CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

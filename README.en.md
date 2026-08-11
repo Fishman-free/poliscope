@@ -119,58 +119,16 @@ The workspace provides eight views. The center of the product is the **evidence 
 
 ## 4. How to Use
 
-### 4.1 The URL: Read This First
+### 4.1 Web: Two Features Are Live
 
-The author maintains a **public demo instance: `http://39.96.197.238/`** (hosted on Alibaba Cloud, always reachable). To try Poliscope immediately, just open that address; the research evidence workspace lives at `/workspace` — register an account and you are in.
+Open the **public demo instance `http://39.96.197.238/`**, click "进入工作台" (or visit `/workspace` directly) and register an account. Two features are live:
 
-Poliscope is open source under the MIT license — you can also deploy it yourself, and **the URL you visit depends on your deployment**:
+- **Deep research**: ask a contested question and the seven-scientist council investigates independently and cross-examines, producing an auditable evidence map;
+- **Paper review**: first **upload the paper to review** (PDF / Word / PPT / Excel / HTML / TXT, ≤ 20 MB each), the council reads its research question, main claims and evidence, then critiques argument rigor, evidence sufficiency, and measurement / sample representativeness with improvement suggestions. After the review you can keep asking in "补充提问" (Follow-up), and the model answers grounded in the paper's full text.
 
-- **Docker Compose one-command deployment (recommended)**: the default local address is **`http://localhost:8080/`** (the actual port is decided by `POLISCOPE_SITE_HOST_PORT` in `.env`).
-- After deploying to a server, change `POLISCOPE_SITE_ADDRESS` in `.env` to your domain and Caddy automatically issues HTTPS; the URL becomes your domain.
-- **Can't open `http://localhost:8080/`?** Check two things: `grep POLISCOPE_SITE_HOST_PORT .env` (the actual port) and `docker compose ps caddy` (the Caddy container binding). If port 80 is taken by another project, the real address is `http://localhost:<PORT>/`. After editing `deploy/caddy/Caddyfile`, you must **`docker compose up -d --build caddy`** — the Caddyfile is baked into the image and won't take effect without a rebuild.
+During a run the page auto-follows council progress; when it finishes, view conclusions on the page or export Markdown / JSON reports.
 
-The root path `/` is a public landing page; the research evidence workspace lives at `/workspace` — **first visit shows a register/login page**: register an account to enter (login state is remembered locally for 30 days; re-login on a new machine or after expiry).
-
-### 4.2 Start Research in Three Steps
-
-1. **Enter the workspace.** Open the demo address `http://39.96.197.238/` above (or your self-deployed `http://localhost:8080/`), click "进入工作台" (or visit `/workspace` directly). On first use, register an account (username + password); the browser stays logged in afterwards.
-2. **Create a task.** Write your contested question clearly. Optionally:
-   - Link a **knowledge base** (your literature participates in the council as Level A user-provided sources; click "管理知识库" to organize documents);
-   - Upload a **PDF** (task-level; after full-text verification it enters the evidence graph as Level A);
-   - **Paper review mode**: switch to "论文审查" and the upload step appears *first* — pick the paper, then (optionally) type what to focus on. The council reads the paper's claims and evidence, then critiques argument rigor, evidence sufficiency, and measurement / sample representativeness, producing an auditable review report.
-   - No need to fill in models every time — the **Model Settings** panel in the right sidebar saves once and all future tasks use it; without a setting, the system default model is used.
-
-   The system first lists the atomic claims it can decompose the question into; check the ones you care about and click "确认并开始研究" (Confirm and start research).
-3. **Track and export.** During the run the page auto-follows council progress, switching views per round, with every gap named in the task header. When it finishes, view conclusions on the page or export Markdown / JSON reports.
-
-The whole process usually takes tens of minutes — a seven-scientist council with per-item evidence verification is inherently slower than a one-line summary. That is a deliberate trade for reliability.
-
-**Round-10 additions:** after a task completes, the "补充提问" (follow-up) tab answers grounded in the Research Brief *and*, for a paper review, the uploaded paper's full text and machine summary — so asking "does the paper's sample support its conclusion?" lets the model actually see the paper. Follow-up answers stream as they are produced. Password-protected PDFs (those needing a password to *open*) cannot be decrypted by any tool without the password; the upload is refused with a clear message. The task header's "新建研究" (New research) and "停止研究" (Stop research) buttons start a fresh task or halt the current one at a phase boundary (stopped tasks land in a `CANCELLED` terminal state and can be re-run via "重新研究").
-
-### 4.3 The Council Checkpoint: You Can Say a Word Mid-Run, But You Cannot Vote
-
-After the blindspot bounty round and before joint modeling, the task pauses to offer you one **directional guidance** opportunity: review the seven scientists' current positions (precommitment confidence, update conditions, challenges raised), then submit a short directional note (e.g., "prioritize cross-cultural boundary conditions"), or explicitly leave it blank and continue — both are equally valid actions.
-
-The note is injected into joint modeling only as "[Researcher directional note, not a scientific judgment]"; it does **not** participate in any evidence adjudication: it does not change the evidence gate's logic, never serves as evidence for or against any claim, and does not violate the "no majority voting on scientific truth" rule — you are the only direction controller, but you are not an 8th voting scientist.
-
-### 4.4 Knowledge Base: Your Long-Term Memory
-
-The "知识库" (Knowledge Base) tab of the workspace (in the top tab bar when a task is open; via the segmented button on the home page otherwise):
-
-- Create a knowledge base → upload **PDF / TXT / MD / CSV / DOCX / PPTX / XLSX** (each ≤ 20 MB) → automatically parsed and saved; legacy .doc / .ppt / .xls cannot be parsed and the system tells you clearly to save them in new formats rather than pretending; knowledge bases are isolated per account;
-- Don't want to organize files? **Paste text** (title + content) works too — notes, web excerpts, report fragments; retrieval and Level A treatment are identical to uploads;
-- When creating a task, link a knowledge base; the council's acquisition rounds verify your documents as Level A sources and bring retrieval hits into the scientists' judgment context;
-- Deletion protection: knowledge bases/documents already referenced by tasks or already producing evidence refuse deletion, so evidence provenance can never be erased.
-
-### 4.5 Right Sidebar: Model Settings, Skills, and Session History
-
-The right sidebar is visible on every page of the workspace, three things (all isolated per account):
-
-- **Model Settings**: fill in Base URL / API Key / model name once and save (stored on the server, auto-applied when creating tasks); all subsequent tasks use it. The API key is stored server-side and **never echoed on any page** — the UI only shows a "configured" state; leave the field empty when editing to keep the old key. Without a setting, the deployer-configured system default model is used. Every task row shows whether it actually uses **"your saved config" or "system default"** (hover for the endpoint and model name) — whether your settings took effect is visible at a glance.
-- **Skills**: paste a GitHub skill repository address (e.g., `https://github.com/owner/skill-name`) into the input at the bottom of the panel and click "下载并添加" to download its SKILL.md and add it to the list; checkbox = enable. When enabled, new tasks carry it by default, and the worker injects the skill content into the council prompts as **"researcher-provided skill instructions (non-formal evidence)"** — it guides the scientists' investigation methods but never serves as evidence for or against any claim.
-- **Session History**: all research sessions of the account, newest first, click to jump — no more copying and pasting task IDs; return from history after switching machines or closing conversations. Each row can be deleted individually (two-stage confirmation) or all sessions cleared with one action.
-
-### 4.6 Calling from a Coding Agent (Skill)
+### 4.2 Calling from a Coding Agent (Skill)
 
 If you work in Claude Code, Codex, or another coding agent that honors the `AGENTS.md` convention and prefer not to switch to the web UI, you can have the agent call Poliscope directly. The repo ships four identical copies of the Skill:
 
@@ -228,21 +186,17 @@ The full CLI reference (including `pause`/`resume`, `council-preview`/`council-g
 
 **Symptom: the browser reports "This site can't be reached", "the connection was closed", or "the connection is not secure".**
 
-Modern browsers (especially Edge / Chrome) enable **"Automatically use HTTPS"** by default: typing `http://39.96.197.238/` in the address bar gets silently upgraded to `https://39.96.197.238/`. If the deployment only exposes port **80 (HTTP)** with no **443 (HTTPS)** configured, that upgrade fails — the page appears "unreachable" or the frontend fails to load.
+Modern browsers (especially Edge / Chrome) automatically upgrade `http://` to `https://`. If the site only serves `http://` (no HTTPS), that upgrade fails — the page appears unreachable, or you can see the homepage from GitHub but the data does not load.
 
-**Opening the homepage from GitHub but the frontend does not render** has the same root cause: the HTML shell arrives, but in-page `/api` requests are still treated as HTTPS by the browser, so all data loading fails.
+**All you need to do (pick one):**
 
-**Solutions (pick one):**
+- Change `https://` back to `http://` in the address bar and press Enter;
+- Open the site in an **InPrivate / incognito window**;
+- Turn off "Automatically use HTTPS" in Edge (Settings → Privacy, search, and services → turn off "Automatically use HTTPS").
 
-1. **(Recommended) Deployer enables HTTPS on the server**:
-   - With a domain: set `POLISCOPE_SITE_ADDRESS` in `.env` to your domain; Caddy automatically obtains a trusted Let's Encrypt certificate, and `https://your-domain/` works in every browser.
-   - Without a domain (public-IP direct connection): add `tls internal` to `deploy/caddy/Caddyfile` (self-signed local CA), set `POLISCOPE_SITE_ADDRESS` to `https://<public-IP>`, and open TCP 443 in the security group. A self-signed cert makes browsers show a "connection is not secure" warning — click "Advanced → Continue" to proceed; that is normal for self-signed certs, not a fault. Note: **Chromium/Edge may refuse a self-signed cert for a bare IP with `ERR_SSL_PROTOCOL_ERROR` and offer no "Continue" option** (Chromium's trust logic for IP addresses); in that case use a domain or Cloudflare instead.
-2. **Temporary workaround (no server change)**: manually change `https://` back to `http://` in the address bar, or disable Edge's "Automatically use HTTPS" (Settings → Privacy, search and services), or use an InPrivate window.
-3. **Front with Cloudflare or another reverse proxy**: a free domain + automatic HTTPS back to your port 80, with no server change.
+**Symptom: another URL (self-hosted / LAN) cannot be opened.**
 
-**Symptom: `http://localhost:8080/` cannot be opened.**
-
-Check two things: `grep POLISCOPE_SITE_HOST_PORT .env` (the actual port) and `docker compose ps caddy` (the Caddy container binding). If port 80 is taken by another project, the real address is `http://localhost:<PORT>/`. After editing `deploy/caddy/Caddyfile`, you must **`docker compose up -d --build caddy`** — the Caddyfile is baked into the image and won't take effect without a rebuild.
+Ask whoever runs the site for the **correct address and port** (commonly `http://localhost:8080/`; for a public deployment `http://<IP>/` or `http://<domain>/`), then visit that directly.
 
 ---
 
