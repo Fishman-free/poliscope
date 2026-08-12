@@ -131,16 +131,20 @@ scientific semantics (Quarantine, Dialectical Fold, Perspective Recall).
 
 We evaluate EpistemoBrain on \textbf{ForesightBlindspot}, a time-sliced
 evaluation protocol for blindspot discovery in computational social
-science, and report a controlled comparison of five baselines on a
-scripted case with no model calls, no network, and no database, together
-with end-to-end verification on real research tasks. The comparison shows
-that blindspot coverage is driven by seat coverage -- the single-agent
-baseline, after we corrected its seat-selection semantics (Section 4.3),
-finds one of seven gold blindspots while every seven-seat variant finds all
-seven -- and isolates precisely where the protocol's remaining
-contributions (memory, evidence gate) become observable under scripted
-gateways: on the blindspot metric they do not, which we report honestly as
-a property of the measurement, not a claim about the mechanisms.
+science, and report a controlled comparison of five baselines plus a
+six-variant ablation ladder on a scripted case with no model calls, no
+network, and no database, together with end-to-end verification on real
+research tasks. The comparison shows that blindspot coverage is driven by
+seat coverage -- the single-agent baseline, after we corrected its
+seat-selection semantics (Section 4.3), finds one of seven gold blindspots
+while every seven-seat variant finds all seven -- and the ablations show
+that removing the adversarial falsifier or the evidence auditor each costs
+a gold blindspot, while removing lineage inflates the system's own
+evidence-independence report. The comparisons also isolate precisely where
+the protocol's remaining contributions (memory, evidence gate) become
+observable under scripted gateways: on the blindspot metric they do not,
+which we report honestly as a property of the measurement, not a claim
+about the mechanisms.
 
 Our contributions are threefold:
 (1) We introduce a \emph{council protocol} for scientific controversy
@@ -930,16 +934,19 @@ Uri Simonsohn, Leif~D. Nelson, and Joseph~P. Simmons.
 \section{Appendix: Implementation Notes}
 
 \textbf{Deterministic evaluation harness.} The ForesightBlindspot harness
-(\texttt{packages/evaluation/}) runs the five baselines as configurations
-of the real orchestrator against a database-less event sink, so a baseline
-run is deterministic and fast enough for unit tests; scoring functions
-reuse the production audit rules (causal upgrade policy, citation
-entailment verifier, lineage detection and evidence clustering) instead of
-re-deriving them, so a baseline's score reflects the same standard the
-gated system is held to. Gold blindspot matching is currently a keyword
-proxy for human annotation, which does not yet exist; the agreement
-skeleton (Kappa/Alpha statistics, double annotation, adjudication) is
-implemented and awaiting annotation data.
+(\texttt{packages/evaluation/}) runs the five baselines and the six
+ablation variants as configurations of the real orchestrator against a
+database-less event sink, so a run is deterministic and fast enough for
+unit tests; scoring functions reuse the production audit rules (causal
+upgrade policy, citation entailment verifier, lineage detection and
+evidence clustering) instead of re-deriving them, so a variant's score
+reflects the same standard the gated system is held to. Each ablation is
+one protocol switch on that same orchestrator -- a phase subset, a seat
+subset, a fold flag, or a lineage-free acquirer -- never a reimplementation
+(Section 4.5). Gold blindspot matching is currently a keyword proxy for
+human annotation, which does not yet exist; the agreement skeleton
+(Kappa/Alpha statistics, double annotation, adjudication) is implemented
+and awaiting annotation data.
 
 \textbf{Permissions as design.} PostgreSQL grants implement the write
 isolation: the application role can append to the ledger and read the
