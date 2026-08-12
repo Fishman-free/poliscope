@@ -102,6 +102,18 @@ class CouncilCheckpoint(ContractModel):
     absent_seats: tuple[Seat, ...] = ()
     failures: tuple[str, ...] = ()
     events_appended: int = 0
+    # Round-12 「重新研究从断点续跑」: one snapshot per phase that ran (in
+    # phase order), recording the accumulated state *after* that phase. Lets a
+    # re-research run rewind to the first failed phase instead of resuming
+    # from the end of the checkpoint -- the failed phase (and any later failed
+    # phase) re-executes, while every phase that actually completed stays
+    # exactly as it was (its events and carried state are unchanged, so no
+    # ledger event is re-written and no model budget is re-spent on it).
+    phase_snapshots: tuple[CouncilPhaseSnapshot, ...] = ()
+    # Round-12: set by POST /re-research with mode=first_gap when the
+    # checkpoint's first failed phase was found. The orchestrator rewinds to
+    # that phase; None means "resume from the end of the checkpoint".
+    restart_from: TaskPhase | None = None
     # Plan phase 8.3: the human's advisory directional steer, set by
     # POST /api/tasks/{id}/council-guidance while status is
     # AWAITING_COUNCIL_INPUT. None before the human has responded; "" is a
@@ -112,3 +124,56 @@ class CouncilCheckpoint(ContractModel):
     # Evidence Gate stage, Claim adoption path, or DissentCertificate/
     # DebateCapsule construction.
     guidance: str | None = None
+
+
+class CouncilPhaseSnapshot(ContractModel):
+    """The accumulated run state immediately after one phase completed.
+
+    ``run()`` appends one snapshot per phase it ran (successful or failed),
+    so the re-research rewind in ``run(restart_from=...)`` can reconstruct
+    the exact state before the first failed phase without re-running any of
+    the phases that came before it.
+    """
+
+    phase: TaskPhase
+    carried: FrozenDict[str, object] = FrozenDict()
+    unfilled: tuple[str, ...] = ()
+    absent_seats: tuple[Seat, ...] = ()
+    failures: tuple[str, ...] = ()
+    events_appended: int = 0
+
+
+def checkpoint_failed_phases(
+    checkpoint: CouncilCheckpoint,
+) -> frozenset[TaskPhase]:
+    """The phases a checkpoint records as failed or skipped.
+
+    A phase counts as not-complete when its runner raised (recorded in
+    ``failures`` and as a ``{phase}:round_failed`` slot) or was skipped for
+    budget (``{phase}:not_reached``). Ordinary evidence gaps -- e.g.
+    ``ACQUISITION:no_finding:...`` -- are not failures: they are honest holes
+    in the evidence, which is exactly what COMPLETED_WITH_GAPS reports.
+    """
+    failed: set[TaskPhase] = set()
+    for failure in checkpoint.failures:
+        for phase in PHASE_SEQUENCE:
+            if failure.startswith(f"{phase.value}:"):
+                failed.add(phase)
+    for slot in checkpoint.unfilled:
+        for phase in PHASE_SEQUENCE:
+            if slot.startswith(f"{phase.value}:round_failed") or slot.startswith(
+                f"{phase.value}:not_reached"
+            ):
+                failed.add(phase)
+    return frozenset(failed)
+
+
+def first_unfinished_phase(
+    checkpoint: CouncilCheckpoint,
+) -> TaskPhase | None:
+    """The earliest phase recorded as failed/skipped, in protocol order."""
+    failed = checkpoint_failed_phases(checkpoint)
+    for phase in PHASE_SEQUENCE:
+        if phase in failed:
+            return phase
+    return None

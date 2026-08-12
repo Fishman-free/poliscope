@@ -278,3 +278,101 @@ async def test_re_research_accepts_a_cancelled_task(
     assert await service.re_research(created.task_id) == TaskStatus.QUEUED
     assert (await service.get_task(created.task_id)).status == TaskStatus.QUEUED
     await app_session.rollback()
+
+
+async def test_re_research_full_mode_clears_checkpoint(
+    app_session: AsyncSession,
+) -> None:
+    """Round-12 「重新研究模式」: mode=full clears the council checkpoint so
+    the worker re-runs the whole protocol from PRECOMMITMENT."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_checkpoint(
+        created.task_id,
+        {"run_phases": ["PRECOMMITMENT", "ACQUISITION"], "carried": {}},
+    )
+    await service._repository.set_status(created.task_id, TaskStatus.FAILED)
+
+    assert await service.re_research(created.task_id, mode="full") == TaskStatus.QUEUED
+
+    task = await service.get_task(created.task_id)
+    assert task.status == TaskStatus.QUEUED
+    assert task.council_checkpoint is None
+    await app_session.rollback()
+
+
+async def test_re_research_first_gap_without_gap_clears_checkpoint(
+    app_session: AsyncSession,
+) -> None:
+    """Round-12: first_gap with no recorded gap degrades to a full restart --
+    the checkpoint is cleared, exactly as the user asked ("no gap -> start
+    from scratch")."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_checkpoint(
+        created.task_id,
+        {
+            "run_phases": ["PRECOMMITMENT", "ACQUISITION"],
+            "carried": {},
+            "unfilled": [],
+            "failures": [],
+        },
+    )
+    await service._repository.set_status(created.task_id, TaskStatus.FAILED)
+
+    assert (
+        await service.re_research(created.task_id, mode="first_gap")
+        == TaskStatus.QUEUED
+    )
+
+    task = await service.get_task(created.task_id)
+    assert task.status == TaskStatus.QUEUED
+    assert task.council_checkpoint is None
+    await app_session.rollback()
+
+
+async def test_re_research_first_gap_with_gap_marks_restart_from(
+    app_session: AsyncSession,
+) -> None:
+    """Round-12: first_gap with a recorded failed phase marks the checkpoint
+    restart_from so the worker rewinds to that first unfinished phase."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_checkpoint(
+        created.task_id,
+        {
+            "run_phases": [
+                "PRECOMMITMENT",
+                "ACQUISITION",
+                "EVIDENCE_EXCHANGE",
+                "CROSS_EXAMINATION",
+            ],
+            "carried": {},
+            "unfilled": ["EVIDENCE_EXCHANGE:round_failed"],
+            "failures": ["EVIDENCE_EXCHANGE: ValueError('boom')"],
+        },
+    )
+    await service._repository.set_status(created.task_id, TaskStatus.FAILED)
+
+    assert (
+        await service.re_research(created.task_id, mode="first_gap")
+        == TaskStatus.QUEUED
+    )
+
+    task = await service.get_task(created.task_id)
+    assert task.status == TaskStatus.QUEUED
+    from packages.epistemo.contracts import CouncilCheckpoint
+
+    restored = CouncilCheckpoint.model_validate(task.council_checkpoint)
+    assert restored.restart_from == "EVIDENCE_EXCHANGE"
+    assert restored.failures == ("EVIDENCE_EXCHANGE: ValueError('boom')",)
+    await app_session.rollback()

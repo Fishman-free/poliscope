@@ -417,11 +417,22 @@ export function fetchTasks(): Promise<TaskSummary[]> {
 }
 
 /** 「重新研究」: move a FAILED/CANCELLED task back to QUEUED so the worker
- * resumes it from the stored council checkpoint (round-8). */
-export function reResearch(taskId: string): Promise<{ task_id: string; status: string }> {
+ * runs it again (round-8).
+ *
+ * Round-12 「重新研究模式」: ``mode`` decides where the re-run starts.
+ * ``full`` clears the council checkpoint so the whole protocol re-runs from
+ * PRECOMMITMENT; ``first_gap`` (default) restarts from the first unfinished
+ * phase when the checkpoint records one, and falls back to a full restart
+ * when there is no recorded gap. Same semantics for deep-research and
+ * paper-review tasks.
+ */
+export function reResearch(
+  taskId: string,
+  mode: "full" | "first_gap" = "first_gap",
+): Promise<{ task_id: string; status: string }> {
   return postJson<{ task_id: string; status: string }>(
     `/api/tasks/${taskId}/re-research`,
-    {},
+    { mode },
   );
 }
 

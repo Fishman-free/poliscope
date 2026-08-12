@@ -28,6 +28,7 @@ from apps.api.schemas import (
     CouncilGuidanceRequest,
     CreateTaskRequest,
     FollowUpRequest,
+    ReResearchRequest,
 )
 from apps.api.task_lifecycle import delete_task_cascade
 from packages.accounts.repository import StoredUser
@@ -795,6 +796,7 @@ async def re_research_task(
     task_id: UUID,
     session: SessionDep,
     current_user: CurrentUserDep,
+    body: ReResearchRequest | None = None,
 ) -> dict[str, Any]:
     """Move a FAILED (or CANCELLED) task back to QUEUED for another run.
 
@@ -804,10 +806,19 @@ async def re_research_task(
     failed before reaching the checkpoint re-runs its early phases -- an
     honest restart rather than pretending nothing happened. Round-10: a
     researcher-stopped task is re-runnable the same way.
+
+    Round-12 「重新研究模式」: an optional ``body.mode`` of ``full`` re-runs
+    the whole protocol from PRECOMMITMENT; ``first_gap`` (the default when
+    the body is omitted) restarts from the first unfinished phase when the
+    checkpoint records one, otherwise falls back to a full restart. Identical
+    semantics for deep-research and paper-review tasks -- both resume through
+    the same worker path.
     """
     await _owned_task(session, task_id, current_user)
     try:
-        new_status = await _service(session).re_research(task_id)
+        new_status = await _service(session).re_research(
+            task_id, mode=body.mode if body is not None else "first_gap"
+        )
     except TaskNotFound as error:
         raise _not_found(task_id, error) from error
     except InvalidPauseState as error:

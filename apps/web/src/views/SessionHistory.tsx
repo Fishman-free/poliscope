@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { deleteTask, fetchTasks, reResearch, resumeTask } from "../api/client";
+import { ReResearchDialog } from "../components/ReResearchDialog";
 import type { TaskSummary } from "../api/types";
 import { Badge, Empty, Spinner, TaskStatusBadge } from "../components/primitives";
 import { t } from "../i18n";
@@ -168,12 +169,17 @@ export function SessionHistory({
   /** 「重新研究/继续研究」：把 FAILED/CANCELLED（重新研究）或 PAUSED（继续
    * 研究）任务交回队列，worker 从 checkpoint 续跑。成功后刷新列表让状态
    * 变回 QUEUED，并回调父组件——若该任务正是当前工作台，父组件立即刷新
-   * snapshot（否则保险轮询会兜底）。loading 只落在这一行（busyTaskId）。 */
-  async function requeueOne(taskId: string, resume: boolean) {
+   * snapshot（否则保险轮询会兜底）。loading 只落在这一行（busyTaskId）。
+   *  round-12 起「重新研究」先弹出模式选择（从头 / 从断点处研究）。 */
+  async function requeueOne(
+    taskId: string,
+    resume: boolean,
+    mode: "full" | "first_gap" = "first_gap",
+  ) {
     setBusyTaskId(taskId);
     setError(null);
     try {
-      await (resume ? resumeTask(taskId) : reResearch(taskId));
+      await (resume ? resumeTask(taskId) : reResearch(taskId, mode));
       // 刷新列表让状态从 FAILED/PAUSED 变回 QUEUED。
       const fresh = await fetchTasks();
       setTasks(fresh);
@@ -184,6 +190,9 @@ export function SessionHistory({
       setBusyTaskId(null);
     }
   }
+
+  // 「重新研究」模式选择弹窗的目标任务（round-12）。null 表示未打开。
+  const [rerunTarget, setRerunTarget] = useState<string | null>(null);
 
   /** 清空全部：逐个删除剩余任务。失败即中断并显示原因——绝不静默吞掉
    * 一个没删掉的任务，假装清空成功。 */
@@ -208,6 +217,16 @@ export function SessionHistory({
 
   return (
     <div className="session" ref={rootRef}>
+      {rerunTarget ? (
+        <ReResearchDialog
+          onChoose={(mode) => {
+            const target = rerunTarget;
+            setRerunTarget(null);
+            if (target) void requeueOne(target, false, mode);
+          }}
+          onCancel={() => setRerunTarget(null)}
+        />
+      ) : null}
       <button
         type="button"
         className="session__trigger"
@@ -282,7 +301,7 @@ export function SessionHistory({
                           <button
                             type="button"
                             className="session__rerun"
-                            onClick={() => requeueOne(task.task_id, false)}
+                            onClick={() => setRerunTarget(task.task_id)}
                             disabled={busyTaskId !== null}
                             title={t("从失败/停止节点重新研究")}
                           >

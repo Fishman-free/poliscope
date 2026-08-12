@@ -255,3 +255,53 @@
   color: var(--ink-3);
   margin-left: var(--space-2);
 }
+
+/* Round-12 恢复：模型思考过程（原始模型输出，折叠、等宽、明确标注为
+ * 过程数据而非证据）。不做任何动画。 */
+.council__tl-item > .council__reasoning {
+  width: 100%;
+}
+
+.council__tl-item > .council__reasoning + .council__reasoning {
+  margin-top: 0;
+}
+
+.council__reasoning {
+  border: 1px solid var(--app-hairline, var(--line));
+  border-radius: var(--radius-2);
+  background: var(--app-surface, var(--surface-0));
+}
+
+.council__reasoning + .council__reasoning {
+  margin-top: var(--space-2);
+}
+
+.council__reasoning summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: var(--text-small);
+  color: var(--app-ink-2, var(--ink-2));
+  min-height: 44px;
+}
+
+.council__reasoning-hint {
+  font-size: var(--text-micro);
+  color: var(--app-ink-3, var(--ink-3));
+  white-space: nowrap;
+}
+
+.council__reasoning-text {
+  margin: 0;
+  max-height: 24rem;
+  overflow: auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--app-hairline, var(--line));
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--text-small);
+  line-height: 1.5;
+}

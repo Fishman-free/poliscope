@@ -550,5 +550,22 @@ export const en: Record<string, string> = {
   "重新研究：从失败/停止节点交回队列，Worker 续跑": "Re-research: return the task to the queue from the failed/stopped point; the worker resumes",
   "席位运行状态": "Seat activity",
   "还没有席位开始运行。": "No seat has started yet.",
-  "每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判。仅展示结构化科研动作、检索与证据、质询与缺席原因——不展示模型私有推理链（CLAUDE.md 11）。": "Each scientist's chain: precommitment → actions in each round → final judgment. Only structured scientific actions, searches and evidence, challenges, and absence reasons are shown -- private model reasoning chains are not displayed (CLAUDE.md 11).",
+  "每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判。展示结构化科研动作、检索与证据、质询与缺席原因，以及折叠的模型思考过程（原始模型输出，非正式证据）。": "Each scientist's chain: precommitment → actions in each round → final judgment. Structured scientific actions, searches and evidence, challenges, and absence reasons are shown, plus collapsible model thinking (raw model output, not formal evidence).",
+
+  // Round-12: re-research mode dialog, streaming thinking restore, detailed
+  // integrated conclusion.
+  "请选择重新研究的方式：": "Choose how to re-run the research:",
+  "从断点处研究": "Restart from the first gap",
+  "从第一个未完成（失败或跳过）的阶段重新执行，已完成阶段原样保留；没有断点时自动从头研究。": "Re-runs from the first unfinished (failed or skipped) phase; completed phases stay as they are; with no recorded gap this falls back to a full restart.",
+  "从头研究": "Restart from scratch",
+  "整个研究过程从预承诺阶段开始重新执行。": "The whole protocol re-runs from the precommitment phase.",
+  "关闭": "Close",
+  "各方观点与缺陷": "Positions and their weaknesses",
+  "每一方的立场、其薄弱之处与支撑证据——争议不被折叠成单一声音。": "Each side's position, its weakness, and the evidence it leans on -- disagreement is not folded into one voice.",
+  "总体结论": "Overall conclusion",
+  "议会是否形成了总体观点，以及它依赖的证据。": "Whether the council reached an overall view, and the evidence it rests on.",
+  "支撑证据": "Supporting evidence",
+  "观点：{0}": "Position: {0}",
+  "缺陷：{0}": "Weakness: {0}",
+  "分歧：{0}": "Disagreement: {0}",
 };

@@ -1,14 +1,14 @@
-/** 实时进展：运行中议会的结构化过程轨迹可视化（CLAUDE.md 11）。
+/** 实时进展：运行中议会的思考链路可视化（CLAUDE.md 11）。
  *
  * 网页版要让研究者实时知道模型在干什么：数据来自两条流 —— 账本阶段事件
  * （PHASE_STARTED/PHASE_COMPLETED 驱动阶段时间线）与 process_stream 过程流
- * （结构化席位动作、工具调用、检索结果，独立连接）。
+ * （结构化席位动作、工具调用、检索结果、模型思考片段，独立连接）。
  *
- * 渲染纪律（CLAUDE.md 11）：只展示结构化过程轨迹 —— 阶段推进、席位运行
- * 状态、检索与文献链接、议会动作 —— 不展示模型私有思维链（model_reasoning
- * / model_token 原样丢弃）。这里出现的任何内容都不是正式结论，正式结论以
- * Research Brief 为准。过程流是易逝数据：重连后从服务端重放并由 seq 去重，
- * 不作为审计依据。
+ * 渲染纪律（CLAUDE.md 11）：展示结构化过程轨迹 —— 阶段推进、席位运行
+ * 状态、检索与文献链接、议会动作，以及各席位流式输出的思考过程
+ * （round-12 恢复：model_reasoning / model_token 片段实时聚合）。任何片段
+ * 都是过程数据而非正式证据，重连后从服务端重放并由 seq 去重，不作为
+ * 审计依据；正式结论以 Research Brief 与最终论文为准。
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -203,21 +203,26 @@ function phaseProgress(events: LedgerEvent[]): {
   return { current, done };
 }
 
-/** 每个席位最近的「一段」运行状态：从最近的 seat_deliberation 起跟踪模型
- * 调用的 running/等待时长，至最近的 model_done 结束。模型私有推理片段
- * （model_reasoning / model_token）被原样丢弃 —— 这里不渲染思维链，只
- * 呈现「该席位当前在做什么」（结构化状态）。
- *
+/** 每个席位最近的「一段」思考流：从最近的 seat_deliberation 起聚合
+ * reasoning/token 片段，至最近的 model_done 截断。倒序遍历取最后一段。
  * ``seat_working`` 是模型调用期间服务器发的心跳（elapsed = 已等待秒数），
  * 供「思考中… 已等待 Ns」显示：一次调用卡住时，前端不再只有死寂的
- * 「思考中…」，而是能看见它已经等了多久。 */
+ * 「思考中…」，而是能看见它已经等了多久。
+ *
+ * 思考片段（model_reasoning / model_token）是过程数据，不是正式证据：它
+ * 随模型调用实时流动，重连后从服务端重放并按 seq 去重。展示它们是为了
+ * 让研究者实时看见七位科学家正在想什么（round-12 恢复），但任何片段都
+ * 不是正式结论 —— 正式结论以 Research Brief 与最终论文为准。 */
 function seatStreams(
   processEvents: ProcessEvent[],
-): Record<string, { phase: string; running: boolean; elapsed: number }> {
-  const result: Record<string, { phase: string; running: boolean; elapsed: number }> = {};
+): Record<string, { phase: string; text: string; running: boolean; elapsed: number }> {
+  const result: Record<
+    string,
+    { phase: string; text: string; running: boolean; elapsed: number }
+  > = {};
   const current: Record<
     string,
-    { phase: string; running: boolean; elapsed: number }
+    { phase: string; parts: string[]; running: boolean; elapsed: number }
   > = {};
   for (const event of processEvents) {
     const payload = event.payload as Record<string, unknown>;
@@ -225,11 +230,15 @@ function seatStreams(
     if (event.kind === "seat_deliberation" && seat) {
       current[seat] = {
         phase: typeof payload.phase === "string" ? payload.phase : "",
+        parts: [],
         running: true,
         elapsed: 0,
       };
     } else if (seat && current[seat]) {
-      if (event.kind === "model_done") {
+      const text = typeof payload.text === "string" ? payload.text : "";
+      if (event.kind === "model_reasoning" || event.kind === "model_token") {
+        if (text) current[seat].parts.push(text);
+      } else if (event.kind === "model_done") {
         current[seat].running = false;
       } else if (event.kind === "seat_working") {
         const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
@@ -240,6 +249,7 @@ function seatStreams(
   for (const [seat, entry] of Object.entries(current)) {
     result[seat] = {
       phase: entry.phase,
+      text: entry.parts.join(""),
       running: entry.running,
       elapsed: entry.elapsed,
     };
@@ -414,6 +424,16 @@ export function LiveView({
     () => Object.values(streams).some((entry) => entry.running),
     [streams],
   );
+
+  // 思考流自动滚底（round-12 恢复）：新片段到达时把每个有流的席位面板滚
+  // 到底 —— 研究者在看「现在」，不是往回翻。手动上滚会被下一次 flush
+  // 拉回，这是实时视图的取舍。
+  const streamRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => {
+    for (const ref of Object.values(streamRefs.current)) {
+      if (ref) ref.scrollTop = ref.scrollHeight;
+    }
+  }, [processEvents.length]);
   const claimLabels = useMemo(
     () => buildClaimLabels(claims ?? [], graph ?? { nodes: [], edges: [] }),
     [claims, graph],
@@ -623,6 +643,22 @@ export function LiveView({
                           <span className="live__seat-idle">{t("已完成")}</span>
                         )}
                       </div>
+                      {/* round-12 恢复：流式思考过程。过程数据，非正式证据——
+                         正式结论以 Research Brief 与最终论文为准。 */}
+                      {entry.text ? (
+                        <div
+                          className="live__seat-stream"
+                          ref={(node) => {
+                            streamRefs.current[seat] = node;
+                          }}
+                        >
+                          <p className="live__seat-stream-text">{entry.text}</p>
+                        </div>
+                      ) : entry.running ? (
+                        <p className="live__seat-stream live__seat-stream--empty">
+                          {t("（尚无输出）")}
+                        </p>
+                      ) : null}
                     </div>
                   ))
                 )}

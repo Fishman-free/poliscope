@@ -139,6 +139,24 @@ class FollowUpRequest(ContractModel):
     question: str = ""
 
 
+class ReResearchRequest(ContractModel):
+    """Body for POST /api/tasks/{id}/re-research (round-12 「重新研究模式」).
+
+    ``mode`` decides where the re-run starts:
+
+    - ``full``: the whole protocol re-runs from PRECOMMITMENT (the council
+      checkpoint is cleared; ledger idempotency keys make the replay safe).
+    - ``first_gap`` (default): restart from the first unfinished phase when
+      the checkpoint records one; with no recorded gap this degrades to
+      ``full``.
+
+    The same semantics apply to deep-research and paper-review tasks alike --
+    both run through the same worker resume path.
+    """
+
+    mode: str = "first_gap"
+
+
 class TaskResponse(ContractModel):
     id: UUID
     question: str

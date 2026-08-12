@@ -177,3 +177,54 @@
   color: var(--ink-1);
   line-height: 1.6;
 }
+
+/* Round-12 「整合结论详细化」: per-side standpoints and the overall conclusion. */
+.paper__standpoints {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.paper__standpoint {
+  padding: var(--space-4);
+  border: 1px solid var(--app-hairline, var(--line));
+  border-radius: var(--radius-2);
+  background: var(--app-surface-2, var(--surface-1));
+}
+
+.paper__standpoint-seat {
+  font-size: var(--text-small);
+  font-weight: 600;
+  margin: 0 0 var(--space-2);
+  color: var(--app-ink, var(--ink-1));
+}
+
+.paper__standpoint-position,
+.paper__standpoint-weakness,
+.paper__standpoint-disagreement {
+  margin: 0 0 var(--space-2);
+  line-height: 1.5;
+}
+
+.paper__standpoint-weakness {
+  color: var(--app-ink-3, var(--ink-3));
+}
+
+.paper__standpoint-evidence {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--app-ink-3, var(--ink-3));
+}
+
+.paper__conclusion {
+  font-size: var(--text-medium);
+  line-height: 1.6;
+}
+
+.paper__conclusion-evidence {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--app-ink-3, var(--ink-3));
+}

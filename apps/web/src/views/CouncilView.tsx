@@ -11,11 +11,11 @@
  * ``PHASE_STARTED`` events, and every seat action -- evidence requests and
  * publications, challenges, bounty assignments, absences -- is an entry under
  * the phase its sequence falls in. The model's raw chain of thought
- * (``MODEL_REASONING_CAPTURED``, process-only) is deliberately **not**
- * rendered here or anywhere: it is the vendor's private thinking, never
- * evidence, never a basis for SUPPORTS/REFUTES (CLAUDE.md 5.1/11). Only the
- * structured scientific actions, tool calls, retrieved sources, challenges,
- * absences and audit summaries are shown.
+ * (``MODEL_REASONING_CAPTURED``, process-only) is restored round-12 as a
+ * collapsed entry under its phase, clearly labelled as raw model output and
+ * never evidence -- it is never a basis for SUPPORTS/REFUTES (CLAUDE.md
+ * 5.1/11). Structured scientific actions, tool calls, retrieved sources,
+ * challenges, absences and audit summaries remain the primary content.
  *
  * Data sources: the timeline runs off ``events`` (the SSE stream replays from
  * sequence 0 on connect, so it is complete and ordered by
@@ -55,6 +55,7 @@ const SEAT_EVENT_KINDS = new Set([
   "CHALLENGE_RAISED",
   "FINAL_JUDGMENT",
   "SEAT_UNAVAILABLE",
+  "MODEL_REASONING_CAPTURED",
 ]);
 
 interface PhaseSpan {
@@ -151,6 +152,25 @@ function seatName(seat: string): string {
  * background). */
 function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
   const { kind, payload } = entry;
+
+  // round-12 恢复：模型的思考过程（MODEL_REASONING_CAPTURED）折叠展示。
+  // 明确标注为过程数据（原始模型输出，非正式证据），绝不作为 SUPPORTS/
+  // REFUTES 的依据 —— 这里只是让研究者能读到席位在想什么。
+  if (kind === "MODEL_REASONING_CAPTURED") {
+    const reasoning = typeof payload.reasoning === "string" ? payload.reasoning : "";
+    if (!reasoning.trim()) return null;
+    return (
+      <li className="council__tl-item">
+        <details className="council__reasoning">
+          <summary>
+            {t("模型思考过程")}
+            <span className="council__reasoning-hint">{t("原始模型输出，非正式证据")}</span>
+          </summary>
+          <pre className="council__reasoning-text">{reasoning}</pre>
+        </details>
+      </li>
+    );
+  }
 
   if (kind === "PRECOMMITMENT_SEALED") {
     const confidence = payload.confidence;
@@ -448,7 +468,7 @@ export function CouncilView({
   return (
     <Panel
       title={t("七人议会")}
-      subtitle={t("每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判。仅展示结构化科研动作、检索与证据、质询与缺席原因——不展示模型私有推理链（CLAUDE.md 11）。")}
+      subtitle={t("每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判。展示结构化科研动作、检索与证据、质询与缺席原因，以及折叠的模型思考过程（原始模型输出，非正式证据）。")}
     >
       <StanceSummary seats={seats} />
       <ConsensusPanel consensus={consensus ?? null} />

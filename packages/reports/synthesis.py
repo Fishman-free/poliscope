@@ -57,6 +57,7 @@ from packages.reports.contracts import (
     PaperSection,
     ReviewClaim,
     ReviewIssue,
+    Standpoint,
     SynthesisOutcome,
 )
 from packages.reports.safety import sanitize_export
@@ -123,6 +124,7 @@ def _fallback_integrated_paper(
     brief: ResearchBrief,
     consensus: dict[str, object],
     question: str,
+    judgments: tuple[tuple[str, object], ...] = (),
 ) -> FinalPaper:
     """Assemble an integrated paper from the brief alone, no model involved.
 
@@ -138,6 +140,11 @@ def _fallback_integrated_paper(
 
     ``consensus`` is optional material (absent on a run where joint modeling
     did not complete); every other field comes straight off the brief.
+    Round-12 「整合结论详细化」: ``judgments`` (the seven seats' independent
+    final judgments from the ledger) feeds the standpoints section -- each
+    side named with its stated weakness -- and the overall conclusion, so the
+    deterministic path is just as explicit about who argued what as the model
+    path.
     """
     confirmed_lines = [
         f"- {claim.statement}（{claim.claim_type}；"
@@ -203,6 +210,38 @@ def _fallback_integrated_paper(
         PaperSection(heading="争议、盲点与异议", paragraphs=tuple(controversy))
     )
 
+    # Round-12 「整合结论详细化」: the fallback must say just as clearly as
+    # the model path which sides argued what, where each is weak, and whether
+    # an overall view emerged -- assembled deterministically from the final
+    # judgments and consensus the ledger already holds.
+    standpoints: tuple[Standpoint, ...] = ()
+    if judgments:
+        standpoints = tuple(
+            Standpoint(
+                seat=seat,
+                position=str(judgment),
+                weakness=(
+                    "该席对条件化共识持异议，其反驳理由见审计轨迹中的质询与异议记录"
+                    if "DISSENT" in str(judgment)
+                    else "该席未记录异议；其论证的完整展开见审计轨迹"
+                    "（确定性降级不重建席位间论证）"
+                ),
+                supporting_evidence=tuple(),
+            )
+            for seat, judgment in judgments
+        )
+    overall: list[str] = []
+    if consensus_lines:
+        overall.append("各席位在联合建模中形成了如下条件化共识：")
+        overall.extend(consensus_lines)
+    else:
+        overall.append(
+            "未记录到形成中的条件化共识；最终总体观点需结合各席位独立复判与审计轨迹判断。"
+        )
+    sections.append(
+        PaperSection(heading="总体结论", paragraphs=tuple(overall))
+    )
+
     limitations = list(brief.limitations)
     if brief.has_gaps:
         gap_parts: list[str] = []
@@ -234,6 +273,13 @@ def _fallback_integrated_paper(
     references: tuple[PaperReference, ...] = ()
 
     title = f"关于「{question}」的议会整合结论"
+    overall_conclusion = _as_str(consensus.get("conditional_consensus")) or (
+        "未记录到形成中的条件化共识；总体结论需结合各席位独立复判与审计轨迹判断。"
+    )
+    # The overall conclusion rests on the admitted findings; list them plainly
+    # (the same statements the sections above already show, capped so the
+    # field stays a summary, not a second copy of the paper).
+    conclusion_evidence = tuple(finding_lines[:6])
     return FinalPaper(
         title=title,
         abstract="、".join(background[:3])[:200] or title,
@@ -241,6 +287,9 @@ def _fallback_integrated_paper(
         references=references,
         limitations=tuple(limitations),
         investigation_process=tuple(process),
+        standpoints=standpoints,
+        overall_conclusion=overall_conclusion,
+        conclusion_evidence=conclusion_evidence,
     )
 
 
@@ -294,6 +343,27 @@ def _parse_paper(payload: dict[str, object]) -> FinalPaper:
     if not sections:
         raise ValueError("paper payload produced no sections")
 
+    standpoints: list[Standpoint] = []
+    raw_standpoints = payload.get("standpoints")
+    if isinstance(raw_standpoints, (list, tuple)):
+        for item in raw_standpoints:
+            if not isinstance(item, Mapping):
+                continue
+            seat = _as_str(item.get("seat"))
+            position = _as_str(item.get("position"))
+            weakness = _as_str(item.get("weakness"))
+            if not seat or not position:
+                continue
+            standpoints.append(
+                Standpoint(
+                    seat=seat,
+                    position=position,
+                    weakness=weakness,
+                    supporting_evidence=_strings(item.get("supporting_evidence")),
+                    disagreement=_as_str(item.get("disagreement")),
+                )
+            )
+
     return FinalPaper(
         title=title,
         abstract=abstract,
@@ -301,6 +371,9 @@ def _parse_paper(payload: dict[str, object]) -> FinalPaper:
         references=references,
         limitations=limitations,
         investigation_process=process,
+        standpoints=tuple(standpoints),
+        overall_conclusion=_as_str(payload.get("overall_conclusion")),
+        conclusion_evidence=_strings(payload.get("conclusion_evidence")),
     )
 
 
@@ -454,6 +527,18 @@ def _build_user_prompt(
         "or references that are not listed here. State uncertainties and ",
         "limitations honestly -- a gap is a correct answer, a confident ",
         "guess is not.",
+        "",
+        "The paper MUST make the debate explicit, not blend it into one voice. ",
+        "In the standpoints field, name each distinct side of the controversy: ",
+        "which seat(s) argue what (position), where that position is weak or ",
+        "contested (weakness), the admitted evidence it leans on ",
+        "(supporting_evidence, citing the findings and claims listed below), ",
+        "and how it disagrees with the other sides (disagreement). Then state ",
+        "whether the council reached an overall conclusion and what it is ",
+        "(overall_conclusion) -- or that no overall conclusion was reached and "
+        "why -- and list the admitted evidence the overall conclusion rests on "
+        "(conclusion_evidence). Be detailed; do not collapse dissenting "
+        "positions into the majority view.",
         "",
     ]
     lines.extend(_material_brief_lines(brief))
@@ -806,6 +891,7 @@ async def _emit_fallback_paper(
     fallback_reason: str,
     is_review: bool = False,
     understanding: dict[str, object] | None = None,
+    judgments: tuple[tuple[str, object], ...] = (),
     idempotency_key: str = _PAPER_IDEMPOTENCY_KEY,
     emergency: bool = False,
 ) -> SynthesisOutcome:
@@ -816,7 +902,9 @@ async def _emit_fallback_paper(
         )
         stored_payload = _review_payload_dict(review)
     else:
-        paper = _fallback_integrated_paper(brief, consensus, question)
+        paper = _fallback_integrated_paper(
+            brief, consensus, question, judgments=judgments
+        )
         stored_payload = {
             "title": paper.title,
             "abstract": paper.abstract,
@@ -910,6 +998,7 @@ async def synthesize_paper(
             fallback_reason=fallback_reason,
             is_review=is_review,
             understanding=understanding,
+            judgments=judgments,
             idempotency_key=(
                 _EMERGENCY_PAPER_IDEMPOTENCY_KEY
                 if emergency_reason is not None
@@ -1011,6 +1100,7 @@ async def synthesize_paper(
             fallback_reason=reason,
             is_review=is_review,
             understanding=understanding,
+            judgments=judgments,
         )
 
     stored_payload: dict[str, object] = (
@@ -1029,6 +1119,20 @@ async def synthesize_paper(
             ],
             "limitations": list(paper.limitations),
             "investigation_process": list(paper.investigation_process),
+            "standpoints": [
+                {
+                    "seat": standpoint.seat,
+                    "position": standpoint.position,
+                    "weakness": standpoint.weakness,
+                    "supporting_evidence": list(
+                        standpoint.supporting_evidence
+                    ),
+                    "disagreement": standpoint.disagreement,
+                }
+                for standpoint in paper.standpoints
+            ],
+            "overall_conclusion": paper.overall_conclusion,
+            "conclusion_evidence": list(paper.conclusion_evidence),
         }
     )
     await SqlEventLedger(session).append(

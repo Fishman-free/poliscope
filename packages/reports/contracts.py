@@ -36,6 +36,23 @@ class PaperReference:
 
 
 @dataclass(frozen=True, slots=True)
+class Standpoint:
+    """One scientist seat's position in the debate, its stated weakness, and
+    the evidence it rests on (round-12 「整合结论详细化」).
+
+    The synthesizer names each side explicitly -- what it argues, where that
+    position is weak, and what admitted evidence it leans on -- so a reader
+    can trace every view instead of receiving a single blended conclusion.
+    """
+
+    seat: str
+    position: str
+    weakness: str
+    supporting_evidence: tuple[str, ...] = ()
+    disagreement: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class FinalPaper:
     """The synthesised paper: one model call's integration of the council's
     already-admitted outputs. An expression-layer document, never evidence.
@@ -43,6 +60,12 @@ class FinalPaper:
     ``limitations`` sit beside the conclusions in the renderer, not at the
     end, because CLAUDE.md 11 requires them side by side and CLAUDE.md 4
     forbids a report that reads as consensus when dissent was recorded.
+
+    Round-12 「整合结论详细化」: ``standpoints`` names each side's position
+    and its weakness, ``overall_conclusion`` states whether and what the
+    council's overall view is, and ``conclusion_evidence`` lists the admitted
+    evidence the overall conclusion rests on. All three default to empty so a
+    model that did not emit them still produces a valid paper.
     """
 
     title: str
@@ -51,6 +74,9 @@ class FinalPaper:
     references: tuple[PaperReference, ...]
     limitations: tuple[str, ...]
     investigation_process: tuple[str, ...]
+    standpoints: tuple[Standpoint, ...] = ()
+    overall_conclusion: str = ""
+    conclusion_evidence: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

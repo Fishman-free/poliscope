@@ -509,6 +509,25 @@ Evidence Lineage Graph 至少识别：
 - 审计覆盖和系统局限；
 - 完整参考文献和事件附录。
 
+### 8.6.1 重新研究模式（round-12）
+
+`FAILED` 或 `CANCELLED` 任务可以重新研究。`POST /api/tasks/{id}/re-research` 接受可选 `mode`：
+
+- `full`：清除议会 checkpoint，整个研究从 PRECOMMITMENT 重新执行；账本幂等键保证已完成阶段的事件不会重复写入，但每个席位都会被重新征询，过程流会展示整轮重跑；
+- `first_gap`（默认）：从**第一个未完成阶段**重新执行——该阶段因失败从未写入其正式事件，重跑会真正补齐；它之前以及之后**已完成**的阶段保持原事件与 carried 状态（不重复写账本、不重复花模型预算）。没有记录到断点时自动退化为 `full`。
+
+两种模式对深度研究与论文审查任务同样生效（同一 Worker 续跑路径）。checkpoint 为每个已运行阶段保存状态快照（`phase_snapshots`），重跑回退到第一个失败阶段之前的状态；`restart_from` 标记由 Service 在首次 gap 时写入，Worker 恢复时据此回退。Web 工作台点击「重新研究」会先弹出模式选择；「继续研究」仍只用于 `PAUSED`（`/resume`）。
+
+### 8.6.2 整合结论详细化（round-12）
+
+最终论文（FinalPaper）必须把争议写清楚，而不是折叠成单一声音：
+
+- `standpoints`：每一方的立场（哪些席位主张什么）、其薄弱之处（weakness）、其依赖的已采纳证据（supporting_evidence）与分歧点（disagreement）；
+- `overall_conclusion`：议会是否形成了总体观点、观点是什么——若未形成，明确说明原因；
+- `conclusion_evidence`：总体观点所依赖的已采纳证据。
+
+综合模型的 prompt 显式要求输出这些字段；无模型或模型失败时的确定性降级路径同样组装这些字段（从账本中的独立复判与条件化共识）。字段全部可选，旧模型输出不产出时解析器以空值兜底，仍生成合法论文。
+
 ### 8.7 多入口产品交付
 
 Poliscope 保留完整 Web 科研工作台作为主要产品，同时提供稳定 API、CLI 和 Agent Skill 入口。四种入口共享同一套 Research Service、EpistemoBrain、7 人议会、MemoBrain、Evidence Gate、Scientific Event Ledger 与 Evidence Graph，不复制科研逻辑：

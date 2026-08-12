@@ -22,6 +22,7 @@ import { cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdow
 import type { ResearchBrief, TaskSummary } from "./api/types";
 import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
+import { ReResearchDialog } from "./components/ReResearchDialog";
 import { Spinner, TaskStatusBadge } from "./components/primitives";
 import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "./i18n";
 import { AccountMenu } from "./views/AccountMenu";
@@ -518,12 +519,26 @@ export function App() {
     [busyTask, taskId, refresh],
   );
 
-  /** 「重新研究」：把 FAILED/CANCELLED 任务交回队列，worker 从 checkpoint
-   * 续跑（round-8/10 语义）。 */
+  /** 「重新研究」：把 FAILED/CANCELLED 任务交回队列。round-12 起先弹出
+   * 模式选择（从头研究 / 从断点处研究），再按所选模式发起请求——两种
+   * 模式对深度研究与论文审查任务同样生效。 */
+  const [rerunTarget, setRerunTarget] = useState<string | null>(null);
+
   const handleReResearch = useCallback(
-    (target: string) => runMutation(target, reResearch),
-    [runMutation],
+    (target: string) => setRerunTarget(target),
+    [],
   );
+
+  const handleRerunChoose = useCallback(
+    (mode: "full" | "first_gap") => {
+      const target = rerunTarget;
+      setRerunTarget(null);
+      if (target) void runMutation(target, (id) => reResearch(id, mode));
+    },
+    [rerunTarget, runMutation],
+  );
+
+  const handleRerunCancel = useCallback(() => setRerunTarget(null), []);
 
   /** 「继续研究」：把 PAUSED 任务交回队列（后端 /resume 只接受 PAUSED）。 */
   const handleResume = useCallback(
@@ -636,6 +651,12 @@ export function App() {
 
   return (
     <div className="app">
+      {rerunTarget ? (
+        <ReResearchDialog
+          onChoose={handleRerunChoose}
+          onCancel={handleRerunCancel}
+        />
+      ) : null}
       <header className="app__chrome">
         <div className="app__identity">
           <a className="app__wordmark" href="/" title={t("返回公开落地页")}>

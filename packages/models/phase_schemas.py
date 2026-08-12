@@ -302,6 +302,29 @@ FINAL_PAPER_OUTPUT: Final[dict[str, Any]] = {
         },
         "limitations": {"type": "array", "items": {"type": "string"}},
         "investigation_process": {"type": "array", "items": {"type": "string"}},
+        # Round-12 「整合结论详细化」: each side's position and weakness, the
+        # overall conclusion, and the admitted evidence it rests on. Optional
+        # so a vendor that omits them still produces a valid paper (the
+        # parser defaults the fields to empty).
+        "standpoints": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "seat": {"type": "string"},
+                    "position": {"type": "string"},
+                    "weakness": {"type": "string"},
+                    "supporting_evidence": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "disagreement": {"type": "string"},
+                },
+                "required": ["seat", "position", "weakness"],
+            },
+        },
+        "overall_conclusion": {"type": "string"},
+        "conclusion_evidence": {"type": "array", "items": {"type": "string"}},
     },
     "required": [
         "title",

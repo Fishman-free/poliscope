@@ -12,7 +12,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from packages.epistemo.contracts import CouncilCheckpoint, TaskStatus
+from packages.epistemo.contracts import (
+    CouncilCheckpoint,
+    TaskStatus,
+    first_unfinished_phase,
+)
 from packages.research.atomization import suggest_atomic_claims
 from packages.research.contracts import ResearchContract
 from packages.research.repository import (
@@ -134,17 +138,26 @@ class ResearchService:
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
 
-    async def re_research(self, task_id: UUID) -> str:
+    async def re_research(self, task_id: UUID, mode: str = "first_gap") -> str:
         """Move a FAILED (or CANCELLED) task back to QUEUED for another run.
 
         ``重新研究`` (round-8): a task that ended in FAILED -- e.g. an
-        unrecoverable event conflict or a watchdog timeout -- is requeued. The
-        worker resumes from the stored council checkpoint if one exists (the
-        phases before it are not re-run, and their ledger events replay as
-        no-ops via stable idempotency keys); a task that failed before reaching
-        the checkpoint re-runs its early phases, which is an honest restart.
+        unrecoverable event conflict or a watchdog timeout -- is requeued.
         Round-10: a CANCELLED task (the researcher stopped it) is re-runnable
         the same way -- stopping was a redirection, not a verdict on the work.
+
+        Round-12 「重新研究模式」: ``mode`` decides where the re-run starts.
+
+        - ``full``: the council checkpoint is cleared, so the worker re-runs
+          the whole protocol from PRECOMMITMENT. Ledger idempotency keys make
+          the replay safe (completed phases' events no-op), but every seat is
+          asked again and the process stream shows the full run.
+        - ``first_gap`` (default): if the stored checkpoint records a failed
+          or skipped phase, the checkpoint is marked ``restart_from`` so the
+          worker rewinds to that first unfinished phase -- it re-executes
+          (its events were never written), while every completed phase stays
+          exactly as it was. If there is no gap (or no checkpoint), this
+          degrades to ``full``: starting over from the beginning.
         """
         task = await self._repository.get_task(task_id)
         if task.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
@@ -153,6 +166,37 @@ class ResearchService:
                 f"{TaskStatus.CANCELLED}; only a failed or cancelled task can "
                 "be re-researched"
             )
+        if mode != "full" and task.council_checkpoint is not None:
+            # first_gap: rewind to the first unfinished phase when one is
+            # recorded; otherwise fall through to the full restart below.
+            checkpoint = CouncilCheckpoint.model_validate(
+                task.council_checkpoint
+            )
+            first = first_unfinished_phase(checkpoint)
+            if first is not None:
+                # The contract is immutable; rebuild the checkpoint with
+                # the restart marker so the worker rewinds to that phase.
+                checkpoint = CouncilCheckpoint(
+                    run_phases=checkpoint.run_phases,
+                    carried=checkpoint.carried,
+                    unfilled=checkpoint.unfilled,
+                    absent_seats=checkpoint.absent_seats,
+                    failures=checkpoint.failures,
+                    events_appended=checkpoint.events_appended,
+                    phase_snapshots=checkpoint.phase_snapshots,
+                    restart_from=first,
+                    guidance=checkpoint.guidance,
+                )
+                await self._repository.set_checkpoint(
+                    task_id, checkpoint.model_dump(mode="json")
+                )
+                await self._repository.set_status(
+                    task_id, TaskStatus.QUEUED
+                )
+                return TaskStatus.QUEUED
+        # full, or first_gap with no recorded gap: clear the checkpoint and
+        # start over from the beginning.
+        await self._repository.set_checkpoint(task_id, None)
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
 

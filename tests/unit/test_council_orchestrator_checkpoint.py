@@ -20,6 +20,7 @@ from packages.epistemo.budget import BudgetTracker, ResearchBudget
 from packages.epistemo.contracts import (
     PHASE_SEQUENCE,
     CouncilCheckpoint,
+    CouncilPhaseSnapshot,
     TaskPhase,
     TaskStatus,
 )
@@ -346,3 +347,156 @@ async def test_cancel_check_never_fires_returns_normal_completion() -> None:
     assert report.phases_run == PHASE_SEQUENCE
     assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
     assert report.stop_reason.value == "CONTINUE"
+
+
+async def test_restart_from_first_failed_phase_reruns_only_unfinished_phases() -> (
+    None
+):
+    """Round-12 「重新研究从断点续跑」: a checkpoint marked restart_from
+    re-executes the first failed phase (and any later failed phase), while
+    every phase that actually completed stays untouched -- its events are not
+    appended a second time.
+
+    The checkpoint here is hand-built the way ResearchService.re_research
+    marks one: run_phases lists all five pre-checkpoint phases (EVIDENCE_EXCHANGE
+    among them, since a failed phase is still recorded as having run),
+    failures/unfilled record that EVIDENCE_EXCHANGE and BLINDSPOT_BOUNTY
+    failed, phase_snapshots hold the accumulated state after each phase, and
+    restart_from points at the first failed phase.
+    """
+    sink = _FakeEventSink()
+    budget = BudgetTracker(limits=_GENEROUS_BUDGET)
+    orchestrator = CouncilOrchestrator(ledger=sink, budget=budget)
+    task_id = uuid4()
+
+    p, a, ee, ce, bb = (
+        TaskPhase.PRECOMMITMENT,
+        TaskPhase.ACQUISITION,
+        TaskPhase.EVIDENCE_EXCHANGE,
+        TaskPhase.CROSS_EXAMINATION,
+        TaskPhase.BLINDSPOT_BOUNTY,
+    )
+    # events_appended values only need to be consistent for the rewind math
+    # (the snapshot the orchestrator rewinds to is the last kept phase's).
+    checkpoint = CouncilCheckpoint(
+        run_phases=(p, a, ee, ce, bb),
+        carried={"confirmed": "claim-1"},
+        unfilled=(
+            "EVIDENCE_EXCHANGE:round_failed",
+            "BLINDSPOT_BOUNTY:round_failed",
+        ),
+        failures=(
+            "EVIDENCE_EXCHANGE: ValueError('boom')",
+            "BLINDSPOT_BOUNTY: RuntimeError('stuck')",
+        ),
+        phase_snapshots=(
+            CouncilPhaseSnapshot(phase=p, events_appended=2),
+            CouncilPhaseSnapshot(phase=a, events_appended=4),
+            CouncilPhaseSnapshot(phase=ee, events_appended=5),
+            CouncilPhaseSnapshot(phase=ce, events_appended=9),
+            CouncilPhaseSnapshot(phase=bb, events_appended=10),
+        ),
+        restart_from=ee,
+    )
+
+    report = await orchestrator.run(
+        task_id=task_id,
+        question="does X cause Y?",
+        resume_from=checkpoint,
+    )
+
+    # The whole protocol is covered: the two failed phases re-ran and the
+    # remaining phases (JOINT_MODELING onward) ran for the first time. (The
+    # tuple order reflects execution order -- kept phases are carried over in
+    # their checkpoint order, re-run phases slot in at their protocol
+    # position -- so compare as sets.)
+    assert set(report.phases_run) == set(PHASE_SEQUENCE)
+
+    # Completed phases (PRECOMMITMENT, ACQUISITION, CROSS_EXAMINATION) were
+    # NOT re-run: this run() call appended none of their events (their events
+    # already live on the ledger from the original run; the fake sink only
+    # records what this call appended).
+    for phase in (p, a, ce):
+        assert sink.recorded_keys().count(f"{phase.value}:started") == 0, phase
+
+    # The failed phases re-ran for real: this call appended their PHASE_STARTED
+    # and, because the re-run succeeded (no deliberator means every seat is
+    # recorded absent, not a failure), their PHASE_COMPLETED -- and no new
+    # PHASE_FAILED.
+    for phase in (ee, bb):
+        assert sink.recorded_keys().count(f"{phase.value}:started") == 1, phase
+        assert sink.recorded_keys().count(f"{phase.value}:completed") == 1, phase
+        assert sink.recorded_keys().count(f"{phase.value}:failed") == 0, phase
+
+    # The rewind reconstructed the state before the first failed phase: the
+    # unfilled slots from the failed phases are gone, and only the slots the
+    # re-run itself produced (the UnavailableDeliberator's absence markers)
+    # remain. The carried value from the pre-failure snapshot is preserved.
+    assert "EVIDENCE_EXCHANGE:round_failed" not in report.unfilled_slots
+    assert "BLINDSPOT_BOUNTY:round_failed" not in report.unfilled_slots
+    assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
+
+
+async def test_restart_from_phase_without_snapshots_falls_back_to_full_restart() -> (
+    None
+):
+    """A restart_from marker on a legacy checkpoint (no phase_snapshots) can
+    not rewind; the honest fallback is a full restart from the beginning."""
+    sink = _FakeEventSink()
+    budget = BudgetTracker(limits=_GENEROUS_BUDGET)
+    orchestrator = CouncilOrchestrator(ledger=sink, budget=budget)
+    task_id = uuid4()
+
+    p, a = TaskPhase.PRECOMMITMENT, TaskPhase.ACQUISITION
+    checkpoint = CouncilCheckpoint(
+        run_phases=(p, a),
+        failures=(f"{a.value}: boom",),
+        unfilled=(f"{a.value}:round_failed",),
+        phase_snapshots=(),
+        restart_from=a,
+    )
+
+    report = await orchestrator.run(
+        task_id=task_id,
+        question="does X cause Y?",
+        resume_from=checkpoint,
+    )
+
+    assert report.phases_run == PHASE_SEQUENCE
+    # Nothing is skipped: every phase's PHASE_STARTED fired exactly once
+    # because the run went from scratch.
+    for phase in PHASE_SEQUENCE:
+        assert sink.recorded_keys().count(f"{phase.value}:started") == 1, phase
+
+
+async def test_restart_from_none_resumes_from_checkpoint_end() -> None:
+    """Without restart_from the checkpoint behaves exactly as before:
+    everything already run is skipped, nothing before the checkpoint is
+    appended a second time."""
+    sink = _FakeEventSink()
+    budget = BudgetTracker(limits=_GENEROUS_BUDGET)
+    orchestrator = CouncilOrchestrator(ledger=sink, budget=budget)
+    task_id = uuid4()
+
+    halted = await orchestrator.run(
+        task_id=task_id,
+        question="does X cause Y?",
+        stop_before=TaskPhase.JOINT_MODELING,
+    )
+    assert halted.checkpoint is not None
+    keys_after_halt = list(sink.recorded_keys())
+
+    await orchestrator.run(
+        task_id=task_id,
+        question="does X cause Y?",
+        resume_from=halted.checkpoint,
+    )
+
+    for key in keys_after_halt:
+        assert sink.recorded_keys().count(key) == 1
+    for phase in (
+        TaskPhase.JOINT_MODELING,
+        TaskPhase.FINAL_REJUDGMENT,
+        TaskPhase.REPORTING,
+    ):
+        assert any(key.startswith(f"{phase.value}:") for key in sink.recorded_keys())

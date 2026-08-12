@@ -45,8 +45,10 @@ from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.epistemo.contracts import (
     PHASE_SEQUENCE,
     CouncilCheckpoint,
+    CouncilPhaseSnapshot,
     TaskPhase,
     TaskStatus,
+    checkpoint_failed_phases,
 )
 from packages.epistemo.state_machine import TaskStateMachine
 from packages.epistemo.stopping import StopReason, decide_stop
@@ -293,20 +295,76 @@ class CouncilOrchestrator:
         run_phases: list[TaskPhase] = (
             list(resume_from.run_phases) if resume_from else []
         )
-        already_run = frozenset(run_phases)
+        kept: frozenset[TaskPhase] = (
+            frozenset(resume_from.run_phases) if resume_from else frozenset()
+        )
         skipped: list[TaskPhase] = []
         stop = StopReason.CONTINUE
+        snapshots: list[CouncilPhaseSnapshot] = (
+            list(resume_from.phase_snapshots) if resume_from else []
+        )
 
         if resume_from is not None:
-            state.carried.update(dict(resume_from.carried))
-            state.unfilled.extend(resume_from.unfilled)
-            state.absent.update(resume_from.absent_seats)
-            state.failures.extend(resume_from.failures)
-            state.events = resume_from.events_appended
-            # Fast-forward the state machine through the already-completed
-            # phases, in order, without re-emitting anything -- this is what
-            # satisfies _transition_to_phase's strict "current + 1" rule once
-            # the loop below reaches the first phase after the checkpoint.
+            restart = resume_from.restart_from
+            if restart is not None:
+                # Round-12 「重新研究从断点续跑」: the researcher chose to
+                # restart from the first failed phase. Phases before it -- and
+                # every phase after it that actually completed -- stay exactly
+                # as the checkpoint recorded them (their events and carried
+                # state are unchanged, so no ledger event is re-written and no
+                # model budget is re-spent). Only the failed phase and any
+                # later failed phase re-execute; the failed phase's own events
+                # were never written when it failed, so the re-run writes them
+                # for real -- this is the "unfinished phase is actually
+                # redone" guarantee. A rewind needs the per-phase snapshots;
+                # without them (a legacy checkpoint) we fall back to running
+                # from the start, which is the honest no-state restart.
+                failed = checkpoint_failed_phases(resume_from)
+                restart_phases = {
+                    phase
+                    for phase in failed
+                    if PHASE_SEQUENCE.index(phase)
+                    >= PHASE_SEQUENCE.index(restart)
+                }
+                kept = frozenset(
+                    phase
+                    for phase in resume_from.run_phases
+                    if phase not in restart_phases
+                )
+                snapshots = [
+                    snapshot
+                    for snapshot in snapshots
+                    if snapshot.phase in kept
+                ]
+                base: CouncilPhaseSnapshot | None = None
+                for snapshot in snapshots:
+                    if snapshot.phase in kept:
+                        base = snapshot
+                if base is not None:
+                    state.carried.update(dict(base.carried))
+                    state.unfilled.extend(base.unfilled)
+                    state.absent.update(base.absent_seats)
+                    state.failures.extend(base.failures)
+                    state.events = base.events_appended
+                else:
+                    # No snapshot to rewind to: restart from scratch.
+                    state = _Accumulator()
+                    kept = frozenset()
+                    snapshots = []
+                run_phases = [phase for phase in PHASE_SEQUENCE if phase in kept]
+            else:
+                state.carried.update(dict(resume_from.carried))
+                state.unfilled.extend(resume_from.unfilled)
+                state.absent.update(resume_from.absent_seats)
+                state.failures.extend(resume_from.failures)
+                state.events = resume_from.events_appended
+            # Fast-forward the state machine through every phase the original
+            # run covered, in order -- including phases that failed and will
+            # re-execute below -- so the strict "current + 1" rule holds when
+            # the loop reaches the first phase after the checkpoint. A
+            # restarted phase was part of the original run, so it is already
+            # fast-forwarded past; executing it again needs no second
+            # transition.
             for phase in resume_from.run_phases:
                 machine.transition_to(phase)
 
@@ -318,8 +376,17 @@ class CouncilOrchestrator:
         self._run_started = time.monotonic()
 
         for phase in PHASE_SEQUENCE:
-            if phase in already_run:
+            if phase in kept:
+                # Already-completed phases were fast-forwarded above and are
+                # not executed again -- their events and carried state are
+                # exactly what the checkpoint/snapshot recorded.
                 continue
+            if resume_from is None or phase not in resume_from.run_phases:
+                # Advance the state machine only for phases the fast-forward
+                # above did not already cover. A restarted phase (round-12)
+                # was part of the original run, so it was fast-forwarded past;
+                # re-executing it does not need a second transition.
+                machine.transition_to(phase)
             if (
                 stop_before is not None
                 and phase == stop_before
@@ -349,10 +416,10 @@ class CouncilOrchestrator:
                     ),
                     failures=tuple(state.failures),
                     events_appended=state.events,
+                    phase_snapshots=tuple(snapshots),
                 )
                 machine.transition_to(TaskStatus.AWAITING_COUNCIL_INPUT)
                 return report
-            machine.transition_to(phase)
             # Round-10 「停止研究」: check the side channel at the phase
             # boundary. A stop lands between rounds, never mid-round, so the
             # phases that ran keep their events and the report says exactly
@@ -398,6 +465,21 @@ class CouncilOrchestrator:
                 paper_understanding,
             )
             run_phases.append(phase)
+            # One snapshot per phase that ran (successful or failed), with
+            # the accumulated state after it -- the rewind material for
+            # re-research (round-12).
+            snapshots.append(
+                CouncilPhaseSnapshot(
+                    phase=phase,
+                    carried=state.carried,
+                    unfilled=tuple(state.unfilled),
+                    absent_seats=tuple(
+                        sorted(state.absent, key=lambda seat: seat.value)
+                    ),
+                    failures=tuple(state.failures),
+                    events_appended=state.events,
+                )
+            )
 
         if state.absent:
             machine.transition_to(TaskStatus.DEGRADED_RUNNING)

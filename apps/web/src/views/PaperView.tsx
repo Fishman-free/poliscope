@@ -296,6 +296,60 @@ export function PaperView({
         )}
       </Panel>
 
+      {paper.standpoints && paper.standpoints.length > 0 ? (
+        <Panel
+          title={t("各方观点与缺陷")}
+          subtitle={t("每一方的立场、其薄弱之处与支撑证据——争议不被折叠成单一声音。")}
+        >
+          <ul className="paper__standpoints">
+            {paper.standpoints.map((standpoint, index) => (
+              <li key={index} className="paper__standpoint">
+                <h3 className="paper__standpoint-seat">{standpoint.seat}</h3>
+                <p className="paper__standpoint-position">
+                  {t("观点：{0}", standpoint.position)}
+                </p>
+                {standpoint.weakness ? (
+                  <p className="paper__standpoint-weakness">
+                    {t("缺陷：{0}", standpoint.weakness)}
+                  </p>
+                ) : null}
+                {standpoint.disagreement ? (
+                  <p className="paper__standpoint-disagreement">
+                    {t("分歧：{0}", standpoint.disagreement)}
+                  </p>
+                ) : null}
+                {standpoint.supporting_evidence.length > 0 ? (
+                  <ul className="paper__standpoint-evidence">
+                    {standpoint.supporting_evidence.map((evidence, eIndex) => (
+                      <li key={eIndex}>{evidence}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
+
+      {paper.overall_conclusion ? (
+        <Panel
+          title={t("总体结论")}
+          subtitle={t("议会是否形成了总体观点，以及它依赖的证据。")}
+        >
+          <p className="paper__conclusion">{paper.overall_conclusion}</p>
+          {paper.conclusion_evidence && paper.conclusion_evidence.length > 0 ? (
+            <>
+              <h4 className="paper__subsection">{t("支撑证据")}</h4>
+              <ul className="paper__conclusion-evidence">
+                {paper.conclusion_evidence.map((evidence, index) => (
+                  <li key={index}>{evidence}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+        </Panel>
+      ) : null}
+
       <div className="paper__grid">
         <Panel title={t("结论与局限")} subtitle={t("局限与结论并排呈现。")}>
           {paper.limitations.length === 0 ? (

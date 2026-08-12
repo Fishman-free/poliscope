@@ -1,0 +1,129 @@
+/* 重新研究弹窗（round-12）：浮层阴影只属于这类临时对话框，不用在永久
+ * panel 上；Action Blue 是唯一交互色。 */
+
+.rerun-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(29, 29, 31, 0.35);
+  padding: var(--space-4);
+}
+
+.rerun-dialog {
+  width: min(26rem, 100%);
+  background: var(--app-surface, var(--surface-0));
+  border: 1px solid var(--app-hairline, var(--line));
+  border-radius: var(--radius-3);
+  box-shadow: 0 12px 40px rgba(29, 29, 31, 0.16);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.rerun-dialog__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.rerun-dialog__title {
+  margin: 0;
+  font-size: var(--text-medium);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--app-ink, var(--ink-1));
+}
+
+.rerun-dialog__close {
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  font-size: var(--text-medium);
+  line-height: 1;
+  color: var(--app-ink-3, var(--ink-3));
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+
+.rerun-dialog__close:hover {
+  background: var(--app-accent-soft, rgba(0, 102, 204, 0.08));
+}
+
+.rerun-dialog__intro {
+  margin: 0;
+  color: var(--app-ink-2, var(--ink-2));
+}
+
+.rerun-dialog__options {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.rerun-dialog__option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  text-align: left;
+  padding: var(--space-4);
+  border: 1px solid var(--app-hairline, var(--line));
+  border-radius: var(--radius-2);
+  background: var(--app-surface-2, var(--surface-1));
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--duration-standard) var(--ease-smooth),
+    background-color var(--duration-standard) var(--ease-smooth);
+}
+
+.rerun-dialog__option:hover {
+  border-color: var(--app-accent, #0066cc);
+}
+
+.rerun-dialog__option:active {
+  transform: scale(0.98);
+}
+
+.rerun-dialog__option--primary {
+  border-color: var(--app-accent, #0066cc);
+  background: var(--app-accent-soft, rgba(0, 102, 204, 0.08));
+}
+
+.rerun-dialog__option-title {
+  font-size: var(--text-medium);
+  font-weight: 600;
+  color: var(--app-accent, #0066cc);
+}
+
+.rerun-dialog__option-desc {
+  font-size: var(--text-small);
+  color: var(--app-ink-3, var(--ink-3));
+  line-height: 1.5;
+}
+
+.rerun-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.rerun-dialog__actions .button {
+  min-height: 44px;
+}
+
+@media (max-width: 480px) {
+  .rerun-dialog {
+    padding: var(--space-4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rerun-dialog__option:active {
+    transform: none;
+  }
+}

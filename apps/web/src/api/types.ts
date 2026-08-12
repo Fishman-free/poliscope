@@ -364,6 +364,16 @@ export interface FollowUpResult {
  * `fallback: true` marks a paper the system assembled from the brief alone
  * (round-9: the synthesis model call failed or was absent) -- the integrated
  * conclusion is still there, but it must not read as a model-written paper. */
+/** One scientist seat's position in the debate, its stated weakness, and the
+ * admitted evidence it leans on (round-12 「整合结论详细化」). */
+export interface Standpoint {
+  seat: string;
+  position: string;
+  weakness: string;
+  supporting_evidence: string[];
+  disagreement: string;
+}
+
 export interface FinalPaper {
   title: string;
   abstract: string;
@@ -373,6 +383,13 @@ export interface FinalPaper {
   investigation_process: string[];
   fallback?: boolean;
   fallback_reason?: string;
+  /** Each side's position and weakness; empty when the synthesizer did not
+   * emit them (older papers). */
+  standpoints?: Standpoint[];
+  /** Whether and what overall conclusion the council reached. */
+  overall_conclusion?: string;
+  /** The admitted evidence the overall conclusion rests on. */
+  conclusion_evidence?: string[];
 }
 
 /** One claim the reviewed paper makes, with the paper's own support for it. */
