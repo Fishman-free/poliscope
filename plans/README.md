@@ -10,10 +10,10 @@ and the 320ms token language.
 
 | # | Title | Severity | Status |
 |---|---|---|---|
-| 001 | Tab indicator: transition transform instead of left/width | MEDIUM | TODO |
-| 002 | Popovers scale from their trigger; AccountMenu popover gets an entrance | MEDIUM | TODO |
-| 003 | fade-in-up entrance: 0.55s → the 320ms token | MEDIUM | TODO |
-| 004 | LiveView phase highlight: box-shadow pulse → opacity fade | LOW | TODO |
+| 001 | Tab indicator: transition transform instead of left/width | MEDIUM | DONE (b3b0223) |
+| 002 | Popovers scale from their trigger; AccountMenu popover gets an entrance | MEDIUM | DONE (b3b0223) |
+| 003 | fade-in-up entrance: 0.55s → the 320ms token | MEDIUM | DONE (b3b0223) |
+| 004 | LiveView phase highlight: box-shadow pulse → opacity fade | LOW | DONE (b3b0223) |
 
 ## Recommended execution order
 
