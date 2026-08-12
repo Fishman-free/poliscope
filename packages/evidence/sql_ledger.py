@@ -88,6 +88,7 @@ class SqlEventLedger:
         source_id: UUID | None = None,
         finding_id: UUID | None = None,
         claim_id: UUID | None = None,
+        on_conflict: str = "raise",
     ) -> LedgerEntry:
         """Append one event, or return the existing one if it was already added.
 
@@ -96,14 +97,22 @@ class SqlEventLedger:
         That is deliberate: an event whose level or source could be edited after
         the fact would make the audit trail in CLAUDE.md 7.2 unfalsifiable.
 
-        Raises :class:`EventConflict` when the same key arrives with a different
-        payload, because that means two different events were assigned the same
-        identity and silently keeping either one would corrupt the replay.
+        ``on_conflict`` decides what a same-key-different-payload collision
+        means (round-13): ``"raise"`` (default) is the audit guard -- two
+        different events were assigned the same identity, so raise
+        :class:`EventConflict` rather than silently keeping either. ``"skip"``
+        keeps the existing event and returns it, for process-only events whose
+        content is a transient trace (e.g. the captured chain of thought): a
+        re-run's reasoning is a *different* text by nature, and the replay-safe
+        choice is to keep the first record, never to raise -- raising would
+        fail the whole task on a collision that is not an audit violation.
         """
         await self._lock_task(task_id)
         existing = await self._find_by_key(task_id, idempotency_key)
         if existing is not None:
             if payload_hash(dict(existing.payload)) != payload_hash(payload):
+                if on_conflict == "skip":
+                    return _to_entry(existing)
                 raise EventConflict(
                     f"idempotency key {idempotency_key!r} reused with "
                     "different payload"

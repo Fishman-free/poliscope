@@ -534,7 +534,8 @@ Evidence Lineage Graph 至少识别：
 
 - **停止即时生效**：取消通道（`task_cancel_requests`）原只在议会阶段边界被轮询，而一个慢阶段（盲点悬赏 7 席位串行、每席位最多 120s×2 次重试）可能持续 15 分钟——研究者点「停止研究」后要等整个阶段耗尽才生效。修复：`GatewayDeliberator` 在**每个在飞模型调用**外以 `_await_or_cancel` 每 1s 轮询同一取消通道；检测到停止请求即取消调用并抛 `CouncilCancelled`，orchestrator 将其转为 `CANCELLED` 报告——不写 `PHASE_FAILED`、不记录未完成槽位（停止是重定向，不是对工作的裁决），也绝不 fallback 到一次新的模型调用。停止因此最快 1 秒内生效。
 - **思考时间实时可见**：`seat_working` 心跳事件原只在收到模型 token delta 触发的 flush 时落库；模型长思考（无 delta）期间心跳全部积压在内存 buffer，前端「思考中… 已等待 Ns」冻结在最后一次 flush 的时刻。修复：每次心跳 emit 后立即 flush。`ProcessStreamWriter.flush` 以 `asyncio.Lock` 串行化，避免心跳 flush 与 token flush 并发分配重复 `seq`。
-- **「从头研究」= 全新任务**：`full` 模式原来只清除 checkpoint 后重跑同一任务，但账本幂等键按阶段/席位派生、不随轮次变化——旧一轮的事件会吞掉新一轮（模型被重新征询但结果写不进去），研究者看到的仍是旧一轮的证据。真正从头开始的唯一正确语义是**创建全新任务**：`POST /api/tasks/{task_id}/rerun-fresh` 新建任务（新 task_id、全新账本与证据图、全新过程流），继承问题、范围、预算、已确认原子主张（新 id 复制）、模型配置、知识库、技能、语言与论文对象引用，直接入队（主张已确认过，无需再确认）；原任务保留为审计历史。Web 工作台「从头研究」选项调用该端点并直接打开新任务。
+- **「从头研究」= 全新任务**：`full` 模式原来只清除 checkpoint 后重跑同一任务，但账本幂等键按阶段/席位派生、不随轮次变化——重跑已完成阶段时同一键会携带不同 payload 触发 `EventConflict`，`run_task` 将其转为 FAILED（生产故障：重新研究后的任务在 PRECOMMITMENT 反复失败，"永远突破不了"）。**同一任务无法既"幂等重放"又"新一轮"**，因此重跑的起点只能是全新任务：`POST /api/tasks/{task_id}/rerun-fresh` 新建任务（新 task_id、全新账本与证据图、全新过程流），继承问题、范围、预算、已确认原子主张（新 id 复制）、模型配置、知识库、技能、语言与论文对象引用，直接入队（主张已确认过，无需再确认）；原任务保留为审计历史。`re-research` 的 `full` 模式与 `first_gap` 无断点回退现在同样走新任务，响应 `task_id` 为实际生效的任务 id（有断点时仍为原任务续跑）；Web 工作台据此跳转。
+- **过程事件冲突不致命**：`MODEL_REASONING_CAPTURED`（思考链捕获，process-only，投影器 allowlist 排除）的幂等键同样不含轮次，重跑时新思考文本与旧记录冲突——但思考链是过程痕迹不是证据，冲突保留旧记录（`on_conflict="skip"`）而非抛 `EventConflict` 使整个任务失败；重跑的新思考仍通过 `process_stream` 实时可见。正式证据事件的冲突检测（审计防线）保持不变。
 
 ### 8.7 多入口产品交付
 

@@ -54,6 +54,38 @@ async def test_key_reused_with_a_different_payload_is_a_conflict(
     await app_session.rollback()
 
 
+async def test_on_conflict_skip_keeps_the_existing_event(
+    app_session: AsyncSession,
+    seeded_task: UUID,
+) -> None:
+    """Round-13: a process-only event (e.g. the captured chain of thought) is
+    a transient trace -- a re-run's reasoning is a *different* text by nature,
+    and that collision must not fail the task. ``on_conflict="skip"`` returns
+    the existing event untouched instead of raising."""
+    ledger = SqlEventLedger(app_session)
+    first = await ledger.append(
+        seeded_task,
+        "MODEL_REASONING_CAPTURED",
+        {"reasoning": "first run's thoughts"},
+        "reasoning:1",
+    )
+    again = await ledger.append(
+        seeded_task,
+        "MODEL_REASONING_CAPTURED",
+        {"reasoning": "second run's different thoughts"},
+        "reasoning:1",
+        on_conflict="skip",
+    )
+    assert again.event_id == first.event_id
+    assert again.payload["reasoning"] == "first run's thoughts"
+    # The audit guard stays on for ordinary events: skip is opt-in.
+    with pytest.raises(EventConflict):
+        await ledger.append(
+            seeded_task, "CLAIM_PROPOSED", {"n": 2}, "reasoning:1"
+        )
+    await app_session.rollback()
+
+
 async def test_payload_key_order_does_not_create_a_false_conflict(
     app_session: AsyncSession,
     seeded_task: UUID,

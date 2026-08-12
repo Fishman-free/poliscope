@@ -177,6 +177,14 @@ def _reasoning_emitter(ledger: SqlEventLedger) -> ReasoningCallback:
     rolls back). The idempotency key is derived from task/seat/phase, so a
     resumed run cannot duplicate it -- and the projector's allowlist keeps it
     out of the Evidence Graph no matter what (CLAUDE.md 5.1).
+
+    ``on_conflict="skip"`` (round-13): a re-run of the same task re-asks the
+    same seat in the same phase, and the new chain of thought is *by nature* a
+    different text. That is not an audit violation -- it is process trace, not
+    evidence -- so a collision keeps the first record instead of raising
+    EventConflict (which would fail the whole task on what is only a stale
+    thinking cache). The live view's thinking slices stream through
+    process_stream, so the re-run's reasoning is still visible there.
     """
 
     async def emit(
@@ -195,6 +203,7 @@ def _reasoning_emitter(ledger: SqlEventLedger) -> ReasoningCallback:
                 "char_count": len(reasoning),
             },
             f"reasoning:{task_id}:{seat.value}:{phase.value}",
+            on_conflict="skip",
         )
 
     return emit

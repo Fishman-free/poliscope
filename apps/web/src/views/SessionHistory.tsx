@@ -183,7 +183,7 @@ export function SessionHistory({
         await resumeTask(taskId);
       } else if (mode === "full") {
         // round-13 「从头研究」：同一任务无法真正重来（账本幂等键按阶段/
-        // 席位派生，旧一轮事件会吞掉新一轮），服务器创建全新任务并返回
+        // 席位派生，旧一轮事件会与新一轮冲突），服务器创建全新任务并返回
         // 新 id——刷新列表后直接打开它。原任务保留为审计历史。
         const fresh = await rerunFresh(taskId);
         const tasks = await fetchTasks();
@@ -192,7 +192,16 @@ export function SessionHistory({
         onOpen(fresh.task_id);
         return;
       } else {
-        await reResearch(taskId, mode);
+        const result = await reResearch(taskId, mode);
+        if (result.task_id !== taskId) {
+          // first_gap 无断点：服务端同样创建了全新任务（返回新 id），
+          // 刷新列表并打开它；原任务保留为审计历史。
+          const tasks = await fetchTasks();
+          setTasks(tasks);
+          onTaskMutated?.(taskId);
+          onOpen(result.task_id);
+          return;
+        }
       }
       // 刷新列表让状态从 FAILED/PAUSED 变回 QUEUED。
       const fresh = await fetchTasks();

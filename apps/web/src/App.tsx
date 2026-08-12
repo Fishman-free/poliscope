@@ -534,18 +534,21 @@ export function App() {
       const target = rerunTarget;
       setRerunTarget(null);
       if (!target) return;
-      if (mode === "full") {
-        // round-13 「从头研究」：同一任务无法真正重来——账本幂等键按
-        // 阶段/席位派生，旧一轮的事件会吞掉新一轮（模型重新征询但结果
-        // 写不进去）。服务器创建一个全新任务（全新账本与证据图、继承
-        // 问题/范围/确认主张/预算/模型配置），完成后直接打开新任务。
-        void runMutation(target, async (id) => {
+      void runMutation(target, async (id) => {
+        if (mode === "full") {
+          // round-13 「从头研究」：同一任务无法真正重来——账本幂等键按
+          // 阶段/席位派生，旧一轮的事件会与新一轮冲突。服务器创建全新
+          // 任务（全新账本与证据图、继承问题/范围/确认主张/预算/模型
+          // 配置），完成后直接打开新任务。
           const fresh = await rerunFresh(id);
           open(fresh.task_id);
-        });
-      } else {
-        void runMutation(target, (id) => reResearch(id, mode));
-      }
+        } else {
+          // 从断点处研究：有断点时原任务续跑；无断点时服务端同样会创建
+          // 全新任务（响应里的 task_id 变为新 id）——同样跳转过去。
+          const result = await reResearch(id, mode);
+          if (result.task_id !== id) open(result.task_id);
+        }
+      });
     },
     [rerunTarget, runMutation, open],
   );

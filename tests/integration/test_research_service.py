@@ -8,7 +8,7 @@ about what a second session can read back.
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -267,7 +267,13 @@ async def test_cancelling_an_already_terminal_task_is_a_noop(
 async def test_re_research_accepts_a_cancelled_task(
     app_session: AsyncSession,
 ) -> None:
-    """A researcher-stopped task can be re-run (round-10 重新研究)."""
+    """A researcher-stopped task can be re-run (round-10 重新研究).
+
+    Round-13: a cancelled task with no checkpoint has no gap to rewind to, so
+    the re-run is a **fresh task** (the original's committed events would
+    collide with a same-task restart); the original stays CANCELLED as audit
+    history and the fresh task is returned.
+    """
     service = _service(app_session)
     created = await service.create(make_research_contract())
     chosen = created.suggested_claims[0].claim_id
@@ -275,16 +281,25 @@ async def test_re_research_accepts_a_cancelled_task(
     await service.queue(created.task_id)
     await service._repository.set_status(created.task_id, TaskStatus.CANCELLED)
 
-    assert await service.re_research(created.task_id) == TaskStatus.QUEUED
-    assert (await service.get_task(created.task_id)).status == TaskStatus.QUEUED
+    original = await service.get_task(created.task_id)
+    status, effective_id = await service.re_research(created.task_id)
+    assert status == TaskStatus.QUEUED
+    assert effective_id != str(created.task_id)
+    assert (await service.get_task(created.task_id)).status == TaskStatus.CANCELLED
+    fresh = await service.get_task(UUID(effective_id))
+    assert fresh.status == TaskStatus.QUEUED
+    assert fresh.question == original.question
     await app_session.rollback()
 
 
-async def test_re_research_full_mode_clears_checkpoint(
+async def test_re_research_full_mode_creates_a_fresh_task(
     app_session: AsyncSession,
 ) -> None:
-    """Round-12 「重新研究模式」: mode=full clears the council checkpoint so
-    the worker re-runs the whole protocol from PRECOMMITMENT."""
+    """Round-12 「重新研究模式」+ round-13 fix: mode=full cannot re-run the
+    same task (its committed ledger events would collide with the re-run's
+    idempotency keys and fail it), so it creates a fresh task from
+    PRECOMMITMENT and returns its id; the original keeps its FAILED state and
+    checkpoint as audit history."""
     service = _service(app_session)
     created = await service.create(make_research_contract())
     chosen = created.suggested_claims[0].claim_id
@@ -296,20 +311,26 @@ async def test_re_research_full_mode_clears_checkpoint(
     )
     await service._repository.set_status(created.task_id, TaskStatus.FAILED)
 
-    assert await service.re_research(created.task_id, mode="full") == TaskStatus.QUEUED
+    status, effective_id = await service.re_research(created.task_id, mode="full")
+    assert status == TaskStatus.QUEUED
+    assert effective_id != str(created.task_id)
 
-    task = await service.get_task(created.task_id)
-    assert task.status == TaskStatus.QUEUED
-    assert task.council_checkpoint is None
+    original = await service.get_task(created.task_id)
+    assert original.status == TaskStatus.FAILED
+    assert original.council_checkpoint is not None
+    fresh = await service.get_task(UUID(effective_id))
+    assert fresh.status == TaskStatus.QUEUED
+    assert fresh.council_checkpoint is None
     await app_session.rollback()
 
 
-async def test_re_research_first_gap_without_gap_clears_checkpoint(
+async def test_re_research_first_gap_without_gap_creates_a_fresh_task(
     app_session: AsyncSession,
 ) -> None:
-    """Round-12: first_gap with no recorded gap degrades to a full restart --
-    the checkpoint is cleared, exactly as the user asked ("no gap -> start
-    from scratch")."""
+    """Round-12/13: first_gap with no recorded gap cannot rewind this task
+    (nothing failed to re-run, and re-running completed phases would collide
+    with their committed events), so a fresh task is created -- "no gap ->
+    start from scratch" now means a genuinely new run."""
     service = _service(app_session)
     created = await service.create(make_research_contract())
     chosen = created.suggested_claims[0].claim_id
@@ -326,14 +347,17 @@ async def test_re_research_first_gap_without_gap_clears_checkpoint(
     )
     await service._repository.set_status(created.task_id, TaskStatus.FAILED)
 
-    assert (
-        await service.re_research(created.task_id, mode="first_gap")
-        == TaskStatus.QUEUED
+    status, effective_id = await service.re_research(
+        created.task_id, mode="first_gap"
     )
+    assert status == TaskStatus.QUEUED
+    assert effective_id != str(created.task_id)
 
     task = await service.get_task(created.task_id)
-    assert task.status == TaskStatus.QUEUED
-    assert task.council_checkpoint is None
+    assert task.status == TaskStatus.FAILED
+    fresh = await service.get_task(UUID(effective_id))
+    assert fresh.status == TaskStatus.QUEUED
+    assert fresh.council_checkpoint is None
     await app_session.rollback()
 
 
@@ -363,10 +387,13 @@ async def test_re_research_first_gap_with_gap_marks_restart_from(
     )
     await service._repository.set_status(created.task_id, TaskStatus.FAILED)
 
-    assert (
-        await service.re_research(created.task_id, mode="first_gap")
-        == TaskStatus.QUEUED
+    status, effective_id = await service.re_research(
+        created.task_id, mode="first_gap"
     )
+    assert status == TaskStatus.QUEUED
+    # A recorded gap rewinds the *same* task (its failed phase's events were
+    # never committed, so re-running it cannot collide).
+    assert effective_id == str(created.task_id)
 
     task = await service.get_task(created.task_id)
     assert task.status == TaskStatus.QUEUED

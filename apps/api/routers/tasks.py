@@ -808,16 +808,18 @@ async def re_research_task(
     honest restart rather than pretending nothing happened. Round-10: a
     researcher-stopped task is re-runnable the same way.
 
-    Round-12 「重新研究模式」: an optional ``body.mode`` of ``full`` re-runs
-    the whole protocol from PRECOMMITMENT; ``first_gap`` (the default when
-    the body is omitted) restarts from the first unfinished phase when the
-    checkpoint records one, otherwise falls back to a full restart. Identical
-    semantics for deep-research and paper-review tasks -- both resume through
-    the same worker path.
+    Round-12 「重新研究模式」: an optional ``body.mode`` of ``full``, or
+    ``first_gap`` (the default when the body is omitted) with no recorded
+    gap, cannot re-run *this* task -- its committed ledger events would
+    collide with the re-run's (same idempotency key, different payload) and
+    fail it (round-13 production failure). Both now create a **fresh task**
+    and return its id in ``task_id``; ``first_gap`` with a recorded gap
+    rewinds this task to the first unfinished phase and returns the original
+    id. Identical semantics for deep-research and paper-review tasks.
     """
     await _owned_task(session, task_id, current_user)
     try:
-        new_status = await _service(session).re_research(
+        new_status, effective_id = await _service(session).re_research(
             task_id, mode=body.mode if body is not None else "first_gap"
         )
     except TaskNotFound as error:
@@ -827,7 +829,7 @@ async def re_research_task(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         ) from error
-    return {"task_id": str(task_id), "status": new_status}
+    return {"task_id": effective_id, "status": new_status}
 
 
 @router.post("/{task_id}/rerun-fresh")

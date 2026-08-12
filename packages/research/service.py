@@ -150,8 +150,10 @@ class ResearchService:
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
 
-    async def re_research(self, task_id: UUID, mode: str = "first_gap") -> str:
-        """Move a FAILED (or CANCELLED) task back to QUEUED for another run.
+    async def re_research(
+        self, task_id: UUID, mode: str = "first_gap"
+    ) -> tuple[str, str]:
+        """Re-run a FAILED (or CANCELLED) task; returns (status, task_id).
 
         ``重新研究`` (round-8): a task that ended in FAILED -- e.g. an
         unrecoverable event conflict or a watchdog timeout -- is requeued.
@@ -159,17 +161,24 @@ class ResearchService:
         the same way -- stopping was a redirection, not a verdict on the work.
 
         Round-12 「重新研究模式」: ``mode`` decides where the re-run starts.
+        Round-13 (critical fix): **the same task cannot be re-run from the
+        start**. The ledger's idempotency keys derive from phase and seat, not
+        from the run, so re-executing an already-completed phase would collide
+        with its committed events (different payload, same key) and raise
+        ``EventConflict``, which fails the task -- the "重新研究永远突破不了"
+        production failure. A genuine restart must therefore be a **fresh
+        task** (fresh ledger, fresh evidence graph): ``full`` and the
+        no-gap fallback of ``first_gap`` both create one via
+        :meth:`rerun_fresh` and return its id.
 
-        - ``full``: the council checkpoint is cleared, so the worker re-runs
-          the whole protocol from PRECOMMITMENT. Ledger idempotency keys make
-          the replay safe (completed phases' events no-op), but every seat is
-          asked again and the process stream shows the full run.
-        - ``first_gap`` (default): if the stored checkpoint records a failed
+        - ``first_gap`` (default): when the stored checkpoint records a failed
           or skipped phase, the checkpoint is marked ``restart_from`` so the
-          worker rewinds to that first unfinished phase -- it re-executes
-          (its events were never written), while every completed phase stays
-          exactly as it was. If there is no gap (or no checkpoint), this
-          degrades to ``full``: starting over from the beginning.
+          worker rewinds to that first unfinished phase -- it re-executes (its
+          events were never written, so no collision is possible), while every
+          completed phase stays exactly as it was. The original task id is
+          returned. No gap (or no checkpoint) means there is nothing to rewind
+          to: a fresh task is created and its id returned.
+        - ``full``: always creates a fresh task (see above) and returns its id.
         """
         task = await self._repository.get_task(task_id)
         if task.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
@@ -180,7 +189,7 @@ class ResearchService:
             )
         if mode != "full" and task.council_checkpoint is not None:
             # first_gap: rewind to the first unfinished phase when one is
-            # recorded; otherwise fall through to the full restart below.
+            # recorded; otherwise fall through to the fresh-task restart.
             checkpoint = CouncilCheckpoint.model_validate(
                 task.council_checkpoint
             )
@@ -205,12 +214,15 @@ class ResearchService:
                 await self._repository.set_status(
                     task_id, TaskStatus.QUEUED
                 )
-                return TaskStatus.QUEUED
-        # full, or first_gap with no recorded gap: clear the checkpoint and
-        # start over from the beginning.
-        await self._repository.set_checkpoint(task_id, None)
-        await self._repository.set_status(task_id, TaskStatus.QUEUED)
-        return TaskStatus.QUEUED
+                return TaskStatus.QUEUED, str(task_id)
+        # full, or first_gap with no recorded gap: a true restart cannot re-run
+        # this task (its committed events would collide with the re-run's),
+        # so a brand-new task starts from PRECOMMITMENT instead; the original
+        # stays untouched as audit history.
+        fresh_id = await self.rerun_fresh(
+            task_id, created_by=task.created_by, user_id=task.user_id
+        )
+        return TaskStatus.QUEUED, str(fresh_id)
 
     async def rerun_fresh(
         self,

@@ -213,8 +213,11 @@ async def test_re_research_moves_a_failed_task_back_to_queued(
     api_client: httpx.AsyncClient,
     app_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    """「重新研究」(round-8): a FAILED task is requeued so the worker can
-    resume it from the stored council checkpoint."""
+    """「重新研究」(round-8/13): a FAILED task with no checkpoint has no gap to
+    rewind to, so the re-run is a **fresh task** -- the original's committed
+    ledger events would collide with a same-task restart (round-13 production
+    failure). The response carries the fresh task id and the original keeps
+    its FAILED state as audit history."""
     created = await _create(api_client)
     task_id = created["task_id"]
     chosen = created["suggested_claims"][0]["id"]
@@ -234,10 +237,18 @@ async def test_re_research_moves_a_failed_task_back_to_queued(
 
     response = await api_client.post(f"/api/tasks/{task_id}/re-research")
     assert response.status_code == 200, response.text
-    assert response.json()["status"] == TaskStatus.QUEUED
+    body = response.json()
+    assert body["status"] == TaskStatus.QUEUED
+    fresh_id = body["task_id"]
+    assert fresh_id != task_id
 
+    # 原任务保持 FAILED；新任务是继承同一问题的全新任务。
     readback = await api_client.get(f"/api/tasks/{task_id}")
-    assert readback.json()["status"] == TaskStatus.QUEUED
+    assert readback.json()["status"] == TaskStatus.FAILED
+    fresh = await api_client.get(f"/api/tasks/{fresh_id}")
+    assert fresh.status_code == 200, fresh.text
+    assert fresh.json()["question"] == _contract_payload()["question"]
+    assert fresh.json()["status"] == TaskStatus.QUEUED
 
 
 async def test_re_research_refused_for_non_failed_task(
