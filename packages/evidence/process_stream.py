@@ -43,6 +43,14 @@ logger = logging.getLogger(__name__)
 # latency budget.
 FLUSH_AT = 40
 
+# Events that close a seat's thinking slice on the live view. A flush that
+# drops one of these leaves the seat on "thinking…" forever (round-15), so a
+# failed batch containing them is retried instead of dropped; token/heartbeat
+# batches are pure display and stay droppable. Bound on retries so a
+# persistently broken database cannot grow the buffer without limit.
+CLOSING_KINDS = frozenset({"model_done", "seat_absent"})
+MAX_CLOSING_RETRIES = 2
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessEventRow:
@@ -130,6 +138,10 @@ class ProcessStreamWriter:
         # allocate the same seq and silently drop a row in the live view.
         # Serialising flushes makes seq allocation single-writer.
         self._flush_lock = asyncio.Lock()
+        # Round-15: how many closing-event batches have been put back for a
+        # retry. Bounds the retry so a persistently broken database cannot
+        # grow the buffer without limit.
+        self._closing_retries = 0
 
     def emit(self, kind: str, payload: dict[str, object]) -> None:
         """Queue one event. Never raises; a broken trace must not break a run."""
@@ -152,6 +164,18 @@ class ProcessStreamWriter:
                 len(pending),
                 exc_info=True,
             )
+            # Round-15: dropping a batch that contains a closing event
+            # (``model_done`` / ``seat_absent``) would leave the live view on
+            # "thinking…" forever even though the model finished. Put such
+            # batches back so ``close()`` (or the next flush) retries them --
+            # bounded, so a persistent DB failure still ends as a warning,
+            # never a failed run, and the buffer never grows without limit.
+            if (
+                self._closing_retries < MAX_CLOSING_RETRIES
+                and any(kind in CLOSING_KINDS for kind, _ in pending)
+            ):
+                self._closing_retries += 1
+                self._buffer = pending + self._buffer
 
     async def _flush_pending(
         self, pending: list[tuple[str, dict[str, object]]]

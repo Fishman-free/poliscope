@@ -113,6 +113,14 @@
   font-weight: 600;
 }
 
+/* 缺席（round-15）：模型调用失败或被研究者停止后，该席位本段思考关闭
+   （seat_absent 事件）—— 警示色提示「这一轮没有产出」，与「已完成」的
+   中性灰区分开；具体原因悬停在 title 上。 */
+.live__seat-absent {
+  color: var(--provisional, #b7791f);
+  font-weight: 500;
+}
+
 .live__seat-idle {
   margin-left: auto;
   font-size: var(--text-micro);

@@ -699,6 +699,19 @@ class GatewayDeliberator:
                 )
         except CouncilCancelled:
             # Round-13: never degrade a researcher's stop into an absent seat.
+            # Round-15: the live view's seat slice still must close -- a stop
+            # mid-call otherwise leaves the seat on "thinking…" for the whole
+            # CANCELLED tail of the run. Emit the same closing event the
+            # failure path uses, with the stop as its reason.
+            if self._on_process is not None:
+                self._on_process(
+                    "seat_absent",
+                    {
+                        "seat": seat.value,
+                        "phase": phase.value,
+                        "reason": "researcher requested to stop the run",
+                    },
+                )
             raise
         except Exception as error:
             # A seat that cannot be reached is an absent seat, not a failed task.
@@ -707,7 +720,22 @@ class GatewayDeliberator:
             # is kept (bounded) so the absence event says what actually broke --
             # a wrong base_url must show up as a connection error, not as the
             # generic "no model provider" message.
+            #
+            # Round-15: the seat slice opened by ``seat_deliberation`` must
+            # close. Without a closing event the live view derives "running"
+            # forever from an open slice (the 「思考中… 已等待 Ns」 production
+            # failure), so emit ``seat_absent`` -- the process-stream analogue
+            # of the ledger's SEAT_UNAVAILABLE -- with the honest reason.
             self.last_error = str(error)[:300] or error.__class__.__name__
+            if self._on_process is not None:
+                self._on_process(
+                    "seat_absent",
+                    {
+                        "seat": seat.value,
+                        "phase": phase.value,
+                        "reason": self.last_error,
+                    },
+                )
             return None
         finally:
             await self._stop_heartbeat(heartbeat)

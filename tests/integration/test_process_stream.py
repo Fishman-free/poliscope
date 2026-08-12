@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.evidence.process_stream import (
@@ -82,4 +83,70 @@ async def test_list_since_resumes_after_given_seq(
     assert [row.seq for row in await repo.list_since(seeded_task, -1)] == [0, 1, 2]
     assert [row.seq for row in await repo.list_since(seeded_task, 1)] == [2]
     assert await repo.list_since(UUID(int=0), -1) == []
+    await app_session.rollback()
+
+
+async def test_closing_batch_survives_a_flush_failure(
+    app_session: AsyncSession,
+    app_sessions: async_sessionmaker[AsyncSession],
+    seeded_task: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed flush must not drop ``model_done`` (round-15 思考中 deadlock).
+
+    The batch containing the closing event is put back and ``close()``
+    retries it, so the live view gets its "finished" signal even when one
+    write hiccuped.
+    """
+    await _commit_seeded_task(app_session)
+    writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=100)
+    original = writer._flush_pending  # noqa: SLF001 -- test seam
+    calls = {"n": 0}
+
+    async def flaky(pending: list[tuple[str, dict[str, object]]]) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("db down")
+        await original(pending)
+
+    monkeypatch.setattr(writer, "_flush_pending", flaky)
+    writer.emit("model_token", {"text": "a"})
+    writer.emit("model_done", {"seat": "causal_scientist", "phase": "X"})
+    await writer.flush()  # first attempt fails, batch put back
+    await writer.close()  # close retries and succeeds
+
+    repo = ProcessStreamRepository(app_session)
+    rows = await repo.list_since(seeded_task, -1)
+    assert [(row.seq, row.kind) for row in rows] == [
+        (0, "model_token"),
+        (1, "model_done"),
+    ]
+    await app_session.rollback()
+
+
+async def test_token_batch_is_dropped_without_retry(
+    app_session: AsyncSession,
+    app_sessions: async_sessionmaker[AsyncSession],
+    seeded_task: UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pure-display batches stay droppable (trace is auxiliary, CLAUDE.md 10).
+
+    Only batches carrying a closing event are retried; a token-only batch that
+    fails is dropped so a persistently broken database cannot grow the buffer.
+    """
+    await _commit_seeded_task(app_session)
+    writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=100)
+
+    async def always_fail(pending: list[tuple[str, dict[str, object]]]) -> None:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(writer, "_flush_pending", always_fail)
+    writer.emit("model_token", {"text": "a"})
+    await writer.flush()
+    # Dropped, not retried: the next flush writes nothing.
+    await writer.close()
+
+    repo = ProcessStreamRepository(app_session)
+    assert await repo.list_since(seeded_task, -1) == []
     await app_session.rollback()

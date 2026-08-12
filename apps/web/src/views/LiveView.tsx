@@ -213,26 +213,44 @@ function phaseProgress(events: LedgerEvent[]): {
  * 随模型调用实时流动，重连后从服务端重放并按 seq 去重。展示它们是为了
  * 让研究者实时看见七位科学家正在想什么（round-12 恢复），但任何片段都
  * 不是正式结论 —— 正式结论以 Research Brief 与最终论文为准。 */
-function seatStreams(
-  processEvents: ProcessEvent[],
-): Record<string, { phase: string; text: string; running: boolean; elapsed: number }> {
-  const result: Record<
-    string,
-    { phase: string; text: string; running: boolean; elapsed: number }
-  > = {};
+/** 一个席位的思考流状态。``absent`` 由 ``seat_absent`` 事件置位（round-15：
+ * 模型调用失败或被研究者停止时后端补发，关闭该段思考 —— 否则前端会
+ * 永远停在「思考中…」，因为没有任何事件能把 running 置 false）。 */
+interface SeatSlice {
+  phase: string;
+  text: string;
+  running: boolean;
+  elapsed: number;
+  absent: boolean;
+  absentReason: string;
+}
+
+function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
+  const result: Record<string, SeatSlice> = {};
   const current: Record<
     string,
-    { phase: string; parts: string[]; running: boolean; elapsed: number }
+    {
+      phase: string;
+      parts: string[];
+      running: boolean;
+      elapsed: number;
+      absent: boolean;
+      absentReason: string;
+    }
   > = {};
   for (const event of processEvents) {
     const payload = event.payload as Record<string, unknown>;
     const seat = typeof payload.seat === "string" ? payload.seat : null;
     if (event.kind === "seat_deliberation" && seat) {
+      // 新一段思考开始：缺席标记随段重置 —— 上一个阶段缺席不代表这个
+      // 阶段也缺席（round-15）。
       current[seat] = {
         phase: typeof payload.phase === "string" ? payload.phase : "",
         parts: [],
         running: true,
         elapsed: 0,
+        absent: false,
+        absentReason: "",
       };
     } else if (seat && current[seat]) {
       const text = typeof payload.text === "string" ? payload.text : "";
@@ -243,6 +261,13 @@ function seatStreams(
       } else if (event.kind === "seat_working") {
         const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
         current[seat].elapsed = elapsed;
+      } else if (event.kind === "seat_absent") {
+        // 思考结束但没有产出：模型调用失败（缺席）或被研究者停止。关闭
+        // 本段思考 —— 没有这个事件，前端会永远显示「思考中… 已等待
+        // Ns」（round-15 生产故障）。
+        current[seat].running = false;
+        current[seat].absent = true;
+        current[seat].absentReason = String(payload.reason ?? "");
       }
     }
   }
@@ -252,6 +277,8 @@ function seatStreams(
       text: entry.parts.join(""),
       running: entry.running,
       elapsed: entry.elapsed,
+      absent: entry.absent,
+      absentReason: entry.absentReason,
     };
   }
   return result;
@@ -638,6 +665,16 @@ export function LiveView({
                             {entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
                               ? t("模型长时间无响应（已等待 {0}s），系统将自动中断", entry.elapsed)
                               : t("思考中… 已等待 {0}s", entry.elapsed)}
+                          </span>
+                        ) : entry.absent ? (
+                          /* round-15：思考结束但没有产出（调用失败或被停止）。
+                             原因悬停可见，与账本 SEAT_UNAVAILABLE 语义一致 ——
+                             缺席必须可审计，不能只是「已完成」或永远「思考中」。 */
+                          <span
+                            className="live__seat-running live__seat-absent"
+                            title={entry.absentReason || undefined}
+                          >
+                            {t("缺席")}
                           </span>
                         ) : (
                           <span className="live__seat-idle">{t("已完成")}</span>
