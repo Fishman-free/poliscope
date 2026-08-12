@@ -142,7 +142,8 @@
   font-size: var(--text-small);
   line-height: 1.4;
   text-align: left;
-  box-shadow: var(--shadow-1);
+  /* 图上的节点是常驻面板的一部分，用 surface + 边框表达，不加投影。
+     React Flow 默认节点的浮动阴影仅留给其悬浮 inspector 语义。 */
   transition: opacity var(--duration-standard) var(--ease-standard);
 }
 
@@ -189,6 +190,9 @@
 }
 
 .react-flow__controls button {
+  /* 触控目标 ≥44px：地图缩放/适应控制（按钮内图标保持小尺寸）。 */
+  width: 44px;
+  height: 44px;
   background: var(--surface-0);
   border-bottom: 1px solid var(--line);
   color: var(--ink-2);

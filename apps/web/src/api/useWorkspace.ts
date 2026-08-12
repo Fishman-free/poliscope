@@ -22,10 +22,18 @@ export interface WorkspaceState {
    * this; it is never used to mutate the snapshot, because the projector -- not
    * the browser -- decides what an event means. */
   events: LedgerEvent[];
-  /** Process trace (live view): token/reasoning deltas, tool calls, seat
-   * turns, ordered by server seq. Not replay-guaranteed; deduplicated here. */
+  /** Process trace (live view): tool calls, seat turns, status heartbeats,
+   * ordered by server seq. Not replay-guaranteed; deduplicated here. */
   processEvents: ProcessEvent[];
-  refresh: () => void;
+  /** Re-read the snapshot from the server.
+   *
+   * Resolves `true` on success and `false` on failure (never throws, so call
+   * sites that do not await -- e.g. `onSubmitted={refresh}` -- never produce an
+   * unhandled rejection); the insurance poll awaits it to back off on
+   * consecutive failures. Only the most recent call owns the network fetch: an
+   * older in-flight one is aborted and settles without touching the snapshot,
+   * so two refreshes can never run concurrently and overwrite each other. */
+  refresh: () => Promise<boolean>;
 }
 
 export function useWorkspace(taskId: string | null): WorkspaceState {
@@ -35,34 +43,44 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<LedgerEvent[]>([]);
   const [processEvents, setProcessEvents] = useState<ProcessEvent[]>([]);
-  const [nonce, setNonce] = useState(0);
+  // The latest refresh's controller. A newer refresh() aborts it, so a stale
+  // fetch never lands its snapshot over a fresher one.
+  const controllerRef = useRef<AbortController | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
-  const refresh = useCallback(() => setNonce((value) => value + 1), []);
-
-  useEffect(() => {
+  const refresh = useCallback((): Promise<boolean> => {
     if (!taskId) {
       setSnapshot(null);
       setLoad("idle");
-      return;
+      return Promise.resolve(true);
     }
+    controllerRef.current?.abort();
     const controller = new AbortController();
+    controllerRef.current = controller;
     setLoad((current) => (current === "ready" ? current : "loading"));
-    fetchWorkspace(taskId, controller.signal)
+    return fetchWorkspace(taskId, controller.signal)
       .then((next) => {
+        if (controller.signal.aborted) return true;
         setSnapshot(next);
         setError(null);
         setLoad("ready");
+        return true;
       })
       .catch((cause: unknown) => {
-        if (controller.signal.aborted) return;
-        setError(
-          cause instanceof ApiError ? cause.message : String(cause),
-        );
+        // An aborted fetch was superseded by a newer refresh; that one owns
+        // the outcome, so settle silently instead of double-reporting.
+        if (controller.signal.aborted) return true;
+        setError(cause instanceof ApiError ? cause.message : String(cause));
         setLoad("error");
+        return false;
       });
-    return () => controller.abort();
-  }, [taskId, nonce]);
+  }, [taskId]);
+
+  // Initial load, and a fresh load whenever the task changes.
+  useEffect(() => {
+    void refresh();
+    return () => controllerRef.current?.abort();
+  }, [refresh]);
 
   useEffect(() => {
     if (!taskId) return;
@@ -72,7 +90,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
       (event) => {
         setEvents((current) => [...current, event]);
         window.clearTimeout(timer.current);
-        timer.current = window.setTimeout(refresh, REFRESH_DEBOUNCE_MS);
+        timer.current = window.setTimeout(() => void refresh(), REFRESH_DEBOUNCE_MS);
       },
       setStream,
     );

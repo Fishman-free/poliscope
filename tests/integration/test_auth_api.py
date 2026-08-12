@@ -8,7 +8,7 @@ ownership check answering 404 rather than leaking existence.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest

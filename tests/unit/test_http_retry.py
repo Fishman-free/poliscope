@@ -60,6 +60,19 @@ async def test_429_respects_retry_after_header() -> None:
     assert sleeps == [3.0]
 
 
+async def test_retry_after_numeric_value_is_capped() -> None:
+    responses = [
+        _response(429, headers={"retry-after": "3600"}),
+        _response(200),
+    ]
+
+    (result, retries), sleeps = await _run(responses)
+
+    assert result.status_code == 200
+    assert retries == 1
+    assert sleeps == [60.0]
+
+
 async def test_429_without_header_backs_off_exponentially() -> None:
     # No Retry-After: rate-limit backoff is 2**retries * 5, capped at 60s.
     responses = [_response(429), _response(429), _response(200)]

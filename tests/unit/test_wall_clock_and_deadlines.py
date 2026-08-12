@@ -19,11 +19,14 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import cast
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 
+from apps.worker.main import WorkerContext, run_one
 from packages.council.contracts import Seat
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker, ResearchBudget
 from packages.epistemo.contracts import PHASE_SEQUENCE, TaskStatus
@@ -141,6 +144,147 @@ async def test_invoke_hits_total_deadline_across_repair_attempts() -> None:
 
     with pytest.raises(TimeoutError, match="total deadline"):
         await gateway.invoke(_model_request())
+
+
+async def test_invoke_deadline_cancels_a_slow_valid_first_response() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.5)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": '{"final_judgment":"valid"}'}}
+                ],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            },
+        )
+
+    config = OpenAICompatibleConfig.from_env(FULL_ENV)
+    config = OpenAICompatibleConfig(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        model_names=config.model_names,
+        invoke_total_timeout_seconds=0.05,
+    )
+    gateway = OpenAICompatibleModelGateway(
+        config,
+        client=httpx.AsyncClient(
+            base_url=config.base_url,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    started = asyncio.get_running_loop().time()
+
+    with pytest.raises(TimeoutError, match="model invoke.*total deadline"):
+        await gateway.invoke(_model_request())
+
+    assert asyncio.get_running_loop().time() - started < 0.25
+
+
+async def test_invoke_deadline_cancels_transport_retry_after_backoff() -> None:
+    calls = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"retry-after": "30"})
+
+    config = OpenAICompatibleConfig.from_env(FULL_ENV)
+    config = OpenAICompatibleConfig(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        model_names=config.model_names,
+        invoke_total_timeout_seconds=0.05,
+    )
+    gateway = OpenAICompatibleModelGateway(
+        config,
+        client=httpx.AsyncClient(
+            base_url=config.base_url,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+
+    async with asyncio.timeout(0.5):
+        with pytest.raises(TimeoutError, match="model invoke.*total deadline"):
+            await gateway.invoke(_model_request())
+
+    assert calls == 1
+
+
+async def test_worker_watchdog_waits_for_cancellation_before_emergency_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    cancelled = asyncio.Event()
+
+    async def short_watchdog(*args: object, **kwargs: object) -> float:
+        return 0.02
+
+    async def hanging_task(*args: object, **kwargs: object) -> object:
+        try:
+            return await asyncio.Future()
+        finally:
+            order.append("cancelled")
+            cancelled.set()
+
+    async def emergency(*args: object, **kwargs: object) -> bool:
+        assert cancelled.is_set()
+        order.append("fallback")
+        return True
+
+    monkeypatch.setattr("apps.worker.main._watchdog_timeout", short_watchdog)
+    monkeypatch.setattr("apps.worker.main.run_task", hanging_task)
+    monkeypatch.setattr("apps.worker.main.emergency_finalize_task", emergency)
+    context = cast(
+        WorkerContext,
+        SimpleNamespace(
+            app_sessions=object(),
+            projector_sessions=object(),
+            gateway=None,
+            tools=None,
+            fulltext_fetcher=None,
+            object_store=None,
+        ),
+    )
+
+    assert await run_one(context, uuid4()) is None
+    assert order == ["cancelled", "fallback"]
+
+
+async def test_worker_unexpected_exception_triggers_emergency_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasons: list[str] = []
+
+    async def watchdog(*args: object, **kwargs: object) -> float:
+        return 1.0
+
+    async def broken_task(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("unexpected pipeline failure")
+
+    async def emergency(*args: object, **kwargs: object) -> bool:
+        reasons.append(str(kwargs["reason"]))
+        return True
+
+    monkeypatch.setattr("apps.worker.main._watchdog_timeout", watchdog)
+    monkeypatch.setattr("apps.worker.main.run_task", broken_task)
+    monkeypatch.setattr("apps.worker.main.emergency_finalize_task", emergency)
+    context = cast(
+        WorkerContext,
+        SimpleNamespace(
+            app_sessions=object(),
+            projector_sessions=object(),
+            gateway=None,
+            tools=None,
+            fulltext_fetcher=None,
+            object_store=None,
+        ),
+    )
+
+    assert await run_one(context, uuid4()) is None
+    assert len(reasons) == 1
+    assert "RuntimeError" in reasons[0]
+    assert "unexpected pipeline failure" in reasons[0]
 
 
 # --------------------------------------------------------------------------

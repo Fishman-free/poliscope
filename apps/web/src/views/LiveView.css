@@ -70,7 +70,6 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   background: var(--surface-0);
-  box-shadow: var(--shadow-1);
   overflow: hidden;
   animation: fade-in-up var(--duration-standard) var(--ease-standard);
 }
@@ -112,16 +111,10 @@
   font-weight: 600;
 }
 
-.live__seat-text {
-  height: 140px;
-  overflow-y: auto;
-  padding: var(--space-3);
-  background: var(--surface-1);
+.live__seat-idle {
+  margin-left: auto;
   font-size: var(--text-micro);
-  line-height: 1.55;
-  color: var(--ink-2);
-  white-space: pre-wrap;
-  word-break: break-word;
+  color: var(--ink-3);
 }
 
 /* 排队卡片：任务 QUEUED 且尚无过程事件时，说明在等什么。 */
@@ -131,7 +124,6 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   background: var(--surface-0);
-  box-shadow: var(--shadow-1);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -184,7 +176,6 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   background: var(--surface-0);
-  box-shadow: var(--shadow-1);
   padding: var(--space-4);
 }
 
@@ -255,7 +246,6 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   background: var(--surface-0);
-  box-shadow: var(--shadow-1);
   padding: var(--space-4);
 }
 
@@ -283,14 +273,11 @@
   animation: fade-in-up var(--duration-standard) var(--ease-standard);
   transition:
     border-color var(--duration-fast) var(--ease-standard),
-    box-shadow var(--duration-fast) var(--ease-standard),
     transform var(--duration-fast) var(--ease-standard);
 }
 
 .live__tool-card:hover {
   border-color: var(--line-strong);
-  box-shadow: var(--shadow-2);
-  transform: translateY(-1px);
 }
 
 .live__tool-card-head {

@@ -416,11 +416,21 @@ export function fetchTasks(): Promise<TaskSummary[]> {
   return getJson<TaskSummary[]>("/api/tasks");
 }
 
-/** 「重新研究」: move a FAILED task back to QUEUED so the worker resumes it
- * from the stored council checkpoint (round-8). */
+/** 「重新研究」: move a FAILED/CANCELLED task back to QUEUED so the worker
+ * resumes it from the stored council checkpoint (round-8). */
 export function reResearch(taskId: string): Promise<{ task_id: string; status: string }> {
   return postJson<{ task_id: string; status: string }>(
     `/api/tasks/${taskId}/re-research`,
+    {},
+  );
+}
+
+/** 「继续研究」: move a PAUSED task back to QUEUED so a worker can claim it
+ * again. The requeue path is proven idempotent server-side (already-run
+ * phases replay as no-ops via stable idempotency keys), so resuming is safe. */
+export function resumeTask(taskId: string): Promise<{ task_id: string; status: string }> {
+  return postJson<{ task_id: string; status: string }>(
+    `/api/tasks/${taskId}/resume`,
     {},
   );
 }

@@ -775,6 +775,18 @@ async def run_precommitment(context: PhaseContext) -> PhaseOutcome:
     )
 
 
+def _record_available_sources(
+    target: dict[UUID, dict[str, str]], acquired: tuple[AcquiredLike, ...]
+) -> None:
+    """Carry only identifiers backed by acquisition, never prompt context."""
+    for item in acquired:
+        target[item.source_id] = {
+            "source_id": str(item.source_id),
+            "title": item.title,
+            "level": item.evidence_level,
+        }
+
+
 async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     """Record each seat's evidence needs, then retrieve what can be retrieved.
 
@@ -803,9 +815,11 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     outputs, unfilled, absent, reasons, attempts = await _collect(context)
     round_ = AcquisitionRound()
     events: list[EmittedEvent] = []
-    # Values later phases read; the knowledge-search pass adds
-    # "knowledge_base_context" here when it finds hits.
+    # Values later phases read; only actual acquisition results enter
+    # available_sources. Knowledge-search hits remain separately labelled
+    # process context and can never be published as evidence.
     carry: dict[str, object] = {}
+    available_sources: dict[UUID, dict[str, str]] = {}
     all_requests: list[tuple[Seat, str]] = []
     for seat, output in sorted(outputs.items(), key=lambda kv: kv[0].value):
         requests = _strings(output.get("requests"))
@@ -862,6 +876,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
             slots.append("ACQUISITION:no_tool_provider")
     elif all_requests:
         acquisition = await context.acquirer.acquire(all_requests)
+        _record_available_sources(available_sources, acquisition.acquired)
         events.extend(
             EmittedEvent(
                 event_type=EvidenceNodeType.SOURCE.value,
@@ -1031,6 +1046,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
         # doi=None upload would collide on), and it has no discovery step to
         # share -- acquire_uploaded skips straight to persistence.
         uploaded = await context.acquirer.acquire_uploaded(context.pdf_object_ids)
+        _record_available_sources(available_sources, uploaded.acquired)
         events.extend(
             EmittedEvent(
                 event_type=EvidenceNodeType.SOURCE.value,
@@ -1102,6 +1118,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
         # against the same canonical-DOI _existing lookup the seat branch
         # uses, so both paths resolve to one Source row.
         user_acquired = await context.acquirer.acquire_dois(context.user_dois)
+        _record_available_sources(available_sources, user_acquired.acquired)
         events.extend(
             EmittedEvent(
                 event_type=EvidenceNodeType.SOURCE.value,
@@ -1180,6 +1197,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
         kb_acquired = await context.acquirer.acquire_knowledge_documents(
             context.knowledge_documents
         )
+        _record_available_sources(available_sources, kb_acquired.acquired)
         events.extend(
             EmittedEvent(
                 event_type=EvidenceNodeType.SOURCE.value,
@@ -1285,6 +1303,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
             # explicitly non-evidence process context).
             carry["knowledge_base_context"] = outcome_hits
 
+    carry["available_sources"] = tuple(available_sources.values())
     events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
@@ -1356,43 +1375,77 @@ def _resurrection_events(
 
 
 async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
-    """Publish each seat's evidence projection with private fields stripped."""
+    """Publish only evidence projections backed by actually acquired sources."""
     outputs, unfilled, absent, reasons, attempts = await _collect(context)
     round_ = ExchangeRound()
     events: list[EmittedEvent] = []
     slots: list[str] = list(unfilled)
     published_item_count = 0
+    published_evidence: list[dict[str, str]] = []
+
+    available_by_id: dict[UUID, Mapping[str, object]] = {}
+    raw_available = context.carried.get("available_sources")
+    if isinstance(raw_available, (list, tuple)):
+        for raw_source in raw_available:
+            if not isinstance(raw_source, Mapping):
+                continue
+            try:
+                source_id = UUID(str(raw_source.get("source_id")))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            available_by_id[source_id] = raw_source
+
     for seat, output in sorted(outputs.items(), key=lambda kv: kv[0].value):
         raw = output.get("evidence_items")
+        items: list[EvidenceProjectionItem] = []
         if isinstance(raw, (list, tuple)):
-            items = tuple(
-                EvidenceProjectionItem(
-                    source_id=UUID(str(item.get("source_id"))),
+            for item in raw:
+                if not isinstance(item, Mapping):
+                    continue
+                raw_source_id = str(item.get("source_id", ""))
+                try:
+                    source_id = UUID(raw_source_id)
+                except (TypeError, ValueError, AttributeError):
+                    slots.append(
+                        "EVIDENCE_EXCHANGE:invalid_source_id:"
+                        f"{seat.value}:{raw_source_id or '<missing>'}"
+                    )
+                    continue
+                available = available_by_id.get(source_id)
+                if available is None:
+                    slots.append(
+                        "EVIDENCE_EXCHANGE:unknown_source_id:"
+                        f"{seat.value}:{source_id}"
+                    )
+                    continue
+                projection = EvidenceProjectionItem(
+                    source_id=source_id,
                     anchor_summary=str(item.get("anchor_summary", "")),
-                    level=str(item.get("level", "D")),
+                    # Evidence level is acquisition metadata. A seat may assess
+                    # it, but cannot upgrade a source by model output alone.
+                    level=str(available.get("level", "D")),
                 )
-                for item in raw
-                if isinstance(item, Mapping) and item.get("source_id")
-            )
+                items.append(projection)
             if items:
-                published = await round_.run(items)
+                published = await round_.run(tuple(items))
                 published_item_count += len(published.evidence_items)
+                sanitized = [
+                    {
+                        "source_id": str(item.source_id),
+                        "anchor_summary": item.anchor_summary,
+                        "level": item.level,
+                    }
+                    for item in published.evidence_items
+                ]
                 events.append(
                     EmittedEvent(
                         event_type=EVIDENCE_PUBLISHED,
-                        payload={
-                            "seat": seat.value,
-                            "items": [
-                                {
-                                    "source_id": str(item.source_id),
-                                    "anchor_summary": item.anchor_summary,
-                                    "level": item.level,
-                                }
-                                for item in published.evidence_items
-                            ],
-                        },
+                        payload={"seat": seat.value, "items": sanitized},
                         idempotency_key=context.key("published", seat.value),
                     )
+                )
+                published_evidence.extend(
+                    {"seat": seat.value, **item} for item in sanitized
                 )
         resurrection_events, resurrection_slots = _resurrection_events(
             context, seat, output
@@ -1413,6 +1466,7 @@ async def run_evidence_exchange(context: PhaseContext) -> PhaseOutcome:
         )
     return PhaseOutcome(
         events=tuple(events),
+        carry={"published_evidence": tuple(published_evidence)},
         unfilled_slots=tuple(slots),
         absent_seats=absent,
         attempts=attempts,
@@ -1658,11 +1712,40 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
                 )
             )
     events: list[EmittedEvent] = []
+    carry: dict[str, object] = {
+        "ranked_blindspots": (),
+        "blindspot_assignments": (),
+    }
     if items:
         result = handler.score_and_assign(
             BountyInput(
                 blindspot_items=tuple(items), claim_refs=context.confirmed_claims
             )
+        )
+        statements = {
+            str(scored.item.id): scored.item.statement
+            for scored in result.scored_items
+        }
+        carry["ranked_blindspots"] = tuple(
+            {
+                "blindspot_id": str(scored.item.id),
+                "statement": scored.item.statement,
+                "score": str(scored.score),
+                "rank": rank,
+                "status": "pending_investigation",
+            }
+            for rank, scored in enumerate(result.scored_items, start=1)
+        )
+        carry["blindspot_assignments"] = tuple(
+            {
+                "blindspot_id": str(item["blindspot_id"]),
+                "statement": statements.get(str(item["blindspot_id"]), ""),
+                "target_seat": str(item["target_seat"]),
+                "priority_rank": int(str(item["priority_rank"])),
+                "score": str(item["score"]),
+                "status": "pending_investigation",
+            }
+            for item in result.assignments
         )
         events.extend(
             EmittedEvent(
@@ -1712,6 +1795,7 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
     events.extend(_unavailable_events(context, absent, reasons, attempts))
     return PhaseOutcome(
         events=tuple(events),
+        carry=carry,
         unfilled_slots=unfilled,
         absent_seats=absent,
         attempts=attempts,

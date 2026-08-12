@@ -209,11 +209,83 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
         if key.lower() in _BIBLIOGRAPHIC_IDENTITY_KEYS:
             # Blind evidence review: never render this, whatever produced it.
             continue
-        if key == "knowledge_base_context":
-            # Rendered with its own dedicated block below -- the generic
-            # {key}: {value!r} line would dump raw dicts into the prompt.
+        if key in {
+            "knowledge_base_context",
+            "available_sources",
+            "published_evidence",
+            "ranked_blindspots",
+            "blindspot_assignments",
+        }:
+            # Rendered only for the protocol phase that consumes the value.
+            # Generic carry rendering would leak source identity and pending
+            # hypotheses into unrelated scientific judgments.
             continue
         lines.append(f"{key}: {context.carried[key]!r}")
+
+    if context.phase is TaskPhase.EVIDENCE_EXCHANGE:
+        available = context.carried.get("available_sources")
+        if isinstance(available, (list, tuple)):
+            lines.append("【本任务已真实获取的 Source；只能引用下列 source_id】")
+            for raw in available:
+                if not isinstance(raw, Mapping):
+                    continue
+                lines.append(
+                    "- source_id={source_id}; title={title}; level={level}".format(
+                        source_id=raw.get("source_id", "?"),
+                        title=raw.get("title", "?"),
+                        level=raw.get("level", "D"),
+                    )
+                )
+
+    if context.phase is TaskPhase.CROSS_EXAMINATION:
+        published = context.carried.get("published_evidence")
+        if isinstance(published, (list, tuple)):
+            lines.append(
+                "【座席发布的证据投影（Source 身份已核验；anchor_summary "
+                "是座席解释，不等于原文）】"
+            )
+            for raw in published:
+                if not isinstance(raw, Mapping):
+                    continue
+                lines.append(
+                    "- seat={seat}; source_id={source_id}; level={level}; "
+                    "anchor_summary={anchor}".format(
+                        seat=raw.get("seat", "?"),
+                        source_id=raw.get("source_id", "?"),
+                        level=raw.get("level", "D"),
+                        anchor=raw.get("anchor_summary", ""),
+                    )
+                )
+
+    if context.phase is TaskPhase.JOINT_MODELING:
+        ranked = context.carried.get("ranked_blindspots")
+        assignments = context.carried.get("blindspot_assignments")
+        if isinstance(ranked, (list, tuple)) and ranked:
+            lines.append("【待调查盲点（候选，不是已证实事实）】")
+            for raw in ranked:
+                if not isinstance(raw, Mapping):
+                    continue
+                lines.append(
+                    "- rank={rank}; blindspot_id={blindspot_id}; score={score}; "
+                    "statement={statement}".format(
+                        rank=raw.get("rank", "?"),
+                        blindspot_id=raw.get("blindspot_id", "?"),
+                        score=raw.get("score", "?"),
+                        statement=raw.get("statement", ""),
+                    )
+                )
+        if isinstance(assignments, (list, tuple)) and assignments:
+            lines.append("【待调查盲点分配（调度信息，不是证据）】")
+            for raw in assignments:
+                if not isinstance(raw, Mapping):
+                    continue
+                lines.append(
+                    "- rank={rank}; target={target}; statement={statement}".format(
+                        rank=raw.get("priority_rank", "?"),
+                        target=raw.get("target_seat", "?"),
+                        statement=raw.get("statement", ""),
+                    )
+                )
     # Knowledge-base retrieval hits, carried forward from the acquisition
     # round (registry's run_acquisition). Explicitly labelled as non-evidence
     # process context -- the researcher's own documents may suggest what to

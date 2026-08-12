@@ -11,9 +11,11 @@
  * ``PHASE_STARTED`` events, and every seat action -- evidence requests and
  * publications, challenges, bounty assignments, absences -- is an entry under
  * the phase its sequence falls in. The model's raw chain of thought
- * (``MODEL_REASONING_CAPTURED``, process-only) hangs collapsed under its
- * phase, labelled as process material on purpose (CLAUDE.md 5.1/11): it is
- * the vendor's thinking, not evidence, and never a basis for SUPPORTS/REFUTES.
+ * (``MODEL_REASONING_CAPTURED``, process-only) is deliberately **not**
+ * rendered here or anywhere: it is the vendor's private thinking, never
+ * evidence, never a basis for SUPPORTS/REFUTES (CLAUDE.md 5.1/11). Only the
+ * structured scientific actions, tool calls, retrieved sources, challenges,
+ * absences and audit summaries are shown.
  *
  * Data sources: the timeline runs off ``events`` (the SSE stream replays from
  * sequence 0 on connect, so it is complete and ordered by
@@ -32,7 +34,7 @@ import { t } from "../i18n";
 import "./CouncilView.css";
 
 /* Values match TaskPhase's StrEnum values (``phase.value``) written into the
- * PHASE_STARTED / MODEL_REASONING_CAPTURED payloads. */
+ * PHASE_STARTED payloads. */
 const PHASE_LABELS: Record<string, string> = {
   PRECOMMITMENT: "预承诺",
   ACQUISITION: "证据获取",
@@ -43,7 +45,9 @@ const PHASE_LABELS: Record<string, string> = {
   FINAL_REJUDGMENT: "最终复判",
 };
 
-/** Events attributed to a single seat, in ledger order. */
+/** Events attributed to a single seat, in ledger order. MODEL_REASONING_CAPTURED
+ * is intentionally absent: its payload is the vendor's private chain of
+ * thought, which this panel does not render (CLAUDE.md 11). */
 const SEAT_EVENT_KINDS = new Set([
   "PRECOMMITMENT_SEALED",
   "EVIDENCE_REQUESTED",
@@ -51,7 +55,6 @@ const SEAT_EVENT_KINDS = new Set([
   "CHALLENGE_RAISED",
   "FINAL_JUDGMENT",
   "SEAT_UNAVAILABLE",
-  "MODEL_REASONING_CAPTURED",
 ]);
 
 interface PhaseSpan {
@@ -148,22 +151,6 @@ function seatName(seat: string): string {
  * background). */
 function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
   const { kind, payload } = entry;
-
-  if (kind === "MODEL_REASONING_CAPTURED") {
-    const reasoning = typeof payload.reasoning === "string" ? payload.reasoning : "";
-    if (!reasoning.trim()) return null;
-    return (
-      <li className="council__tl-item">
-        <details className="council__reasoning">
-          <summary>
-            {t("模型思考过程")}
-            <span className="council__reasoning-hint">{t("原始模型输出，非正式证据")}</span>
-          </summary>
-          <pre className="council__reasoning-text">{reasoning}</pre>
-        </details>
-      </li>
-    );
-  }
 
   if (kind === "PRECOMMITMENT_SEALED") {
     const confidence = payload.confidence;
@@ -461,7 +448,7 @@ export function CouncilView({
   return (
     <Panel
       title={t("七人议会")}
-      subtitle={t("每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判，原始模型推理在对应轮次下展开（过程数据，非正式证据）。")}
+      subtitle={t("每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判。仅展示结构化科研动作、检索与证据、质询与缺席原因——不展示模型私有推理链（CLAUDE.md 11）。")}
     >
       <StanceSummary seats={seats} />
       <ConsensusPanel consensus={consensus ?? null} />

@@ -184,6 +184,19 @@ class OpenAICompatibleModelGateway:
             await self._client.aclose()
 
     async def invoke(self, request: ModelRequest) -> ModelResult:
+        """Run the complete transport/repair matrix under one hard deadline."""
+        try:
+            return await asyncio.wait_for(
+                self._invoke_with_repair(request),
+                timeout=self._config.invoke_total_timeout_seconds,
+            )
+        except TimeoutError as error:
+            raise TimeoutError(
+                "model invoke exceeded the "
+                f"{self._config.invoke_total_timeout_seconds:g}s total deadline"
+            ) from error
+
+    async def _invoke_with_repair(self, request: ModelRequest) -> ModelResult:
         schema = PHASE_OUTPUT_JSON_SCHEMAS.get(request.output_schema)
         if schema is None:
             raise ModelGatewayConfigError(

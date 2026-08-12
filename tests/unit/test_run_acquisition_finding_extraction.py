@@ -51,9 +51,26 @@ class _AcquisitionResult:
     unresolvable: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class _KnowledgeDocument:
+    document_id: UUID
+    object_key: str
+    title: str
+
+
 class _FakeAcquirer:
-    def __init__(self, result: _AcquisitionResult) -> None:
+    def __init__(
+        self,
+        result: _AcquisitionResult,
+        *,
+        uploaded: _AcquisitionResult | None = None,
+        user_dois: _AcquisitionResult | None = None,
+        knowledge_documents: _AcquisitionResult | None = None,
+    ) -> None:
         self._result = result
+        self._uploaded = uploaded or _AcquisitionResult()
+        self._user_dois = user_dois or _AcquisitionResult()
+        self._knowledge_documents = knowledge_documents or _AcquisitionResult()
 
     async def acquire(
         self, requests: list[tuple[Seat, str]]
@@ -63,19 +80,15 @@ class _FakeAcquirer:
     async def acquire_uploaded(
         self, object_ids: tuple[UUID, ...]
     ) -> _AcquisitionResult:
-        # Not exercised by this file's scenarios -- none of them pass
-        # pdf_object_ids -- but required to satisfy SourceAcquirer.
-        return _AcquisitionResult()
+        return self._uploaded
 
     async def acquire_dois(self, dois: tuple[str, ...]) -> _AcquisitionResult:
-        # Not exercised by this file's scenarios -- none pass user DOIs.
-        return _AcquisitionResult()
+        return self._user_dois
 
     async def acquire_knowledge_documents(
         self, documents: tuple[object, ...]
     ) -> _AcquisitionResult:
-        # Not exercised by this file's scenarios -- none link a knowledge base.
-        return _AcquisitionResult()
+        return self._knowledge_documents
 
 
 class _RequestingDeliberator:
@@ -127,6 +140,13 @@ class _FakeFindingExtractor:
 def _context(
     acquired: tuple[_Acquired, ...],
     finding_extractor: _FakeFindingExtractor | None,
+    *,
+    uploaded: tuple[_Acquired, ...] = (),
+    user_dois: tuple[_Acquired, ...] = (),
+    knowledge_sources: tuple[_Acquired, ...] = (),
+    pdf_object_ids: tuple[UUID, ...] = (),
+    requested_dois: tuple[str, ...] = (),
+    knowledge_documents: tuple[_KnowledgeDocument, ...] = (),
 ) -> PhaseContext:
     return PhaseContext(
         task_id=uuid4(),
@@ -135,8 +155,16 @@ def _context(
         question="Does screen time affect wellbeing?",
         confirmed_claims=(),
         deliberator=_RequestingDeliberator(),
-        acquirer=_FakeAcquirer(_AcquisitionResult(acquired=acquired)),
+        acquirer=_FakeAcquirer(
+            _AcquisitionResult(acquired=acquired),
+            uploaded=_AcquisitionResult(acquired=uploaded),
+            user_dois=_AcquisitionResult(acquired=user_dois),
+            knowledge_documents=_AcquisitionResult(acquired=knowledge_sources),
+        ),
         finding_extractor=finding_extractor,
+        pdf_object_ids=pdf_object_ids,
+        user_dois=requested_dois,
+        knowledge_documents=knowledge_documents,
     )
 
 
@@ -256,3 +284,59 @@ async def test_unavailable_deliberator_still_records_seat_absence() -> None:
     outcome = await run_acquisition(context)
 
     assert outcome.absent_seats == {Seat.THEORY_BUILDER}
+
+
+async def test_acquisition_carries_every_real_acquired_source() -> None:
+    seat_source = _Acquired(uuid4(), _DOI, "Seat source", "B")
+    object_id = uuid4()
+    uploaded_source = _Acquired(
+        uuid4(), None, "Uploaded source", "A", object_id=object_id
+    )
+    user_doi = "10.1234/user"
+    user_source = _Acquired(uuid4(), user_doi, "User DOI source", "B")
+    document_id = uuid4()
+    knowledge_source = _Acquired(
+        uuid4(), None, "Knowledge source", "A", document_id=document_id
+    )
+
+    outcome = await run_acquisition(
+        _context(
+            (seat_source,),
+            None,
+            uploaded=(uploaded_source,),
+            user_dois=(user_source,),
+            knowledge_sources=(knowledge_source,),
+            pdf_object_ids=(object_id,),
+            requested_dois=(user_doi,),
+            knowledge_documents=(
+                _KnowledgeDocument(
+                    document_id=document_id,
+                    object_key="knowledge/document.pdf",
+                    title="Knowledge source",
+                ),
+            ),
+        )
+    )
+
+    assert outcome.carry["available_sources"] == (
+        {
+            "source_id": str(seat_source.source_id),
+            "title": seat_source.title,
+            "level": seat_source.evidence_level,
+        },
+        {
+            "source_id": str(uploaded_source.source_id),
+            "title": uploaded_source.title,
+            "level": uploaded_source.evidence_level,
+        },
+        {
+            "source_id": str(user_source.source_id),
+            "title": user_source.title,
+            "level": user_source.evidence_level,
+        },
+        {
+            "source_id": str(knowledge_source.source_id),
+            "title": knowledge_source.title,
+            "level": knowledge_source.evidence_level,
+        },
+    )

@@ -1,13 +1,14 @@
-/** 实时进展：运行中议会的思考链路可视化（CLAUDE.md 11）。
+/** 实时进展：运行中议会的结构化过程轨迹可视化（CLAUDE.md 11）。
  *
- * 与 skill 调用的「跑完再看」不同，网页版要让研究者实时知道模型在干什么：
- * 数据来自两条流 —— 账本阶段事件（PHASE_STARTED/PHASE_COMPLETED 驱动阶段
- * 时间线）与 process_stream 过程流（token/推理片段/工具调用，独立连接）。
+ * 网页版要让研究者实时知道模型在干什么：数据来自两条流 —— 账本阶段事件
+ * （PHASE_STARTED/PHASE_COMPLETED 驱动阶段时间线）与 process_stream 过程流
+ * （结构化席位动作、工具调用、检索结果，独立连接）。
  *
- * 渲染纪律（CLAUDE.md 11）：只展示结构化过程轨迹 —— 阶段推进、席位思考
- * 片段、检索与文献链接 —— 不展示模型私有思维链以外的任何推测；这里出现
- * 的任何内容都不是正式结论，正式结论以 Research Brief 为准。token 流是
- * 易逝过程数据：重连后从服务端重放并由 seq 去重，不作为审计依据。
+ * 渲染纪律（CLAUDE.md 11）：只展示结构化过程轨迹 —— 阶段推进、席位运行
+ * 状态、检索与文献链接、议会动作 —— 不展示模型私有思维链（model_reasoning
+ * / model_token 原样丢弃）。这里出现的任何内容都不是正式结论，正式结论以
+ * Research Brief 为准。过程流是易逝数据：重连后从服务端重放并由 seq 去重，
+ * 不作为审计依据。
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -202,21 +203,21 @@ function phaseProgress(events: LedgerEvent[]): {
   return { current, done };
 }
 
-/** 每个席位最近的「一段」思考流：从最近的 seat_deliberation 起聚合
- * reasoning/token 片段，至最近的 model_done 截断。倒序遍历取最后一段。
+/** 每个席位最近的「一段」运行状态：从最近的 seat_deliberation 起跟踪模型
+ * 调用的 running/等待时长，至最近的 model_done 结束。模型私有推理片段
+ * （model_reasoning / model_token）被原样丢弃 —— 这里不渲染思维链，只
+ * 呈现「该席位当前在做什么」（结构化状态）。
+ *
  * ``seat_working`` 是模型调用期间服务器发的心跳（elapsed = 已等待秒数），
  * 供「思考中… 已等待 Ns」显示：一次调用卡住时，前端不再只有死寂的
  * 「思考中…」，而是能看见它已经等了多久。 */
 function seatStreams(
   processEvents: ProcessEvent[],
-): Record<string, { phase: string; text: string; running: boolean; elapsed: number }> {
-  const result: Record<
-    string,
-    { phase: string; text: string; running: boolean; elapsed: number }
-  > = {};
+): Record<string, { phase: string; running: boolean; elapsed: number }> {
+  const result: Record<string, { phase: string; running: boolean; elapsed: number }> = {};
   const current: Record<
     string,
-    { phase: string; parts: string[]; running: boolean; elapsed: number }
+    { phase: string; running: boolean; elapsed: number }
   > = {};
   for (const event of processEvents) {
     const payload = event.payload as Record<string, unknown>;
@@ -224,15 +225,11 @@ function seatStreams(
     if (event.kind === "seat_deliberation" && seat) {
       current[seat] = {
         phase: typeof payload.phase === "string" ? payload.phase : "",
-        parts: [],
         running: true,
         elapsed: 0,
       };
     } else if (seat && current[seat]) {
-      const text = typeof payload.text === "string" ? payload.text : "";
-      if (event.kind === "model_reasoning" || event.kind === "model_token") {
-        if (text) current[seat].parts.push(text);
-      } else if (event.kind === "model_done") {
+      if (event.kind === "model_done") {
         current[seat].running = false;
       } else if (event.kind === "seat_working") {
         const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
@@ -243,7 +240,6 @@ function seatStreams(
   for (const [seat, entry] of Object.entries(current)) {
     result[seat] = {
       phase: entry.phase,
-      text: entry.parts.join(""),
       running: entry.running,
       elapsed: entry.elapsed,
     };
@@ -501,15 +497,6 @@ export function LiveView({
     return () => window.clearInterval(timer);
   }, [anyRunning, anyToolPending]);
 
-  const scrollRef = useRef<Record<string, HTMLDivElement | null>>({});
-  useEffect(() => {
-    // 新内容到达时把每个有流的席位面板滚到底 —— 研究者在看「现在」，不是
-    // 往回翻。手动上滚会被下一次 flush 拉回，这是实时视图的取舍。
-    for (const ref of Object.values(scrollRef.current)) {
-      if (ref) ref.scrollTop = ref.scrollHeight;
-    }
-  }, [processEvents.length]);
-
   // 阶段切换时把当前阶段 pill 滚进视野：阶段行可换行，研究者不能被
   // 一个刚刚开始的阶段留在屏幕之外（reduced-motion 时不做平滑滚动）。
   const currentRef = useRef<HTMLSpanElement | null>(null);
@@ -605,9 +592,9 @@ export function LiveView({
                 在做什么，再看他们检索到了什么（用户要求：文献区放在主界面
                 下方，一行多列铺开，而不是挤在右侧小栏里）。 */}
             <div className="live__main">
-              <section className="live__seats" aria-label={t("席位思考流")}>
+              <section className="live__seats" aria-label={t("席位运行状态")}>
                 {Object.entries(streams).length === 0 ? (
-                  <Empty>{t("还没有席位开始思考。")}</Empty>
+                  <Empty>{t("还没有席位开始运行。")}</Empty>
                 ) : (
                   Object.entries(streams).map(([seat, entry]) => (
                     <div key={seat} className="live__seat">
@@ -632,15 +619,9 @@ export function LiveView({
                               ? t("模型长时间无响应（已等待 {0}s），系统将自动中断", entry.elapsed)
                               : t("思考中… 已等待 {0}s", entry.elapsed)}
                           </span>
-                        ) : null}
-                      </div>
-                      <div
-                        className="live__seat-text mono"
-                        ref={(node) => {
-                          scrollRef.current[seat] = node;
-                        }}
-                      >
-                        {entry.text || t("（尚无输出）")}
+                        ) : (
+                          <span className="live__seat-idle">{t("已完成")}</span>
+                        )}
                       </div>
                     </div>
                   ))

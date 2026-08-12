@@ -16,13 +16,13 @@
  */
 
 import { flushSync } from "react-dom";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout } from "./api/client";
+import { cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout, reResearch, resumeTask } from "./api/client";
 import type { ResearchBrief, TaskSummary } from "./api/types";
 import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
-import { Badge, Spinner, TASK_STATUS_TONE } from "./components/primitives";
+import { Spinner, TaskStatusBadge } from "./components/primitives";
 import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "./i18n";
 import { AccountMenu } from "./views/AccountMenu";
 import { AuditView } from "./views/AuditView";
@@ -161,6 +161,27 @@ const STOPPABLE_STATUSES = new Set([
   "REPORTING",
 ]);
 
+/** Statuses that can move again without a new task: FAILED and CANCELLED are
+ * requeued via 「重新研究」(re_research), PAUSED via 「继续研究」(resume). These
+ * mirror the backend state matrix in ResearchService -- do not extend them. */
+const RESUMEABLE_STATUSES = new Set(["FAILED", "CANCELLED", "PAUSED"]);
+
+/** A task in one of these lifecycle states may still change status server-side
+ * without a ledger event (watchdog/EventConflict flip the column but not a
+ * ledger terminal), so the insurance poll watches them. Terminal and draft
+ * states are excluded -- their status is stable and a poll would be noise. */
+const INSURANCE_POLL_STATUSES = new Set([
+  "QUEUED",
+  "RUNNING",
+  "DEGRADED_RUNNING",
+  "AWAITING_COUNCIL_INPUT",
+  "REPORTING",
+]);
+
+/** Insurance poll schedule: 15s normally, backing off to 30s then 60s on
+ * consecutive failures (never harder than 60s), resetting on success. */
+const INSURANCE_BACKOFF = [15_000, 30_000, 60_000] as const;
+
 function computeQueue(
   tasks: TaskSummary[],
   currentId: string | null,
@@ -291,11 +312,21 @@ export function App() {
 
   // Sliding tab indicator: measure the active tab so the bar glides from
   // wherever it was to the new position (App.css transitions the transform).
+  // When the rail overflows (narrow screens), the active tab is scrolled into
+  // view so switching tabs never leaves the current one off-screen.
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
   useEffect(() => {
     const active = tabRefs.current[tab];
-    if (active) setIndicator({ left: active.offsetLeft, width: active.offsetWidth });
+    if (active) {
+      setIndicator({ left: active.offsetLeft, width: active.offsetWidth });
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      active.scrollIntoView({
+        behavior: reduce ? "auto" : "smooth",
+        block: "nearest",
+        inline: "center",
+      });
+    }
   }, [tab, taskId]);
 
   // 本机免登录：有 token 就先验证；过期或无效则清掉回到登录页。
@@ -336,9 +367,48 @@ export function App() {
   useEffect(() => {
     const status = snapshot?.task.status;
     if (status !== "AWAITING_COUNCIL_INPUT" && status !== "QUEUED") return;
-    const id = window.setInterval(refresh, CHECKPOINT_POLL_MS);
+    const id = window.setInterval(() => void refresh(), CHECKPOINT_POLL_MS);
     return () => window.clearInterval(id);
   }, [snapshot?.task.status, refresh]);
+
+  // 状态保险刷新（round 修复）：SSE 仍是主路径，但 watchdog/EventConflict
+  // 只改数据库状态、不发账本终态事件时，前端会一直停在 RUNNING 上，连
+  // 「重新研究」入口都看不到。此轮询只覆盖可能无声变动的非终态，且：
+  //   - 页面隐藏即停（visibilitychange 恢复可见时立即 refresh 一次）；
+  //   - 同时间只允许一个刷新请求（useWorkspace 的 refresh 已 abort 上一次）；
+  //   - 连续失败退避 15→30→60s，成功后回到 15s；
+  //   - 切换 taskId 清理旧 timer（依赖 taskId）。
+  useEffect(() => {
+    if (!taskId || !isStatusIn(INSURANCE_POLL_STATUSES, snapshot?.task.status)) return;
+    let cancelled = false;
+    let timer = 0;
+    let failStreak = 0;
+    const schedule = () => {
+      if (cancelled) return;
+      const delay = INSURANCE_BACKOFF[Math.min(failStreak, INSURANCE_BACKOFF.length - 1)];
+      timer = window.setTimeout(run, delay);
+    };
+    const run = async () => {
+      if (cancelled) return;
+      // 只轮询可见页：后台标签不打扰服务器，恢复可见时由 visibility 处理器
+      // 立即刷新一次（见下），不浪费一个周期的空转。
+      if (document.visibilityState === "visible") {
+        const ok = await refresh();
+        failStreak = ok ? 0 : failStreak + 1;
+      }
+      schedule();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    void run();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [taskId, snapshot?.task.status, refresh]);
 
   // 打开任务后按状态定初始视图：排队中 / 运行中 / 停在检查点的任务落在
   // 「实时进展」（思考链路是这类任务唯一有内容可看的地方，尤其是从外部
@@ -412,12 +482,59 @@ export function App() {
     });
   }
 
-  const [cancelling, setCancelling] = useState(false);
+  // busyTask 绑定具体正在变动的任务：让「重新研究/继续研究/停止」的 loading
+  // 只落在那一行的按钮上，而不是禁用整片界面。值为 null 表示没有任务在变动。
+  const [busyTask, setBusyTask] = useState<string | null>(null);
+
+  function isStatusIn(
+    set: Set<string>,
+    value: string | null | undefined,
+  ): boolean {
+    return value != null && set.has(value);
+  }
+
+  /** 通用“让任务恢复前进”的入口：FAILED/CANCELLED 走「重新研究」，
+   * PAUSED 走「继续研究」。成功后若该任务正是当前工作台，立即刷新
+   * snapshot（否则保险轮询会兜底）。返回是否成功，供调用方决定是否刷新
+   * 会话历史。 */
+  const runMutation = useCallback(
+    async (target: string, mutate: (id: string) => Promise<unknown>): Promise<boolean> => {
+      if (busyTask) return false;
+      setBusyTask(target);
+      try {
+        await mutate(target);
+        if (target === taskId) {
+          await refresh();
+        }
+        return true;
+      } catch (cause) {
+        // 失败保留现状，不把界面推进到一个没发生的状态。
+        console.error(cause);
+        return false;
+      } finally {
+        setBusyTask(null);
+      }
+    },
+    [busyTask, taskId, refresh],
+  );
+
+  /** 「重新研究」：把 FAILED/CANCELLED 任务交回队列，worker 从 checkpoint
+   * 续跑（round-8/10 语义）。 */
+  const handleReResearch = useCallback(
+    (target: string) => runMutation(target, reResearch),
+    [runMutation],
+  );
+
+  /** 「继续研究」：把 PAUSED 任务交回队列（后端 /resume 只接受 PAUSED）。 */
+  const handleResume = useCallback(
+    (target: string) => runMutation(target, resumeTask),
+    [runMutation],
+  );
 
   /** 「停止研究」（round-10）：停止当前正在运行或排队的任务。 */
   async function handleStopResearch() {
-    if (!taskId || cancelling) return;
-    setCancelling(true);
+    if (!taskId || busyTask) return;
+    setBusyTask(taskId);
     try {
       await cancelTask(taskId);
       // 状态由 stream / snapshot 驱动刷新；这里立即拉一次让界面快速反映。
@@ -426,9 +543,18 @@ export function App() {
       // 停止失败保留现状，不把界面推进到一个没发生的状态。
       console.error(cause);
     } finally {
-      setCancelling(false);
+      setBusyTask(null);
     }
   }
+
+  /** 会话历史里的操作（重新研究/继续研究）成功后回调：若该任务正是当前
+   * 工作台，立即 refresh —— 与任务头按钮走同一路径。 */
+  const handleTaskMutated = useCallback(
+    (mutatedId: string) => {
+      if (mutatedId === taskId) void refresh();
+    },
+    [taskId, refresh],
+  );
 
   /** A manual tab choice always wins over auto-follow. */
   function selectTab(next: Tab) {
@@ -524,6 +650,7 @@ export function App() {
             currentTaskId={taskId}
             onOpen={open}
             onDeleted={handleTaskDeleted}
+            onTaskMutated={handleTaskMutated}
           />
         </div>
       </header>
@@ -589,12 +716,15 @@ export function App() {
             <>
               <div className="app__task">
                 <div className="app__task-head">
-                  <h1>{snapshot?.task.question ?? t("载入中…")}</h1>
-                  <div className="app__task-meta">
+                  {/* 标题与状态徽标必须紧邻（round 任务头修复）：h1 与主状态
+                      badge 在同一行、flex-wrap 允许自然换行、gap 8px —— 徽标
+                      不再孤零零漂到右侧。次级 gap 徽标（N 处未完成）仍属
+                      title copy，视觉权重低于主状态徽标，用 operational 中性色
+                      而非 evidence refuted 红。 */}
+                  <div className="app__title-copy">
+                    <h1>{snapshot?.task.question ?? t("载入中…")}</h1>
                     {snapshot ? (
-                      <Badge tone={TASK_STATUS_TONE[snapshot.task.status] ?? "unknown"}>
-                        {snapshot.task.status}
-                      </Badge>
+                      <TaskStatusBadge status={snapshot.task.status} />
                     ) : null}
                     {/* The gap count is on the header of every tab. A researcher
                         must not be able to read a conclusion without seeing how
@@ -603,32 +733,59 @@ export function App() {
                         absent, which phases did not run or failed), so the
                         number is never a mystery. */}
                     {gapCount > 0 && brief ? (
-                      <span className="app__task-gaps">
-                        <Badge tone="refuted">{t("{0} 处未完成", gapCount)}</Badge>
-                        <span
-                          className="app__task-gaps-detail"
-                          title={gapDetails(brief).join("；")}
-                        >
+                      <span
+                        className="app__task-gaps"
+                        title={`${t("缺席席位、未执行轮次与失败轮次的合计")}：${gapDetails(brief).join("；")}`}
+                      >
+                        <span className="app__gaps-badge">
+                          {t("{0} 处未完成", gapCount)}
+                        </span>
+                        <span className="app__task-gaps-detail">
                           {gapDetails(brief).join("、")}
                         </span>
                       </span>
                     ) : null}
                   </div>
                   <div className="app__task-actions">
-                    {/* 「停止研究」(round-10): only a task that can still move
-                        forward can be stopped -- a terminal task is already
-                        over, and a draft is still being shaped by the
-                        researcher, not running. */}
+                    {/* 恢复/停止入口（round 修复）：FAILED/CANCELLED 提供
+                        「重新研究」、PAUSED 提供「继续研究」—— 失败后不用再
+                        新建任务就能让 worker 从 checkpoint 续跑；可运行态
+                        提供「停止研究」。状态矩阵见 ResearchService，前端
+                        不扩展。 */}
+                    {snapshot &&
+                    isStatusIn(RESUMEABLE_STATUSES, snapshot.task.status) ? (
+                      snapshot.task.status === "PAUSED" ? (
+                        <button
+                          type="button"
+                          className="app__resume app__action-primary"
+                          onClick={() => void handleResume(taskId!)}
+                          disabled={busyTask === taskId}
+                          title={t("继续研究：将已暂停的任务交回队列，Worker 从 checkpoint 续跑")}
+                        >
+                          {busyTask === taskId ? t("请稍候…") : t("继续研究")}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="app__rerun app__action-primary"
+                          onClick={() => void handleReResearch(taskId!)}
+                          disabled={busyTask === taskId}
+                          title={t("重新研究：从失败/停止节点交回队列，Worker 续跑")}
+                        >
+                          {busyTask === taskId ? t("请稍候…") : t("重新研究")}
+                        </button>
+                      )
+                    ) : null}
                     {snapshot &&
                     STOPPABLE_STATUSES.has(snapshot.task.status) ? (
                       <button
                         type="button"
                         className="app__stop"
-                        onClick={handleStopResearch}
-                        disabled={cancelling}
+                        onClick={() => void handleStopResearch()}
+                        disabled={busyTask === taskId}
                         title={t("停止研究：当前任务的议会运行将停止")}
                       >
-                        {cancelling ? t("停止中…") : t("停止研究")}
+                        {busyTask === taskId ? t("停止中…") : t("停止研究")}
                       </button>
                     ) : null}
                     <button

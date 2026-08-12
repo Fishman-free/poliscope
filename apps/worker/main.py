@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+import math
+import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
@@ -34,6 +36,8 @@ from packages.kernel.database import (
 from packages.models.contracts import ModelGateway
 from packages.models.openai_compatible import gateway_from_env
 from packages.papers.object_store import PrivateObjectStore
+from packages.reports.safety import sanitize_export
+from packages.reports.synthesis import synthesize_paper
 from packages.research.models import ResearchTaskModel
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher, fulltext_fetcher_from_env
@@ -42,6 +46,9 @@ from packages.tools.http_gateway import tool_gateway_from_env
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 2.0
+COUNCIL_INPUT_GRACE_ENV = "POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS"
+DEFAULT_COUNCIL_INPUT_GRACE_SECONDS = 120.0
+MIN_COUNCIL_INPUT_GRACE_SECONDS = 30.0
 
 
 @dataclass(slots=True)
@@ -121,6 +128,28 @@ class WorkerContext:
                 await aclose()
         await self.app_engine.dispose()
         await self.projector_engine.dispose()
+
+
+def _council_input_grace_seconds(
+    env: Mapping[str, str] | None = None,
+) -> float:
+    """Resolve a bounded grace period without accepting silent bad config."""
+    source = os.environ if env is None else env
+    raw = source.get(
+        COUNCIL_INPUT_GRACE_ENV, str(DEFAULT_COUNCIL_INPUT_GRACE_SECONDS)
+    )
+    try:
+        seconds = float(raw)
+    except ValueError as error:
+        raise ValueError(
+            f"{COUNCIL_INPUT_GRACE_ENV} must be a finite number of seconds"
+        ) from error
+    if not math.isfinite(seconds) or seconds < MIN_COUNCIL_INPUT_GRACE_SECONDS:
+        raise ValueError(
+            f"{COUNCIL_INPUT_GRACE_ENV} must be at least "
+            f"{MIN_COUNCIL_INPUT_GRACE_SECONDS:g} seconds"
+        )
+    return seconds
 
 
 async def claim_queued_tasks(
@@ -222,6 +251,45 @@ async def recover_stale_running(
         return int(cursor.rowcount or 0)
 
 
+async def resume_expired_council_inputs(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    grace_seconds: float,
+) -> int:
+    """Queue expired human checkpoints without fabricating human guidance.
+
+    The checkpoint JSON is left byte-for-byte intact, including
+    ``guidance=None``. The conditional UPDATE is the concurrency guard: if a
+    researcher submits guidance first, that transaction changes the status to
+    QUEUED and this path no longer matches the row.
+    """
+    if (
+        not math.isfinite(grace_seconds)
+        or grace_seconds < MIN_COUNCIL_INPUT_GRACE_SECONDS
+    ):
+        raise ValueError(
+            "council input grace must be finite and at least "
+            f"{MIN_COUNCIL_INPUT_GRACE_SECONDS:g} seconds"
+        )
+    async with sessions() as session:
+        result = await session.execute(
+            update(ResearchTaskModel)
+            .where(
+                ResearchTaskModel.status == TaskStatus.AWAITING_COUNCIL_INPUT,
+                ResearchTaskModel.council_checkpoint.is_not(None),
+                ResearchTaskModel.updated_at
+                < func.now()
+                - text(":grace_seconds * interval '1 second'").bindparams(
+                    grace_seconds=grace_seconds
+                ),
+            )
+            .values(status=TaskStatus.QUEUED, updated_at=func.now())
+        )
+        await session.commit()
+        cursor = cast(CursorResult[Any], result)
+        return int(cursor.rowcount or 0)
+
+
 async def _watchdog_timeout(
     sessions: async_sessionmaker[AsyncSession],
     task_id: UUID,
@@ -240,18 +308,21 @@ async def _watchdog_timeout(
     return float(row * 60 + WATCHDOG_BUFFER_SECONDS)
 
 
-async def _mark_timed_out(
+async def emergency_finalize_task(
     sessions: async_sessionmaker[AsyncSession],
     task_id: UUID,
-) -> None:
-    """Flip a watchdog-failed task to FAILED so it is not reclaimed as stale.
+    *,
+    reason: str,
+) -> bool:
+    """Terminalize a still-RUNNING task, then emit a deterministic artifact.
 
-    Only touches rows still RUNNING; a task that somehow finished between the
-    timeout and this write keeps its terminal status. CLAUDE.md 10: a run that
-    could not finish is reported as failed, never left RUNNING forever.
+    Status and fallback use separate fresh sessions. Consequently a fallback
+    failure cannot roll back the terminal status, and this function runs only
+    after ``asyncio.wait_for`` has finished cancelling the original job.
     """
-    async with sessions() as session:
-        await session.execute(
+    safe_reason = sanitize_export(reason)[:500] or "unexpected worker failure"
+    async with sessions() as status_session:
+        result = await status_session.execute(
             update(ResearchTaskModel)
             .where(
                 ResearchTaskModel.task_id == task_id,
@@ -259,7 +330,42 @@ async def _mark_timed_out(
             )
             .values(status=TaskStatus.FAILED, updated_at=func.now())
         )
-        await session.commit()
+        cursor = cast(CursorResult[Any], result)
+        terminalized = bool(cursor.rowcount)
+        await status_session.commit()
+    if not terminalized:
+        return False
+
+    try:
+        async with sessions() as fallback_session:
+            try:
+                await synthesize_paper(
+                    fallback_session,
+                    task_id,
+                    None,
+                    emergency_reason=safe_reason,
+                )
+                await fallback_session.commit()
+            except BaseException:
+                await fallback_session.rollback()
+                raise
+    except BaseException:  # noqa: BLE001 -- status is already durable
+        logger.exception(
+            "emergency fallback failed for terminal task %s", task_id
+        )
+    return True
+
+
+async def _mark_timed_out(
+    sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+) -> None:
+    """Compatibility wrapper for the watchdog's emergency finalization."""
+    await emergency_finalize_task(
+        sessions,
+        task_id,
+        reason="worker watchdog timeout before research completion",
+    )
 
 
 async def run_one(context: WorkerContext, task_id: UUID) -> JobResult | None:
@@ -300,8 +406,15 @@ async def run_one(context: WorkerContext, task_id: UUID) -> JobResult | None:
         # Another worker finished it between the claim and the run.
         logger.info("task %s was no longer runnable", task_id)
         return None
-    except Exception:
+    except Exception as error:
         logger.exception("task %s failed", task_id)
+        await emergency_finalize_task(
+            context.app_sessions,
+            task_id,
+            reason=(
+                f"unexpected worker exception: {type(error).__name__}: {error}"
+            ),
+        )
         return None
 
 
@@ -326,6 +439,7 @@ async def run_worker(
     """Poll for queued tasks until cancelled."""
     owned = context is None
     active = WorkerContext.from_env() if context is None else context
+    council_input_grace = _council_input_grace_seconds()
     try:
         while True:
             # A crashed worker leaves RUNNING claims behind; reclaim them
@@ -333,6 +447,15 @@ async def run_worker(
             reclaimed = await recover_stale_running(active.app_sessions)
             if reclaimed:
                 logger.info("reclaimed %d stale RUNNING task(s)", reclaimed)
+            resumed = await resume_expired_council_inputs(
+                active.app_sessions,
+                grace_seconds=council_input_grace,
+            )
+            if resumed:
+                logger.info(
+                    "automatically resumed %d expired council checkpoint(s)",
+                    resumed,
+                )
             if not await drain(active):
                 await asyncio.sleep(poll_interval)
     except asyncio.CancelledError:

@@ -533,4 +533,22 @@ export const en: Record<string, string> = {
   "追问研究结论、证据或局限…": "Ask about the conclusions, evidence, or limitations…",
   "提问": "Ask",
   "回答中…": "Answering…",
+
+  // Round: workspace redesign -- lifecycle status labels (operational, not
+  // evidence tones), resume/restart entry points, and live-seat state.
+  "研究中": "Running",
+  "降级运行": "Degraded",
+  "等待方向性引导": "Awaiting guidance",
+  "生成报告中": "Reporting",
+  "已暂停": "Paused",
+  "已完成": "Completed",
+  "已完成，有缺口": "Completed, with gaps",
+  "研究中断": "Interrupted",
+  "已停止": "Stopped",
+  "继续研究": "Resume research",
+  "继续研究：将已暂停的任务交回队列，Worker 从 checkpoint 续跑": "Resume research: return the paused task to the queue; the worker resumes from its checkpoint",
+  "重新研究：从失败/停止节点交回队列，Worker 续跑": "Re-research: return the task to the queue from the failed/stopped point; the worker resumes",
+  "席位运行状态": "Seat activity",
+  "还没有席位开始运行。": "No seat has started yet.",
+  "每位科学家的思考链路：预承诺 → 各轮次行动 → 最终复判。仅展示结构化科研动作、检索与证据、质询与缺席原因——不展示模型私有推理链（CLAUDE.md 11）。": "Each scientist's chain: precommitment → actions in each round → final judgment. Only structured scientific actions, searches and evidence, challenges, and absence reasons are shown -- private model reasoning chains are not displayed (CLAUDE.md 11).",
 };

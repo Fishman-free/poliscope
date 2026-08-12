@@ -19,6 +19,7 @@ back off exponentially up to 60s.
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -35,17 +36,17 @@ _GENERIC_MAX_BACKOFF = 8.0
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
-    """Respect the vendor's ``Retry-After`` header when it is a plain number
-    of seconds (the common form). An HTTP-date value is rare enough that
-    parsing it ourselves would risk waiting the wrong amount -- we fall back
-    to our own exponential backoff instead."""
+    """Parse and cap numeric ``Retry-After`` without permitting an unbounded wait."""
     header = response.headers.get("retry-after")
     if header is None:
         return None
     try:
-        return max(0.0, float(header))
+        seconds = float(header)
     except ValueError:
         return None
+    if not math.isfinite(seconds):
+        return None
+    return min(max(0.0, seconds), _RATE_LIMIT_MAX_BACKOFF)
 
 
 async def send_with_retry(
@@ -60,8 +61,9 @@ async def send_with_retry(
     exhausted. Any other 4xx raises immediately via ``raise_for_status`` --
     not transient, so retrying it would only waste the retry budget.
 
-    Backoff is per failure kind: rate limits wait ``Retry-After`` (or up to
-    60s exponentially); transport errors and 5xx wait up to 8s. Waiting
+    Backoff is per failure kind: rate limits wait ``Retry-After`` capped at
+    60s (or use the same cap exponentially); transport errors and 5xx wait
+    up to 8s. Waiting
     happens after a failed attempt, so the first attempt is never delayed.
     """
     retries = 0

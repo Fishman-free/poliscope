@@ -1,8 +1,10 @@
+/* Permanent panels carry elevation through surface + hairline, not a shadow --
+   the workspace reads as an instrument surface, and shadow is reserved for
+   popovers/dialogs/floating inspectors (CLAUDE.md 11, Apple DESIGN.md). */
 .panel {
   background: var(--surface-0);
   border: 1px solid var(--line);
   border-radius: var(--radius-4);
-  box-shadow: var(--shadow-2);
   overflow: hidden;
 }
 
@@ -70,6 +72,71 @@
   color: var(--unknown);
   background: var(--unknown-soft);
   border-color: var(--line);
+}
+
+/* Task-lifecycle status badge. Colours come from the workspace's independent
+   operational tokens (`.app` scope, App.css) -- never the evidence tones: a
+   run's lifecycle (研究中 / 已暂停 / 已停止) is a different axis from how much
+   a finding is trusted. Every status also carries a geometric icon, so the
+   meaning never depends on colour alone. */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.15em 0.65em;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-micro);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  color: var(--app-op-queued, var(--ink-3));
+  background: var(--app-op-queued-soft, transparent);
+  border-color: var(--app-op-queued-border, var(--line));
+}
+
+.status-badge__icon {
+  flex: none;
+}
+
+.status-badge--queued,
+.status-badge--paused,
+.status-badge--cancelled {
+  color: var(--app-op-queued, var(--ink-3));
+  background: var(--app-op-queued-soft, transparent);
+  border-color: var(--app-op-queued-border, var(--line));
+}
+
+.status-badge--running,
+.status-badge--reporting {
+  color: var(--app-op-running, var(--accent));
+  background: var(--app-op-running-soft, var(--accent-soft));
+  border-color: var(--app-op-running-border, var(--line));
+}
+
+.status-badge--degraded_running,
+.status-badge--completed_with_gaps {
+  color: var(--app-op-degraded, var(--provisional));
+  background: var(--app-op-degraded-soft, transparent);
+  border-color: var(--app-op-degraded-border, var(--line));
+}
+
+.status-badge--awaiting_council_input {
+  color: var(--app-op-checkpoint, var(--ink-2));
+  background: var(--app-op-checkpoint-soft, transparent);
+  border-color: var(--app-op-checkpoint-border, var(--line));
+}
+
+.status-badge--completed {
+  color: var(--app-op-completed, var(--admitted));
+  background: var(--app-op-completed-soft, transparent);
+  border-color: var(--app-op-completed-border, var(--line));
+}
+
+.status-badge--failed {
+  color: var(--app-op-failed, var(--refuted));
+  background: var(--app-op-failed-soft, transparent);
+  border-color: var(--app-op-failed-border, var(--line));
 }
 
 .empty {

@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
     CONFIDENCE_UPDATED,
+    EVIDENCE_PUBLISHED,
     RESURRECTION_GRANTED,
     EmittedEvent,
     PhaseContext,
@@ -39,6 +40,7 @@ def _context(
     output: Mapping[str, object],
     quarantined: tuple[QuarantinedNode, ...] = (),
     confirmed_claims: tuple[UUID, ...] = (),
+    available_sources: tuple[Mapping[str, object], ...] = (),
 ) -> PhaseContext:
     return PhaseContext(
         task_id=uuid4(),
@@ -47,6 +49,7 @@ def _context(
         question="Does screen time affect wellbeing?",
         confirmed_claims=confirmed_claims,
         deliberator=_ScriptedDeliberator(output),
+        carried={"available_sources": available_sources},
         quarantined=quarantined,
     )
 
@@ -167,10 +170,11 @@ async def test_published_evidence_emits_a_confidence_marker_per_confirmed_claim(
     one-to-one mapping)."""
     claim_id = uuid4()
     other_claim_id = uuid4()
+    source_id = uuid4()
     output = {
         "evidence_items": [
             {
-                "source_id": str(uuid4()),
+                "source_id": str(source_id),
                 "anchor_summary": "a preregistered cohort study",
                 "level": "A",
             }
@@ -178,7 +182,13 @@ async def test_published_evidence_emits_a_confidence_marker_per_confirmed_claim(
     }
 
     outcome = await run_evidence_exchange(
-        _context(output, confirmed_claims=(claim_id, other_claim_id))
+        _context(
+            output,
+            confirmed_claims=(claim_id, other_claim_id),
+            available_sources=(
+                {"source_id": str(source_id), "title": "Cohort", "level": "A"},
+            ),
+        )
     )
 
     markers = _confidence_events(outcome.events)
@@ -203,3 +213,94 @@ async def test_no_published_evidence_emits_no_confidence_marker() -> None:
     )
 
     assert _confidence_events(outcome.events) == []
+
+
+async def test_evidence_exchange_rejects_malformed_and_unknown_source_ids() -> None:
+    known_source_id = uuid4()
+    unknown_source_id = uuid4()
+    output = {
+        "evidence_items": [
+            {
+                "source_id": str(known_source_id),
+                "anchor_summary": "verified anchor",
+                "level": "A",
+            },
+            {
+                "source_id": "not-a-uuid",
+                "anchor_summary": "model fabrication",
+                "level": "A",
+            },
+            {
+                "source_id": str(unknown_source_id),
+                "anchor_summary": "unknown source",
+                "level": "B",
+            },
+        ]
+    }
+
+    outcome = await run_evidence_exchange(
+        _context(
+            output,
+            available_sources=(
+                {
+                    "source_id": str(known_source_id),
+                    "title": "Verified source",
+                    "level": "A",
+                },
+            ),
+        )
+    )
+
+    published = [
+        event for event in outcome.events if event.event_type == EVIDENCE_PUBLISHED
+    ]
+    assert len(published) == 1
+    assert published[0].payload["items"] == [
+        {
+            "source_id": str(known_source_id),
+            "anchor_summary": "verified anchor",
+            "level": "A",
+        }
+    ]
+    assert (
+        "EVIDENCE_EXCHANGE:invalid_source_id:evidence_auditor:not-a-uuid"
+        in outcome.unfilled_slots
+    )
+    assert (
+        f"EVIDENCE_EXCHANGE:unknown_source_id:evidence_auditor:{unknown_source_id}"
+        in outcome.unfilled_slots
+    )
+
+
+async def test_evidence_exchange_carries_only_sanitized_published_evidence() -> None:
+    source_id = uuid4()
+    output = {
+        "evidence_items": [
+            {
+                "source_id": str(source_id),
+                "anchor_summary": "public methodological anchor",
+                "level": "A",
+                "private_notes": "must not cross the seat boundary",
+            }
+        ]
+    }
+
+    outcome = await run_evidence_exchange(
+        _context(
+            output,
+            available_sources=(
+                {"source_id": str(source_id), "title": "Source", "level": "A"},
+            ),
+        )
+    )
+
+    assert outcome.carry == {
+        "published_evidence": (
+            {
+                "seat": Seat.EVIDENCE_AUDITOR.value,
+                "source_id": str(source_id),
+                "anchor_summary": "public methodological anchor",
+                "level": "A",
+            },
+        )
+    }

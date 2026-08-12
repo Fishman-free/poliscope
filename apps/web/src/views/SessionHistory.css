@@ -183,8 +183,10 @@
 .session__delete {
   flex: none;
   align-self: center;
-  width: 24px;
-  height: 24px;
+  /* 触控目标 ≥44px：视觉上是 24px 小按钮，命中区放大到 44px 方框。 */
+  width: 44px;
+  height: 44px;
+  margin: -10px 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

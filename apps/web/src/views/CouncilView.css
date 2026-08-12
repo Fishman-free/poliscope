@@ -145,58 +145,6 @@
   line-height: 1.45;
 }
 
-/* Reasoning entries inside the timeline keep the same collapsed treatment as
-   before; only the block margins change (they now sit on the rail). */
-.council__tl-item > .council__reasoning {
-  width: 100%;
-}
-
-.council__tl-item > .council__reasoning + .council__reasoning {
-  margin-top: 0;
-}
-
-/* Raw chain of thought: collapsed by default, monospace, clearly marked as
- * process material rather than evidence. Nothing here animates. */
-.council__reasoning {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  background: var(--surface-0);
-}
-
-.council__reasoning + .council__reasoning {
-  margin-top: var(--space-2);
-}
-
-.council__reasoning summary {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-  font-size: var(--text-small);
-  color: var(--ink-2);
-}
-
-.council__reasoning-hint {
-  font-size: var(--text-micro);
-  color: var(--ink-4);
-  white-space: nowrap;
-}
-
-.council__reasoning-text {
-  margin: 0;
-  max-height: 24rem;
-  overflow: auto;
-  padding: var(--space-3);
-  border-top: 1px solid var(--line);
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: var(--text-micro);
-  line-height: 1.55;
-  color: var(--ink-2);
-}
-
 /* 最终立场汇总：七位科学家独立复判并排，非投票裁决（CLAUDE.md 4）。 */
 .council__stance {
   margin-bottom: var(--space-5);

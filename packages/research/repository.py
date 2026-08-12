@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import CursorResult, delete, select, update
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -300,12 +300,13 @@ class ResearchRepository:
 
     async def set_status(self, task_id: UUID, status: TaskStatus) -> None:
         # An UPDATE returns a CursorResult, which is where rowcount lives; the
-        # count is what distinguishes "set it" from "no such task". The cast is
-        # needed because execute() is typed as returning the Result base class.
+        # count is what distinguishes "set it" from "no such task". Refreshing
+        # updated_at makes it the durable start time for status-based recovery
+        # windows such as AWAITING_COUNCIL_INPUT's server-side grace period.
         result = cast(CursorResult[Any], await self._session.execute(
             update(ResearchTaskModel)
             .where(ResearchTaskModel.task_id == task_id)
-            .values(status=status)
+            .values(status=status, updated_at=func.now())
         ))
         if result.rowcount == 0:
             raise TaskNotFound(str(task_id))

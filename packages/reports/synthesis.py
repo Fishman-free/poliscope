@@ -72,6 +72,7 @@ FINAL_PAPER_DRAFTED = "FINAL_PAPER_DRAFTED"
 FINAL_PAPER_FAILED = "FINAL_PAPER_FAILED"
 
 _PAPER_IDEMPOTENCY_KEY = "REPORTING:final_paper"
+_EMERGENCY_PAPER_IDEMPOTENCY_KEY = "REPORTING:emergency_fallback"
 _FAILED_IDEMPOTENCY_KEY = "REPORTING:final_paper_failed"
 
 
@@ -720,6 +721,81 @@ def _review_payload_dict(report: PaperReviewReport) -> dict[str, object]:
     }
 
 
+def _fallback_review_report(
+    brief: ResearchBrief,
+    question: str,
+    understanding: dict[str, object] | None,
+    fallback_reason: str,
+) -> PaperReviewReport:
+    """Build a review-shaped, gap-explicit report without model inference."""
+    raw = understanding or {}
+    raw_claims = raw.get("main_claims")
+    claims: list[ReviewClaim] = []
+    if isinstance(raw_claims, (list, tuple)):
+        for item in raw_claims:
+            if not isinstance(item, dict):
+                continue
+            statement = _as_str(item.get("statement"))
+            if not statement:
+                continue
+            claims.append(
+                ReviewClaim(
+                    statement=statement,
+                    supporting_evidence=_strings(item.get("supporting_evidence")),
+                )
+            )
+    paper_title = _as_str(raw.get("title")) or None
+    research_question = _as_str(raw.get("research_question")) or question
+    reason_text = f"确定性降级原因：{fallback_reason}"
+    gaps = tuple(
+        EvidenceGap(
+            claim_ref=None,
+            missing_evidence=limitation,
+            suggested_evidence="补充可核验材料后重新审查该项。",
+        )
+        for limitation in brief.limitations
+        if limitation.strip()
+    )
+    if not gaps:
+        gaps = (
+            EvidenceGap(
+                claim_ref=None,
+                missing_evidence=reason_text,
+                suggested_evidence="恢复完整议会与报告综合后重新生成审查。",
+            ),
+        )
+    limitations = tuple(dict.fromkeys((*brief.limitations, reason_text)))
+    return PaperReviewReport(
+        title=f"论文审查（确定性降级）：{paper_title or question}",
+        paper_overview=PaperOverview(
+            title=paper_title,
+            research_question=research_question,
+            main_claims=tuple(claims),
+        ),
+        rigor_issues=(),
+        evidence_insufficiency=gaps,
+        improvement_suggestions=tuple(
+            ReviewIssue(
+                claim_ref=gap.claim_ref,
+                issue=gap.suggested_evidence or "补充证据后重新审查。",
+                severity=None,
+            )
+            for gap in gaps
+        ),
+        conclusion=(
+            "本产物仅汇总最后一次持久化检查点中可读的信息；"
+            "由于报告综合未完整完成，不能据此声称论文已通过严谨性审查。"
+        ),
+        limitations=limitations,
+        investigation_process=(
+            f"证据覆盖：{brief.paper_count} 篇论文，"
+            f"{brief.independent_cluster_count} 个独立证据簇。",
+            f"议会阶段：{_phase_coverage(brief)}。",
+            reason_text,
+        ),
+    )
+
+
 async def _emit_fallback_paper(
     session: AsyncSession,
     task_id: UUID,
@@ -728,38 +804,48 @@ async def _emit_fallback_paper(
     question: str,
     *,
     fallback_reason: str,
+    is_review: bool = False,
+    understanding: dict[str, object] | None = None,
+    idempotency_key: str = _PAPER_IDEMPOTENCY_KEY,
+    emergency: bool = False,
 ) -> SynthesisOutcome:
-    """Write an integrated paper assembled from the brief alone, no model.
-
-    Round-9 「最终论文总是整合结论」. Both the no-gateway path and the
-    failed-model path converge here so a finished task always ends with a
-    readable conclusion. The paper carries ``fallback: true`` so the frontend
-    and export can say "整合结论由系统依据议会产出模板生成" instead of
-    presenting it as a model-written paper, and ``fallback_reason`` records
-    why the model path did not run -- both honest, per CLAUDE.md 7.
-    """
-    paper = _fallback_integrated_paper(brief, consensus, question)
-    stored_payload: dict[str, object] = {
-        "title": paper.title,
-        "abstract": paper.abstract,
-        "sections": [
-            {"heading": section.heading, "paragraphs": list(section.paragraphs)}
-            for section in paper.sections
-        ],
-        "references": [
-            {"id": ref.id, "title": ref.title, "doi": ref.doi}
-            for ref in paper.references
-        ],
-        "limitations": list(paper.limitations),
-        "investigation_process": list(paper.investigation_process),
-        "fallback": True,
-        "fallback_reason": fallback_reason,
-    }
+    """Write the task-type-correct deterministic fallback report."""
+    if is_review:
+        review = _fallback_review_report(
+            brief, question, understanding, fallback_reason
+        )
+        stored_payload = _review_payload_dict(review)
+    else:
+        paper = _fallback_integrated_paper(brief, consensus, question)
+        stored_payload = {
+            "title": paper.title,
+            "abstract": paper.abstract,
+            "sections": [
+                {
+                    "heading": section.heading,
+                    "paragraphs": list(section.paragraphs),
+                }
+                for section in paper.sections
+            ],
+            "references": [
+                {"id": ref.id, "title": ref.title, "doi": ref.doi}
+                for ref in paper.references
+            ],
+            "limitations": list(paper.limitations),
+            "investigation_process": list(paper.investigation_process),
+        }
+    stored_payload.update(
+        {
+            "fallback": True,
+            "fallback_reason": fallback_reason,
+            "emergency": emergency,
+        }
+    )
     await SqlEventLedger(session).append(
         task_id,
         FINAL_PAPER_DRAFTED,
         stored_payload,
-        _PAPER_IDEMPOTENCY_KEY,
+        idempotency_key,
     )
     return SynthesisOutcome(available=True)
 
@@ -769,6 +855,8 @@ async def synthesize_paper(
     task_id: UUID,
     gateway: ModelGateway | None,
     output_language: str | None = None,
+    *,
+    emergency_reason: str | None = None,
 ) -> SynthesisOutcome:
     """Run the synthesis model call and record its result in the ledger.
 
@@ -797,6 +885,12 @@ async def synthesize_paper(
     brief = await ReportService(session).build(task_id)
     consensus = await _load_consensus(session, task_id)
     judgments = await _load_final_judgments(session, task_id)
+    is_review = getattr(task, "task_type", "deep_research") == "paper_review"
+    understanding: dict[str, object] | None = None
+    if is_review:
+        from packages.papers.understanding import load_paper_understanding
+
+        understanding = await load_paper_understanding(session, task_id)
 
     if gateway is None:
         # No model provider: nothing to call, nothing failed -- but the
@@ -804,27 +898,31 @@ async def synthesize_paper(
         # conclusion. Round-9: assemble the paper from the brief alone so the
         # "综合论文尚未生成" stub never appears; the honest reason travels in
         # the fallback's investigation process.
+        fallback_reason = emergency_reason or (
+            "no model provider connected to the Model Gateway"
+        )
         return await _emit_fallback_paper(
             session,
             task_id,
             brief,
             consensus,
             task.question,
-            fallback_reason="no model provider connected to the Model Gateway",
+            fallback_reason=fallback_reason,
+            is_review=is_review,
+            understanding=understanding,
+            idempotency_key=(
+                _EMERGENCY_PAPER_IDEMPOTENCY_KEY
+                if emergency_reason is not None
+                else _PAPER_IDEMPOTENCY_KEY
+            ),
+            emergency=emergency_reason is not None,
         )
-
-    is_review = getattr(task, "task_type", "deep_research") == "paper_review"
     directive = OUTPUT_LANGUAGE_DIRECTIVES.get(
         language, OUTPUT_LANGUAGE_DIRECTIVES["en"]
     )
     if is_review:
         # The paper-understanding summary orients the report; a missing one
-        # (no model provider on the first pass, parse failure, resumed run
-        # without a captured event) is fed to the prompt as an explicit gap
-        # the report must admit.
-        from packages.papers.understanding import load_paper_understanding
-
-        understanding = await load_paper_understanding(session, task_id)
+        # is fed to the prompt as an explicit gap the report must admit.
         system_prompt = (
             "You are the reporting synthesizer for a seven-seat research "
             "council that reviewed an uploaded paper. You integrate the "
@@ -911,6 +1009,8 @@ async def synthesize_paper(
             consensus,
             task.question,
             fallback_reason=reason,
+            is_review=is_review,
+            understanding=understanding,
         )
 
     stored_payload: dict[str, object] = (

@@ -8,6 +8,21 @@
 
 import type { ReactNode } from "react";
 
+import { t } from "../i18n";
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle2,
+  CircleSlash,
+  FileText,
+  Hourglass,
+  MessageSquare,
+  Pause,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
+
 import "./primitives.css";
 
 export type Tone = "admitted" | "provisional" | "refuted" | "unknown";
@@ -38,24 +53,58 @@ export const STATUS_LABELS: Record<string, string> = {
   quarantined: "已隔离",
 };
 
-/** Task lifecycle status -> tone, the counterpart of `toneForStatus` (which
- * maps node statuses). Task statuses describe where the research run is
- * (QUEUED, COMPLETED, ...), not how much a finding is trusted, so the two
- * mappings stay separate. */
-export const TASK_STATUS_TONE: Record<string, Tone> = {
-  COMPLETED: "admitted",
-  COMPLETED_WITH_GAPS: "provisional",
-  FAILED: "refuted",
-  CANCELLED: "refuted",
-  RUNNING: "provisional",
-  DEGRADED_RUNNING: "provisional",
-  QUEUED: "unknown",
-  AWAITING_CLAIM_CONFIRMATION: "unknown",
-  AWAITING_COUNCIL_INPUT: "unknown",
-  DRAFT: "unknown",
-  PAUSED: "unknown",
-  REPORTING: "unknown",
+/** Task lifecycle status -> visible Chinese label (rendered through t()).
+ * The enum value stays available in `title`/`aria-label`; the label is what a
+ * researcher reads. Statuses outside the map fall back to the raw enum so an
+ * unknown lifecycle state is never mislabelled as a known one. */
+export const TASK_STATUS_LABELS: Record<string, string> = {
+  QUEUED: "排队中",
+  RUNNING: "研究中",
+  DEGRADED_RUNNING: "降级运行",
+  AWAITING_COUNCIL_INPUT: "等待方向性引导",
+  REPORTING: "生成报告中",
+  PAUSED: "已暂停",
+  COMPLETED: "已完成",
+  COMPLETED_WITH_GAPS: "已完成，有缺口",
+  FAILED: "研究中断",
+  CANCELLED: "已停止",
 };
+
+/** Task lifecycle status -> geometric icon. Colour is never the only signal:
+ * each status also carries a distinct symbol so a red-green colour-blind
+ * researcher can still tell 研究中 from 已停止. Unknown statuses get the
+ * neutral clock marker. */
+export const TASK_STATUS_ICONS: Record<string, LucideIcon> = {
+  QUEUED: Hourglass,
+  RUNNING: Activity,
+  DEGRADED_RUNNING: AlertTriangle,
+  AWAITING_COUNCIL_INPUT: MessageSquare,
+  REPORTING: FileText,
+  PAUSED: Pause,
+  COMPLETED: CheckCircle2,
+  COMPLETED_WITH_GAPS: AlertCircle,
+  FAILED: XCircle,
+  CANCELLED: CircleSlash,
+};
+
+/** The task-lifecycle badge used in the task header and session history.
+ * Uses independent operational colours (`.status-badge`), never the evidence
+ * tones -- a run's lifecycle state is a different axis from how much a finding
+ * is trusted. The raw enum rides in `title` and `aria-label` for audit. */
+export function TaskStatusBadge({ status }: { status: string }) {
+  const Icon = TASK_STATUS_ICONS[status] ?? Hourglass;
+  const label = TASK_STATUS_LABELS[status] ?? status;
+  return (
+    <span
+      className={`status-badge status-badge--${status.toLowerCase()}`}
+      title={status}
+      aria-label={`${status}（${label}）`}
+    >
+      <Icon className="status-badge__icon" size={12} strokeWidth={2.2} aria-hidden="true" />
+      <span>{t(label)}</span>
+    </span>
+  );
+}
 
 export function Badge({
   tone = "unknown",

@@ -769,11 +769,38 @@ async def _mark_failed(
     moves a FAILED task back to QUEUED, and the worker then resumes from the
     stored checkpoint instead of re-running the phases that already completed
     (a checkpoint exists only once the run has reached AWAITING_COUNCIL_INPUT).
+
+    Like the watchdog path, the terminal status alone is not the whole
+    contract: CLAUDE.md 10's "a failed run is reported, never left empty"
+    means the researcher must still see a readable conclusion. After the
+    status is durable, a separate short-lived session writes the same
+    deterministic emergency fallback as ``apps.worker.main``'s
+    ``emergency_finalize_task`` (task stays FAILED; the fallback integrates
+    whatever the already-committed ledger/phases hold and marks itself as a
+    fallback -- never as a fabricated success). A fallback failure cannot
+    roll back the terminal status, and cannot re-raise into ``run_task``.
     """
     async with app_sessions() as session:
         repository = ResearchRepository(session)
         await repository.set_status(task_id, TaskStatus.FAILED)
         await session.commit()
+    try:
+        async with app_sessions() as fallback_session:
+            try:
+                await synthesize_paper(
+                    fallback_session,
+                    task_id,
+                    None,
+                    emergency_reason=(
+                        "unrecoverable event identity conflict (EventConflict)"
+                    ),
+                )
+                await fallback_session.commit()
+            except BaseException:
+                await fallback_session.rollback()
+                raise
+    except BaseException:  # noqa: BLE001 -- status is already durable
+        logger.exception("emergency fallback failed for failed task %s", task_id)
 
 
 async def run_task(

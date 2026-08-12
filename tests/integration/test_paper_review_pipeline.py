@@ -32,6 +32,13 @@ from packages.models.contracts import (
 )
 from packages.papers.models import ObjectModel
 from packages.papers.object_store import PrivateObjectStore
+from packages.reports.contracts import PaperReviewReport
+from packages.reports.synthesis import (
+    FINAL_PAPER_DRAFTED,
+    FINAL_PAPER_FAILED,
+    paper_payload_to_dataclass,
+    synthesize_paper,
+)
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
 from packages.research.service import ResearchService
@@ -191,6 +198,11 @@ class _ReviewGateway(ModelGateway):
             retries=0,
             schema_status=SchemaStatus.OK,
         )
+
+
+class _FailingReviewGateway:
+    async def invoke(self, request: ModelRequest) -> ModelResult:
+        raise RuntimeError("review synthesizer unavailable")
 
 
 async def _events(
@@ -491,3 +503,39 @@ async def test_paper_review_resume_does_not_rerun_understanding(
         if event.event_type == "PAPER_UNDERSTANDING_CAPTURED"
     ]
     assert len(captured) == 1
+
+
+async def test_paper_review_fallbacks_keep_the_review_report_schema(
+    app_sessions: async_sessionmaker[AsyncSession],
+    tmp_path: Any,
+) -> None:
+    object_store = PrivateObjectStore(root=str(tmp_path))
+    for gateway, expect_failed_event in (
+        (None, False),
+        (_FailingReviewGateway(), True),
+    ):
+        task_id, _ = await _seed_review_task(
+            app_sessions,
+            object_store,
+            content=_txt_bytes("A paper with evidence that still needs review."),
+            filename="fallback-review.txt",
+            claim_ids=(),
+        )
+        async with app_sessions() as session:
+            outcome = await synthesize_paper(session, task_id, gateway)
+            await session.commit()
+
+        assert outcome.available is True
+        events = await _events(app_sessions, task_id)
+        drafted = [
+            event for event in events if event.event_type == FINAL_PAPER_DRAFTED
+        ]
+        assert len(drafted) == 1
+        assert drafted[0].payload["fallback"] is True
+        assert isinstance(
+            paper_payload_to_dataclass(dict(drafted[0].payload)),
+            PaperReviewReport,
+        )
+        assert drafted[0].payload["evidence_insufficiency"]
+        failed = [event for event in events if event.event_type == FINAL_PAPER_FAILED]
+        assert bool(failed) is expect_failed_event

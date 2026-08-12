@@ -15,9 +15,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { deleteTask, fetchTasks, reResearch } from "../api/client";
+import { deleteTask, fetchTasks, reResearch, resumeTask } from "../api/client";
 import type { TaskSummary } from "../api/types";
-import { Badge, Empty, Spinner, TASK_STATUS_TONE } from "../components/primitives";
+import { Badge, Empty, Spinner, TaskStatusBadge } from "../components/primitives";
 import { t } from "../i18n";
 
 import "./SessionHistory.css";
@@ -79,12 +79,18 @@ export function SessionHistory({
   currentTaskId,
   onOpen,
   onDeleted,
+  onTaskMutated,
 }: {
   currentTaskId: string | null;
   onOpen: (taskId: string) => void;
   /** Called after a task was deleted, with its id, so the shell can leave it
    * if it was the one being viewed. */
   onDeleted?: (deletedId: string) => void;
+  /** Called after a task was requeued (重新研究 / 继续研究), with its id. If
+   * that task is the currently open workspace the shell refreshes it
+   * immediately -- the header's 重新研究/继续研究 button must not diverge from
+   * what the history panel just did. */
+  onTaskMutated?: (taskId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [tasks, setTasks] = useState<TaskSummary[] | null>(null);
@@ -93,8 +99,11 @@ export function SessionHistory({
   // 等待确认清空全部。删除中（deleting）期间禁用所有删除操作。
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingClear, setPendingClear] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [reResearching, setReResearching] = useState(false);
+  // 「清空全部」的独立 loading（不是行内操作，不需要 busyTaskId 粒度）。
+  const [clearing, setClearing] = useState(false);
+  // loading 绑定具体任务 id：只有正在重新研究/继续研究的那一行显示
+  // 「请稍候…」，其他行的按钮与整条列表都不被禁用。
+  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // 每次展开都重新拉列表：刚创建的任务（或新回到列表的会话）必须立刻
@@ -142,7 +151,7 @@ export function SessionHistory({
   }
 
   async function removeOne(taskId: string) {
-    setDeleting(true);
+    setBusyTaskId(taskId);
     setError(null);
     try {
       await deleteTask(taskId);
@@ -151,25 +160,28 @@ export function SessionHistory({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setDeleting(false);
+      setBusyTaskId(null);
       setPendingDelete(null);
     }
   }
 
-  /** 「重新研究」：把 FAILED / CANCELLED 任务交回队列，worker 从 checkpoint
-   *  续跑（round-8 原始；round-10 扩展——研究者主动停止也是重跑的一种）。 */
-  async function rerunOne(taskId: string) {
-    setReResearching(true);
+  /** 「重新研究/继续研究」：把 FAILED/CANCELLED（重新研究）或 PAUSED（继续
+   * 研究）任务交回队列，worker 从 checkpoint 续跑。成功后刷新列表让状态
+   * 变回 QUEUED，并回调父组件——若该任务正是当前工作台，父组件立即刷新
+   * snapshot（否则保险轮询会兜底）。loading 只落在这一行（busyTaskId）。 */
+  async function requeueOne(taskId: string, resume: boolean) {
+    setBusyTaskId(taskId);
     setError(null);
     try {
-      await reResearch(taskId);
-      // 刷新列表让状态从 FAILED 变回 QUEUED。
+      await (resume ? resumeTask(taskId) : reResearch(taskId));
+      // 刷新列表让状态从 FAILED/PAUSED 变回 QUEUED。
       const fresh = await fetchTasks();
       setTasks(fresh);
+      onTaskMutated?.(taskId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setReResearching(false);
+      setBusyTaskId(null);
     }
   }
 
@@ -177,7 +189,7 @@ export function SessionHistory({
    * 一个没删掉的任务，假装清空成功。 */
   async function clearAll() {
     if (!tasks) return;
-    setDeleting(true);
+    setClearing(true);
     setError(null);
     try {
       for (const task of [...tasks]) {
@@ -188,7 +200,7 @@ export function SessionHistory({
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setDeleting(false);
+      setClearing(false);
       setPendingClear(false);
       setPendingDelete(null);
     }
@@ -238,9 +250,7 @@ export function SessionHistory({
                       <span className="session__question">{task.question}</span>
                       <span className="session__meta">
                         <ModelBadge task={task} />
-                        <Badge tone={TASK_STATUS_TONE[task.status] ?? "unknown"}>
-                          {task.status}
-                        </Badge>
+                        <TaskStatusBadge status={task.status} />
                         <span className="session__date">
                           {formatDate(task.created_at)}
                         </span>
@@ -253,15 +263,15 @@ export function SessionHistory({
                           type="button"
                           className="session__danger"
                           onClick={() => removeOne(task.task_id)}
-                          disabled={deleting}
+                          disabled={busyTaskId !== null || clearing}
                         >
-                          {deleting ? t("删除中…") : t("确认删除")}
+                          {busyTaskId === task.task_id ? t("删除中…") : t("确认删除")}
                         </button>
                         <button
                           type="button"
                           className="session__cancel"
                           onClick={() => setPendingDelete(null)}
-                          disabled={deleting}
+                          disabled={busyTaskId !== null || clearing}
                         >
                           {t("取消")}
                         </button>
@@ -272,11 +282,22 @@ export function SessionHistory({
                           <button
                             type="button"
                             className="session__rerun"
-                            onClick={() => rerunOne(task.task_id)}
-                            disabled={reResearching}
+                            onClick={() => requeueOne(task.task_id, false)}
+                            disabled={busyTaskId !== null}
                             title={t("从失败/停止节点重新研究")}
                           >
-                            {reResearching ? t("请稍候…") : t("重新研究")}
+                            {busyTaskId === task.task_id ? t("请稍候…") : t("重新研究")}
+                          </button>
+                        ) : null}
+                        {task.status === "PAUSED" ? (
+                          <button
+                            type="button"
+                            className="session__rerun"
+                            onClick={() => requeueOne(task.task_id, true)}
+                            disabled={busyTaskId !== null}
+                            title={t("继续研究：将已暂停的任务交回队列")}
+                          >
+                            {busyTaskId === task.task_id ? t("请稍候…") : t("继续研究")}
                           </button>
                         ) : null}
                         <button
@@ -286,7 +307,7 @@ export function SessionHistory({
                             setPendingDelete(task.task_id);
                             setPendingClear(false);
                           }}
-                          disabled={deleting}
+                          disabled={busyTaskId !== null || clearing}
                           title={t("删除这个会话（不可恢复）")}
                           aria-label={t("删除会话")}
                         >
@@ -304,15 +325,15 @@ export function SessionHistory({
                     type="button"
                     className="session__danger"
                     onClick={clearAll}
-                    disabled={deleting}
+                    disabled={clearing}
                   >
-                    {deleting ? t("删除中…") : t("确认清空全部")}
+                    {clearing ? t("删除中…") : t("确认清空全部")}
                   </button>
                   <button
                     type="button"
                     className="session__cancel"
                     onClick={() => setPendingClear(false)}
-                    disabled={deleting}
+                    disabled={clearing}
                   >
                     {t("取消")}
                   </button>
@@ -325,7 +346,7 @@ export function SessionHistory({
                     setPendingClear(true);
                     setPendingDelete(null);
                   }}
-                  disabled={deleting}
+                  disabled={clearing}
                 >
                   {t("清空全部会话")}
                 </button>

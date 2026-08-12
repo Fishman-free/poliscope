@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+from packages.council.contracts import Seat
 from packages.epistemo.budget import BudgetTracker, ResearchBudget
 from packages.epistemo.contracts import (
     PHASE_SEQUENCE,
@@ -196,6 +197,74 @@ async def test_checkpoint_round_trips_through_json() -> None:
     dumped = halted.checkpoint.model_dump(mode="json")
     restored = CouncilCheckpoint.model_validate(dumped)
     assert restored == halted.checkpoint
+
+
+async def test_checkpoint_round_trips_carried_bounty_evidence() -> None:
+    """The ranked blindspots / published evidence carried from earlier phases
+    must survive the checkpoint's JSON round trip (BLINDSPOT_BOUNTY's carry
+    reaches JOINT_MODELING only through this column).
+
+    A resumed pass restores ``state.carried`` verbatim from the checkpoint
+    (``CouncilOrchestrator.run`` seeds ``_Accumulator.carried`` with
+    ``resume_from.carried``), so anything the bounty ranked -- and the
+    sanitized evidence the exchange published -- must come back byte-for-byte
+    for JOINT_MODELING's prompt, never be dropped or coerced.
+    """
+    source_id = uuid4()
+    blindspot_id = uuid4()
+    checkpoint = CouncilCheckpoint(
+        run_phases=(
+            TaskPhase.PRECOMMITMENT,
+            TaskPhase.ACQUISITION,
+            TaskPhase.EVIDENCE_EXCHANGE,
+            TaskPhase.CROSS_EXAMINATION,
+            TaskPhase.BLINDSPOT_BOUNTY,
+        ),
+        carried={
+            "published_evidence": (
+                {
+                    "seat": Seat.EVIDENCE_AUDITOR.value,
+                    "source_id": str(source_id),
+                    "anchor_summary": "metadata-only anchor",
+                    "level": "B",
+                },
+            ),
+            "ranked_blindspots": (
+                {
+                    "blindspot_id": str(blindspot_id),
+                    "statement": "An unmeasured confound remains untested",
+                    "score": "0.7700",
+                    "rank": 1,
+                    "status": "pending_investigation",
+                },
+            ),
+            "blindspot_assignments": (
+                {
+                    "blindspot_id": str(blindspot_id),
+                    "statement": "An unmeasured confound remains untested",
+                    "target_seat": Seat.EVIDENCE_AUDITOR.value,
+                    "priority_rank": 1,
+                    "score": "0.7700",
+                    "status": "pending_investigation",
+                },
+            ),
+        },
+        guidance=None,
+    )
+
+    dumped = checkpoint.model_dump(mode="json")
+    restored = CouncilCheckpoint.model_validate(dumped)
+
+    assert restored == checkpoint
+    assert restored.carried["ranked_blindspots"] == checkpoint.carried[
+        "ranked_blindspots"
+    ]
+    assert restored.carried["blindspot_assignments"] == checkpoint.carried[
+        "blindspot_assignments"
+    ]
+    assert restored.carried["published_evidence"] == checkpoint.carried[
+        "published_evidence"
+    ]
 
 
 async def test_budget_exhaustion_takes_priority_over_checkpoint_halt() -> None:

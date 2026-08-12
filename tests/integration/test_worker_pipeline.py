@@ -21,9 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
 from apps.worker.main import (
     WorkerContext,
+    _council_input_grace_seconds,
     claim_queued_tasks,
     drain,
+    emergency_finalize_task,
     recover_stale_running,
+    resume_expired_council_inputs,
 )
 from packages.council.contracts import Seat
 from packages.council.models import CouncilRoundModel, ScientistRunModel
@@ -33,7 +36,12 @@ from packages.council.rounds.registry import (
     PhaseContext,
     SeatDeliberator,
 )
-from packages.epistemo.contracts import PHASE_SEQUENCE, TaskPhase, TaskStatus
+from packages.epistemo.contracts import (
+    PHASE_SEQUENCE,
+    CouncilCheckpoint,
+    TaskPhase,
+    TaskStatus,
+)
 from packages.epistemo.orchestrator import (
     SEAT_RUN_ABSENT,
     SEAT_RUN_COMPLETED,
@@ -44,6 +52,7 @@ from packages.evidence.models import (
     GraphNodeModel,
     ScientificEventModel,
 )
+from packages.reports.synthesis import FINAL_PAPER_DRAFTED
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
 from packages.research.service import ResearchService
@@ -303,6 +312,19 @@ async def test_a_replay_conflict_marks_the_task_failed_instead_of_looping(
 
     assert await _status(app_sessions, task_id) == TaskStatus.FAILED
     assert task_id not in await claim_queued_tasks(app_sessions, limit=10)
+    # The researcher must still get a readable conclusion (CLAUDE.md 10: a
+    # failed run is reported, never left empty) -- _mark_failed writes the
+    # same deterministic emergency fallback as the watchdog path, marked
+    # fallback:true so it can never be mistaken for a fabricated success.
+    drafted = [
+        event
+        for event in await _events(app_sessions, task_id)
+        if event.event_type == FINAL_PAPER_DRAFTED
+    ]
+    assert len(drafted) == 1
+    assert drafted[0].payload["fallback"] is True
+    assert drafted[0].payload["emergency"] is True
+    assert "EventConflict" in str(drafted[0].payload["fallback_reason"])
 
 
 async def test_a_queued_task_runs_every_phase_of_the_protocol(
@@ -495,7 +517,10 @@ async def test_claim_queued_tasks_returns_the_canonical_uuid_type(
     this right.
     """
     task_id, _ = await _seed_queued_task(app_sessions)
-    claimed = await claim_queued_tasks(app_sessions, limit=10)
+    # The integration database is shared across the module and earlier tests
+    # may intentionally leave queued rows. Use a high batch bound so this test
+    # asserts UUID normalization rather than queue ordering.
+    claimed = await claim_queued_tasks(app_sessions, limit=1000)
     assert task_id in claimed
     assert all(type(value) is UUID for value in claimed)
 
@@ -656,6 +681,192 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
 
     # The reclaimed task can be claimed and run again.
     assert task_id in await claim_queued_tasks(app_sessions, limit=10)
+
+
+def test_council_input_grace_configuration_is_bounded_and_validated() -> None:
+    assert _council_input_grace_seconds({}) == 120.0
+    assert _council_input_grace_seconds(
+        {"POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS": "45"}
+    ) == 45.0
+    for invalid in ("not-a-number", "29", "nan", "inf"):
+        with pytest.raises(ValueError, match="COUNCIL_INPUT_GRACE_SECONDS"):
+            _council_input_grace_seconds(
+                {"POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS": invalid}
+            )
+
+
+async def test_set_status_refreshes_updated_at(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    task_id, _ = await _seed_queued_task(app_sessions)
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(updated_at=func.now() - text("interval '1 hour'"))
+        )
+        await session.commit()
+
+    async with app_sessions() as session:
+        before = await session.scalar(select(func.now()))
+        await ResearchRepository(session).set_status(
+            task_id, TaskStatus.AWAITING_COUNCIL_INPUT
+        )
+        await session.commit()
+        row = await session.scalar(
+            select(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
+        )
+        after = await session.scalar(select(func.now()))
+
+    assert row is not None
+    assert before is not None and after is not None
+    assert before <= row.updated_at <= after
+
+
+async def test_expired_council_input_auto_resumes_without_fake_guidance(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    expired_id, _ = await _seed_queued_task(app_sessions)
+    fresh_id, _ = await _seed_queued_task(app_sessions)
+    broken_id, _ = await _seed_queued_task(app_sessions)
+    checkpoint = CouncilCheckpoint(
+        run_phases=(TaskPhase.BLINDSPOT_BOUNTY,),
+        carried={
+            "ranked_blindspots": (
+                {
+                    "statement": "Pending confound",
+                    "score": "0.7",
+                    "rank": 1,
+                    "status": "pending_investigation",
+                },
+            )
+        },
+        guidance=None,
+    ).model_dump(mode="json")
+
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id.in_((expired_id, fresh_id, broken_id)))
+            .values(status=TaskStatus.AWAITING_COUNCIL_INPUT)
+        )
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id.in_((expired_id, fresh_id)))
+            .values(council_checkpoint=checkpoint)
+        )
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id.in_((expired_id, broken_id)))
+            .values(updated_at=func.now() - text("interval '5 minutes'"))
+        )
+        await session.commit()
+
+    # The integration database is shared across this module; earlier
+    # checkpoint scenarios may also have legitimately expired. Assert this
+    # task is among the resumed rows rather than assuming global exclusivity.
+    assert await resume_expired_council_inputs(
+        app_sessions, grace_seconds=120.0
+    ) >= 1
+
+    async with app_sessions() as session:
+        rows = {
+            row.task_id: row
+            for row in (
+                await session.scalars(
+                    select(ResearchTaskModel).where(
+                        ResearchTaskModel.task_id.in_(
+                            (expired_id, fresh_id, broken_id)
+                        )
+                    )
+                )
+            )
+        }
+        database_now = await session.scalar(select(func.now()))
+
+    expired = rows[expired_id]
+    assert expired.status == TaskStatus.QUEUED
+    assert expired.council_checkpoint == checkpoint
+    assert expired.council_checkpoint["guidance"] is None
+    assert database_now is not None
+    assert expired.updated_at <= database_now
+    assert (database_now - expired.updated_at).total_seconds() < 30
+    assert rows[fresh_id].status == TaskStatus.AWAITING_COUNCIL_INPUT
+    assert rows[broken_id].status == TaskStatus.AWAITING_COUNCIL_INPUT
+    assert await resume_expired_council_inputs(
+        app_sessions, grace_seconds=120.0
+    ) == 0
+
+
+async def test_emergency_finalize_is_separate_idempotent_and_terminal_safe(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    task_id, _ = await _seed_queued_task(app_sessions)
+    async with app_sessions() as session:
+        await ResearchRepository(session).set_status(task_id, TaskStatus.RUNNING)
+        await session.commit()
+
+    assert await emergency_finalize_task(
+        app_sessions,
+        task_id,
+        reason="watchdog timeout after durable checkpoint",
+    ) is True
+    assert await _status(app_sessions, task_id) == TaskStatus.FAILED
+    drafted = [
+        event
+        for event in await _events(app_sessions, task_id)
+        if event.event_type == FINAL_PAPER_DRAFTED
+    ]
+    assert len(drafted) == 1
+    assert drafted[0].payload["fallback"] is True
+    assert drafted[0].payload["emergency"] is True
+    assert "watchdog timeout" in str(
+        drafted[0].payload["fallback_reason"]
+    )
+
+    # A repeated watchdog/unexpected-exception path cannot duplicate the
+    # artifact once the first separate session has terminalized the task.
+    assert await emergency_finalize_task(
+        app_sessions, task_id, reason="duplicate emergency"
+    ) is False
+    assert len(
+        [
+            event
+            for event in await _events(app_sessions, task_id)
+            if event.event_type == FINAL_PAPER_DRAFTED
+        ]
+    ) == 1
+
+    completed_id, _ = await _seed_queued_task(app_sessions)
+    async with app_sessions() as session:
+        await ResearchRepository(session).set_status(
+            completed_id, TaskStatus.COMPLETED
+        )
+        await session.commit()
+    assert await emergency_finalize_task(
+        app_sessions, completed_id, reason="late worker exception"
+    ) is False
+    assert await _events(app_sessions, completed_id) == []
+
+
+async def test_emergency_fallback_failure_still_leaves_terminal_status(
+    app_sessions: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_id, _ = await _seed_queued_task(app_sessions)
+    async with app_sessions() as session:
+        await ResearchRepository(session).set_status(task_id, TaskStatus.RUNNING)
+        await session.commit()
+
+    async def broken_fallback(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("fallback storage unavailable")
+
+    monkeypatch.setattr("apps.worker.main.synthesize_paper", broken_fallback)
+
+    assert await emergency_finalize_task(
+        app_sessions, task_id, reason="unexpected worker exception"
+    ) is True
+    assert await _status(app_sessions, task_id) == TaskStatus.FAILED
 
 
 async def test_seat_attendance_is_persisted_to_scientist_runs(

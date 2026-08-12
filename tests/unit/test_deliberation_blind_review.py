@@ -40,10 +40,13 @@ class _RecordingGateway:
         )
 
 
-def _context(carried: dict[str, object]) -> PhaseContext:
+def _context(
+    carried: dict[str, object],
+    phase: TaskPhase = TaskPhase.PRECOMMITMENT,
+) -> PhaseContext:
     return PhaseContext(
         task_id=uuid4(),
-        phase=TaskPhase.PRECOMMITMENT,
+        phase=phase,
         seats=(Seat.CAUSAL_SCIENTIST,),
         question="Does screen time affect wellbeing?",
         confirmed_claims=(),
@@ -92,3 +95,56 @@ async def test_case_insensitive_and_plural_variants_are_also_blocked() -> None:
     user_message = gateway.requests[0].messages[1].content
     assert "Should still be blocked" not in user_message
     assert "Also blocked" not in user_message
+
+
+async def test_phase_carry_is_rendered_only_for_its_scientific_consumer() -> None:
+    source_id = uuid4()
+    carried: dict[str, object] = {
+        "available_sources": (
+            {"source_id": str(source_id), "title": "Acquired paper", "level": "B"},
+        ),
+        "published_evidence": (
+            {
+                "seat": Seat.EVIDENCE_AUDITOR.value,
+                "source_id": str(source_id),
+                "anchor_summary": "metadata-only source",
+                "level": "B",
+            },
+        ),
+        "ranked_blindspots": (
+            {
+                "blindspot_id": str(uuid4()),
+                "statement": "A confound remains untested",
+                "score": "0.77",
+                "rank": 1,
+                "status": "pending_investigation",
+            },
+        ),
+        "blindspot_assignments": (),
+    }
+
+    prompts: dict[TaskPhase, str] = {}
+    for phase in (
+        TaskPhase.EVIDENCE_EXCHANGE,
+        TaskPhase.CROSS_EXAMINATION,
+        TaskPhase.JOINT_MODELING,
+    ):
+        gateway = _RecordingGateway()
+        result = await GatewayDeliberator(gateway).deliberate(
+            Seat.CAUSAL_SCIENTIST, phase, _context(carried, phase)
+        )
+        assert result is not None
+        prompts[phase] = gateway.requests[0].messages[1].content
+
+    assert "Acquired paper" in prompts[TaskPhase.EVIDENCE_EXCHANGE]
+    assert "metadata-only source" not in prompts[TaskPhase.EVIDENCE_EXCHANGE]
+    assert "A confound remains untested" not in prompts[TaskPhase.EVIDENCE_EXCHANGE]
+
+    assert "metadata-only source" in prompts[TaskPhase.CROSS_EXAMINATION]
+    assert "Acquired paper" not in prompts[TaskPhase.CROSS_EXAMINATION]
+    assert "A confound remains untested" not in prompts[TaskPhase.CROSS_EXAMINATION]
+
+    assert "A confound remains untested" in prompts[TaskPhase.JOINT_MODELING]
+    assert "待调查" in prompts[TaskPhase.JOINT_MODELING]
+    assert "Acquired paper" not in prompts[TaskPhase.JOINT_MODELING]
+    assert "metadata-only source" not in prompts[TaskPhase.JOINT_MODELING]

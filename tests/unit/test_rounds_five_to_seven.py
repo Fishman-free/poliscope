@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from packages.council.contracts import Seat
 from packages.council.rounds.blindspot_bounty import (
@@ -18,6 +19,8 @@ from packages.council.rounds.joint_modeling import (
     JointModelingHandler,
     JointModelInput,
 )
+from packages.council.rounds.registry import PhaseContext, run_blindspot_bounty
+from packages.epistemo.contracts import TaskPhase
 
 
 def _blindspot(**over: Any) -> BlindspotItem:
@@ -32,6 +35,29 @@ def _blindspot(**over: Any) -> BlindspotItem:
     )
     base.update(over)
     return BlindspotItem(**base)
+
+
+class _BlindspotDeliberator:
+    def __init__(self, blindspot_id: UUID) -> None:
+        self._blindspot_id = blindspot_id
+
+    async def deliberate(
+        self, seat: Seat, phase: TaskPhase, context: PhaseContext
+    ) -> Mapping[str, object] | None:
+        assert phase is TaskPhase.BLINDSPOT_BOUNTY
+        return {
+            "blindspots": [
+                {
+                    "id": str(self._blindspot_id),
+                    "statement": "An unmeasured confound remains untested",
+                    "impact": "0.9",
+                    "uncertainty": "0.8",
+                    "investigability": "0.7",
+                    "novelty": "0.6",
+                    "normalized_cost": "0.3",
+                }
+            ]
+        }
 
 
 def test_full_bounty_to_rejudgment_pipeline() -> None:
@@ -86,6 +112,42 @@ def test_bounty_assignments_target_evidence_auditor() -> None:
     assert all(
         a["target_seat"] == Seat.EVIDENCE_AUDITOR.value
         for a in output.assignments
+    )
+
+
+async def test_bounty_carries_ranked_pending_investigations() -> None:
+    blindspot_id = uuid4()
+    context = PhaseContext(
+        task_id=uuid4(),
+        phase=TaskPhase.BLINDSPOT_BOUNTY,
+        seats=(Seat.CAUSAL_SCIENTIST,),
+        question="Does screen time affect wellbeing?",
+        confirmed_claims=(uuid4(),),
+        deliberator=_BlindspotDeliberator(blindspot_id),
+    )
+
+    outcome = await run_blindspot_bounty(context)
+
+    ranked = outcome.carry["ranked_blindspots"]
+    assignments = outcome.carry["blindspot_assignments"]
+    assert ranked == (
+        {
+            "blindspot_id": str(blindspot_id),
+            "statement": "An unmeasured confound remains untested",
+            "score": "0.7700",
+            "rank": 1,
+            "status": "pending_investigation",
+        },
+    )
+    assert assignments == (
+        {
+            "blindspot_id": str(blindspot_id),
+            "statement": "An unmeasured confound remains untested",
+            "target_seat": Seat.EVIDENCE_AUDITOR.value,
+            "priority_rank": 1,
+            "score": "0.7700",
+            "status": "pending_investigation",
+        },
     )
 
 

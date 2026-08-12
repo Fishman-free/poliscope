@@ -196,13 +196,16 @@ MemoBrain 的 `ReasoningGraph`、`Flush`、`Fold`、`Recall` 是为**一个** Ag
 
 ```text
 ... → BLINDSPOT_BOUNTY 完成
-    → AWAITING_COUNCIL_INPUT（新增任务状态；等待人类响应，无超时自动前进）
-    → 人类提交（或明确留空）引导意见
+    → AWAITING_COUNCIL_INPUT（新增任务状态；进入有界的人类响应宽限期）
+    → 宽限期内由人类提交（或明确留空）引导意见
+      / 宽限期届满后由服务端自动选择“无方向性干预”
     → QUEUED（Worker 重新认领）
     → JOINT_MODELING → FINAL_REJUDGMENT → REPORTING
 ```
 
-`AWAITING_COUNCIL_INPUT` 期间，编排器已跑过的阶段产物（各阶段的 `carry` 累积状态）会被序列化保存，供续跑时重建联合建模所需的上下文，不需要从头重跑前 5 轮。
+`AWAITING_COUNCIL_INPUT` 期间，编排器已跑过的阶段产物（各阶段的 `carry` 累积状态）会被序列化保存，供续跑时重建联合建模所需的上下文，不需要从头重跑前 5 轮。默认宽限期为 120 秒，可通过 `POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS` 配置；配置必须是有限数字且不得短于 30 秒。Worker 在服务端轮询中过期等待任务，因此浏览器进入后台或关闭不会阻止研究继续。
+
+自动续跑只把仍处于 `AWAITING_COUNCIL_INPUT` 且具有合法 checkpoint 的任务原子地置回 `QUEUED`；checkpoint 内容保持不变，`guidance` 保持 `None`，不得伪装成研究者明确提交的空意见。研究者在宽限期内提交的意见优先：人工路径先把状态置为 `QUEUED` 后，自动路径的条件更新不再匹配。所有状态变更必须刷新 `updated_at`，使宽限从真正进入等待态的时刻开始计算。该服务端调度行为不写 Evidence Graph、不改变 Evidence Gate，也不把待调查盲点冒充已证实结论。
 
 **API 契约：**
 
@@ -573,8 +576,12 @@ Skill 是薄适配层，不是第二套 Poliscope。它不得直接调用模型�
 - 单个席位失败不得中止整个任务；
 - 全文失败时降级证据等级；
 - 结构化输出失败时修复，仍失败则隔离；
+- 模型调用的总时限必须覆盖单次传输、传输重试、`Retry-After` 等待和 Schema 修复；数字 `Retry-After` 必须设上限；
 - 正式图由单一 Graph Projector 顺序投影；
 - 成本超限时优先停止低影响检索和质询，并报告未完成槽位；
+- watchdog 或未预期 Worker 异常发生后，必须等待原任务事务完成取消/回滚，再用独立数据库会话仅对仍为 `RUNNING` 的任务写入失败终态；
+- 终态写入与确定性紧急 fallback 使用相互独立的会话，fallback 自身失败不得回滚终态或卡住 Worker；紧急产物必须标注失败原因、只覆盖最后持久化 checkpoint 的范围和证据缺口，不得覆盖已完成终态；
+- 深度研究 fallback 输出 `FinalPaper`，论文审查 fallback 输出 `PaperReviewReport`，两者都属于可审计的表达层产物，不得写成正式证据节点；
 - 比赛演示同时提供 Live、Replay 和固定快照模式。
 
 ## 10. 数据模型与项目结构
