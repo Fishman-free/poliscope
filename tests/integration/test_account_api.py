@@ -5,11 +5,12 @@ and permanent deletion with full cascade cleanup.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from packages.accounts.models import EmailVerificationModel, UserModel
 from packages.knowledge.models import KnowledgeBaseModel, KnowledgeDocumentModel
@@ -23,7 +24,7 @@ AUTH_PATH = "/api/auth"
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
 
-async def _register_fresh(api_client: httpx.AsyncClient) -> dict:
+async def _register_fresh(api_client: httpx.AsyncClient) -> dict[str, Any]:
     username = f"acct-{uuid4().hex[:8]}"
     return await register_user(api_client, username, email=f"{username}@poliscope.test")
 
@@ -227,7 +228,7 @@ async def test_reset_password_with_wrong_code_is_422(
 
 async def test_delete_account_requires_password_and_cleans_everything(
     api_client: httpx.AsyncClient,
-    app_sessions: async_sessionmaker,
+    app_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     account = await _register_fresh(api_client)
     user_id = UUID(account["id"])

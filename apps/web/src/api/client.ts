@@ -555,16 +555,34 @@ export async function followUpStream(
 
 /** Permanently delete a task and all its records (server confirms the task
  * is owned by the caller). The UI must confirm with the researcher before
- * calling -- this cannot be undone. */
+ * calling -- this cannot be undone.
+ *
+ * Round-14: the server waits (bounded) for a RUNNING task's worker to stop
+ * before cascading, so the request can legitimately take tens of seconds.
+ * This timeout is the last line against an endless spinner: a wedged worker
+ * must surface as an error, never as an infinite wait. */
+const DELETE_TASK_TIMEOUT_MS = 120_000;
+
 export async function deleteTask(taskId: string): Promise<{ deleted: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DELETE_TASK_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(`${BASE}/api/tasks/${taskId}`, {
       method: "DELETE",
       headers: { accept: "application/json", ...authHeaders() },
+      signal: controller.signal,
     });
   } catch (cause) {
+    if (cause instanceof DOMException && cause.name === "AbortError") {
+      throw new ApiError(
+        0,
+        "删除超时：任务可能仍被运行中的 worker 占用。请稍后重试（或先停止研究）。",
+      );
+    }
     throw new ApiError(0, `无法连接 API：${String(cause)}`);
+  } finally {
+    clearTimeout(timer);
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => "");

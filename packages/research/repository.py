@@ -227,6 +227,22 @@ class ResearchRepository:
             skill_ids=tuple(row.skill_ids or ()),
         )
 
+    async def get_status(self, task_id: UUID) -> TaskStatus | None:
+        """Read only the status column, or None for a task that does not exist.
+
+        Round-14 session deletion polls this while waiting for a RUNNING task's
+        worker to release its row lock; a full ``get_task`` per poll would drag
+        every audit field across the wire for nothing.
+        """
+        value = await self._session.scalar(
+            select(ResearchTaskModel.status).where(
+                ResearchTaskModel.task_id == task_id
+            )
+        )
+        if value is None:
+            return None
+        return TaskStatus(value)
+
     async def get_scope(self, task_id: UUID) -> ResearchScope | None:
         """Read the task's research scope, or None for a legacy row without one.
 

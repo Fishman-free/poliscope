@@ -8,7 +8,7 @@ drive the real routes and assert the state the database ends up in.
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -678,3 +678,121 @@ async def test_delete_task_removes_the_task_and_its_records(
     # 删除不存在的任务 → 404，绝不误删别人的任务。
     unknown = await api_client.delete(f"/api/tasks/{uuid4()}")
     assert unknown.status_code == 404
+
+
+async def _running_task(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> str:
+    """创建 → 确认主张（入队）→ 直接置 RUNNING（worker 认领后的状态）。"""
+    created = await _create(api_client)
+    task_id = created["task_id"]
+    chosen = created["suggested_claims"][0]["id"]
+    confirmed = await api_client.post(
+        f"/api/tasks/{task_id}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(status=TaskStatus.RUNNING)
+        )
+        await session.commit()
+    return str(task_id)
+
+
+async def test_delete_running_task_stops_worker_then_deletes(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-14: RUNNING 任务的 worker 持有任务行锁直到 run 结束，直接删会
+    无限等待。端点必须先经停止侧信道请 worker 停下，再等锁释放后删除——
+    这里 monkeypatch ``get_status`` 模拟 worker 已响应停止（状态离开 RUNNING），
+    并记录停止请求确实发出。"""
+    from packages.research.repository import ResearchRepository
+
+    task_id = await _running_task(api_client, app_sessions)
+    requested: list[str] = []
+    original_request_cancel = ResearchRepository.request_cancel
+
+    async def _record_cancel(
+        self: ResearchRepository, task_id: UUID, requested_by: str
+    ) -> None:
+        requested.append(str(task_id))
+        await original_request_cancel(self, task_id, requested_by)
+
+    async def _stopped(self: ResearchRepository, task_id: UUID) -> TaskStatus:
+        return TaskStatus.CANCELLED  # 模拟 worker 已停止
+
+    monkeypatch.setattr(ResearchRepository, "request_cancel", _record_cancel)
+    monkeypatch.setattr(ResearchRepository, "get_status", _stopped)
+    monkeypatch.setattr("apps.api.routers.tasks.DELETE_POLL_SECONDS", 0.01)
+
+    deleted = await api_client.delete(f"/api/tasks/{task_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert requested == [task_id]
+
+    async with app_sessions() as session:
+        row = await session.scalar(
+            select(ResearchTaskModel).where(
+                ResearchTaskModel.task_id == task_id
+            )
+        )
+        assert row is None
+
+
+async def test_delete_running_task_with_dead_worker_still_deletes(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-14: worker 已死（连接断开、锁已自动释放）但状态仍是 RUNNING——
+    轮询耗尽后直接尝试删除，锁不存在所以成功；绝不无限等待。"""
+    task_id = await _running_task(api_client, app_sessions)
+    monkeypatch.setattr("apps.api.routers.tasks.DELETE_CANCEL_WAIT_SECONDS", 0.1)
+    monkeypatch.setattr("apps.api.routers.tasks.DELETE_POLL_SECONDS", 0.01)
+
+    deleted = await api_client.delete(f"/api/tasks/{task_id}")
+    assert deleted.status_code == 200, deleted.text
+
+    async with app_sessions() as session:
+        row = await session.scalar(
+            select(ResearchTaskModel).where(
+                ResearchTaskModel.task_id == task_id
+            )
+        )
+        assert row is None
+
+
+async def test_delete_answers_409_when_worker_lock_does_not_release(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round-14 兜底：任务行仍被另一事务锁住（卡死的 worker）时，级联删除的
+    lock_timeout 让请求快速失败为 409 明确提示，而不是无限挂起或 500。"""
+    task_id = await _running_task(api_client, app_sessions)
+    monkeypatch.setattr("apps.api.task_lifecycle.DELETE_LOCK_TIMEOUT", "0.5s")
+    # RUNNING 先走停止轮询：这里轮询也必须缩短，否则先等满 60s 才到锁兜底。
+    monkeypatch.setattr("apps.api.routers.tasks.DELETE_CANCEL_WAIT_SECONDS", 0.1)
+    monkeypatch.setattr("apps.api.routers.tasks.DELETE_POLL_SECONDS", 0.01)
+
+    holder = app_sessions()
+    await holder.execute(
+        select(ResearchTaskModel)
+        .where(ResearchTaskModel.task_id == task_id)
+        .with_for_update()
+    )
+    try:
+        deleted = await api_client.delete(f"/api/tasks/{task_id}")
+        assert deleted.status_code == 409, deleted.text
+    finally:
+        await holder.rollback()
+        await holder.close()
+
+    # 锁释放后删除即可成功——409 是暂时占用的诚实回答，不是永久拒绝。
+    retry = await api_client.delete(f"/api/tasks/{task_id}")
+    assert retry.status_code == 200, retry.text

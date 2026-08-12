@@ -155,6 +155,22 @@ async def test_unknown_task_is_distinguishable_from_a_validation_error(
     await app_session.rollback()
 
 
+async def test_get_status_reads_only_the_status_column(
+    app_session: AsyncSession,
+) -> None:
+    """Round-14: session deletion polls ``get_status`` while waiting for a
+    RUNNING task's worker to release its row lock -- None for an unknown task,
+    the exact status otherwise."""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    assert (
+        await service._repository.get_status(created.task_id)
+        == TaskStatus.AWAITING_CLAIM_CONFIRMATION
+    )
+    assert await service._repository.get_status(uuid4()) is None
+    await app_session.rollback()
+
+
 async def test_pausing_a_queued_task_then_resuming_returns_it_to_queued(
     app_session: AsyncSession,
 ) -> None:

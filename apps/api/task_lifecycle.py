@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.council.models import (
@@ -49,6 +49,11 @@ from packages.research.models import (
 )
 from packages.tools.models import ToolCallModel
 
+# Round-14: any row lock the cascade must wait on (a RUNNING worker's FOR
+# UPDATE, a concurrent claim) is bounded by this. Tests shrink it so the
+# 409 path can be exercised without waiting out the production value.
+DELETE_LOCK_TIMEOUT = "15s"
+
 _TASK_SCOPED_CHILDREN: tuple[type[object], ...] = (
     ScientificEventModel,
     ProcessStreamModel,
@@ -69,7 +74,16 @@ async def delete_task_cascade(session: AsyncSession, task_id: UUID) -> None:
     """Permanently delete one task and every record that belongs to it.
 
     Caller owns the transaction (commits on success, rolls back on failure).
+
+    Round-14: the cascade sets ``lock_timeout`` first. A RUNNING task's worker
+    holds the task row ``FOR UPDATE`` for the whole run, and the API's DELETE
+    must never hang on that lock forever (PostgreSQL's default is an
+    unbounded wait, which the browser faithfully mirrors with an unbounded
+    spinner). The caller arranges for the worker to stop and polls until the
+    lock is released; this timeout is the backstop for a worker that is dead
+    or wedged -- the delete fails loudly instead of waiting indefinitely.
     """
+    await session.execute(text(f"SET LOCAL lock_timeout = '{DELETE_LOCK_TIMEOUT}'"))
     # 1) Deep parent-first, because these children FK-reference other children
     #    of the same task (order matters):
     #    citation_anchors -> findings -> studies -> source_versions -> sources

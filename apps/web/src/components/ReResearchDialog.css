@@ -13,6 +13,9 @@
 
 .rerun-dialog {
   width: min(26rem, 100%);
+  /* 弹层入场：复用全局 panel-in（320ms 柔和上浮），与主面板语言一致；
+     prefers-reduced-motion 已由 base.css 全局兜底。 */
+  animation: panel-in var(--duration-slow) var(--ease-smooth);
   background: var(--app-surface, var(--surface-0));
   border: 1px solid var(--app-hairline, var(--line));
   border-radius: var(--radius-3);

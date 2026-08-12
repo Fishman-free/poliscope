@@ -537,6 +537,22 @@ Evidence Lineage Graph 至少识别：
 - **「从头研究」= 全新任务**：`full` 模式原来只清除 checkpoint 后重跑同一任务，但账本幂等键按阶段/席位派生、不随轮次变化——重跑已完成阶段时同一键会携带不同 payload 触发 `EventConflict`，`run_task` 将其转为 FAILED（生产故障：重新研究后的任务在 PRECOMMITMENT 反复失败，"永远突破不了"）。**同一任务无法既"幂等重放"又"新一轮"**，因此重跑的起点只能是全新任务：`POST /api/tasks/{task_id}/rerun-fresh` 新建任务（新 task_id、全新账本与证据图、全新过程流），继承问题、范围、预算、已确认原子主张（新 id 复制）、模型配置、知识库、技能、语言与论文对象引用，直接入队（主张已确认过，无需再确认）；原任务保留为审计历史。`re-research` 的 `full` 模式与 `first_gap` 无断点回退现在同样走新任务，响应 `task_id` 为实际生效的任务 id（有断点时仍为原任务续跑）；Web 工作台据此跳转。
 - **过程事件冲突不致命**：`MODEL_REASONING_CAPTURED`（思考链捕获，process-only，投影器 allowlist 排除）的幂等键同样不含轮次，重跑时新思考文本与旧记录冲突——但思考链是过程痕迹不是证据，冲突保留旧记录（`on_conflict="skip"`）而非抛 `EventConflict` 使整个任务失败；重跑的新思考仍通过 `process_stream` 实时可见。正式证据事件的冲突检测（审计防线）保持不变。
 
+### 8.6.4 会话历史删除：任何时候可删、绝不卡死（round-14）
+
+生产故障：删除会话历史中的任务时前端无限转圈、随后报 Internal Server Error。三层根因：
+
+- **worker 行锁**：worker 以 `SELECT … FOR UPDATE SKIP LOCKED` 认领任务且 claim 与整个 run 在同一事务，RUNNING 期间一直持有任务行锁；而 PostgreSQL 默认 `lock_timeout` 无界——删除的级联语句等锁会无限阻塞，浏览器便忠实呈现无限 spinner。
+- **取消请求的 FK 锁等待**：向 `task_cancel_requests` 插入停止请求时，外键检查需对任务行取 `FOR KEY SHARE` 锁，与 worker 的 `FOR UPDATE` 冲突。若 worker 卡死（模型调用挂起等），此插入在没有任何超时保护的情况下无限等待——这是"卡死"的另一来源，且发生在级联超时兜底生效之前。
+- **前端无超时**：`fetch` 默认无 AbortController，服务端挂起时转圈永不结束。
+
+修复后的删除语义（`DELETE /api/tasks/{task_id}`）：
+
+1. **先停止再有界轮询**：RUNNING 任务先经侧信道 `task_cancel_requests` 请求停止（worker 1s 粒度轮询），随后以 2s 间隔轮询状态最多 60s，等待状态离开 RUNNING（worker 已释放行锁）；预算耗尽仍尝试删除——死 worker 的锁随连接断开已消失，删除会成功。
+2. **全程有界锁等待**：请求的每个事务开头（含取消请求插入与级联删除）都 `SET LOCAL lock_timeout = '15s'`；任何残余锁等待转 409「该任务仍被运行中的 worker 占用，请稍后重试（或先停止研究）」，绝不 500 或无限等待。注意锁超时在 PostgreSQL 中以 `LockNotAvailableError`（SQLSTATE 55P03）冒泡，SQLAlchemy 将其包装为通用 `DBAPIError` 而非 `OperationalError`，异常捕获须以 `DBAPIError` 为基类。
+3. **前端有界超时**：删除请求由 AbortController 120s 中止，超时给出明确错误而非无限转圈。
+
+删除仍为物理且不可逆（研究者销毁自己的会话，不违反证据节点禁删约束）；其余状态（QUEUED、AWAITING_CLAIM_CONFIRMATION、终态等）无锁竞争，直接级联删除。
+
 ### 8.7 多入口产品交付
 
 Poliscope 保留完整 Web 科研工作台作为主要产品，同时提供稳定 API、CLI 和 Agent Skill 入口。四种入口共享同一套 Research Service、EpistemoBrain、7 人议会、MemoBrain、Evidence Gate、Scientific Event Ledger 与 Evidence Graph，不复制科研逻辑：

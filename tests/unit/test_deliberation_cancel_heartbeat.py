@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -44,6 +45,9 @@ class _HangingGateway:
         self.started = False
         self.cancelled = asyncio.Event()
 
+    async def invoke(self, request: ModelRequest) -> ModelResult:
+        return await self.stream_invoke(request, on_event=lambda _event: None)
+
     async def stream_invoke(
         self, request: ModelRequest, on_event: object
     ) -> ModelResult:
@@ -67,6 +71,9 @@ class _HangingGateway:
 
 class _InstantGateway:
     """A provider that answers immediately, for the no-cancel baseline."""
+
+    async def invoke(self, request: ModelRequest) -> ModelResult:
+        return await self.stream_invoke(request, on_event=lambda _event: None)
 
     async def stream_invoke(
         self, request: ModelRequest, on_event: object
@@ -211,7 +218,7 @@ async def test_heartbeat_flushes_so_wait_clock_grows(
     """Every heartbeat reaches the live view immediately, not at the next
     token-delta flush (the 思考时间冻结 production failure)."""
     monkeypatch.setattr(deliberation, "HEARTBEAT_INTERVAL_SECONDS", 0.02)
-    streamed: list[dict[str, object]] = []
+    streamed: list[dict[str, Any]] = []
     flushed = 0
 
     async def flush() -> None:

@@ -62,7 +62,7 @@ def _stub_email() -> Iterator[None]:
     original = email_sender_mod.SmtpEmailSender.send_verification_code
     os.environ["SMTP_HOST"] = "smtp.test"
     os.environ["SMTP_FROM"] = "test@poliscope.test"
-    email_sender_mod.SmtpEmailSender.send_verification_code = _record_send
+    email_sender_mod.SmtpEmailSender.send_verification_code = _record_send  # type: ignore[method-assign]
     try:
         yield
     finally:
@@ -71,7 +71,7 @@ def _stub_email() -> Iterator[None]:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-        email_sender_mod.SmtpEmailSender.send_verification_code = original
+        email_sender_mod.SmtpEmailSender.send_verification_code = original  # type: ignore[method-assign]
 
 
 def _role_url(admin_url: str, username: str, password: str) -> str:

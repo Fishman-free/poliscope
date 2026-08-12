@@ -7,8 +7,10 @@ the council will investigate, which is the control point CLAUDE.md 2 requires.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import time
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
 from uuid import UUID
@@ -16,7 +18,10 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
+from apps.api import task_lifecycle
 from apps.api.dependencies import (
     CurrentUserDep,
     ObjectStoreDep,
@@ -30,7 +35,6 @@ from apps.api.schemas import (
     FollowUpRequest,
     ReResearchRequest,
 )
-from apps.api.task_lifecycle import delete_task_cascade
 from packages.accounts.repository import StoredUser
 from packages.epistemo.contracts import TaskStatus
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
@@ -59,6 +63,13 @@ from packages.skills.repository import SkillsRepository
 router = APIRouter()
 
 TASK_NOT_FOUND = "unknown task"
+
+# Round-14 session deletion: how long to wait for a RUNNING task's worker to
+# stop and release its row lock. A live worker polls the cancel channel every
+# ~1s and halts within seconds, so this budget covers that comfortably plus a
+# dead worker's lock being released by PostgreSQL when its connection drops.
+DELETE_CANCEL_WAIT_SECONDS = 60.0
+DELETE_POLL_SECONDS = 2.0
 
 
 def _service(session: SessionDep) -> ResearchService:
@@ -964,10 +975,66 @@ async def delete_task(
 
     The cascade lives in apps/api/task_lifecycle.py, shared with account
     deletion: no single module owns the task's lifecycle (CLAUDE.md 9).
+
+    Round-14: a RUNNING task's worker holds the task row ``FOR UPDATE`` for
+    its whole run, so deleting straight away would block on that lock
+    indefinitely (PostgreSQL's default lock_timeout is unbounded, and the
+    browser faithfully spins). The endpoint first asks the worker to stop via
+    the side channel it polls every ~1s, waits (bounded) for the status to
+    leave RUNNING, then cascades. A dead or wedged worker still cannot hang
+    the request: the cascade's own lock_timeout turns any residual lock into
+    an explicit 409 instead of a silent 500.
     """
-    await _owned_task(session, task_id, current_user)
-    await delete_task_cascade(session, task_id)
-    await session.commit()
+    stored = await _owned_task(session, task_id, current_user)
+    repository = ResearchRepository(session)
+    try:
+        if stored.status == TaskStatus.RUNNING:
+            # Round-14: bound *every* lock wait in this delete, including the
+            # cancel-request INSERT's FK check on the task row the worker
+            # holds FOR UPDATE -- that check waits for the worker's lock and
+            # is the first thing the request hits, so an unbounded wait there
+            # wedges the endpoint before the cascade's own timeout ever runs.
+            # The commit below ends this transaction, so delete_task_cascade
+            # re-applies the timeout for its own transaction.
+            await session.execute(
+                text(
+                    "SET LOCAL lock_timeout = "
+                    f"'{task_lifecycle.DELETE_LOCK_TIMEOUT}'"
+                )
+            )
+            await repository.request_cancel(
+                task_id, requested_by=current_user.username
+            )
+            # The worker's poll must see the stop request: commit our write so
+            # its next transaction reads it.
+            await session.commit()
+            deadline = time.monotonic() + DELETE_CANCEL_WAIT_SECONDS
+            while time.monotonic() < deadline:
+                await asyncio.sleep(DELETE_POLL_SECONDS)
+                status_value = await repository.get_status(task_id)
+                if status_value is None or status_value != TaskStatus.RUNNING:
+                    break
+            # Budget exhausted: still try to delete. A dead worker's lock is
+            # gone (its connection dropped, transaction rolled back), so the
+            # delete succeeds; a genuinely wedged worker hits the cascade's
+            # lock_timeout.
+        await task_lifecycle.delete_task_cascade(session, task_id)
+        await session.commit()
+    # Catch the DBAPIError base: PostgreSQL's lock_timeout surfaces as
+    # asyncpg LockNotAvailableError (SQLSTATE 55P03), which SQLAlchemy wraps
+    # as a generic DBAPIError -- not OperationalError. Any other database
+    # error still re-raises untouched.
+    except DBAPIError as error:
+        message = str(error).lower()
+        if "lock timeout" in message or "deadlock" in message:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "该任务仍被运行中的 worker 占用，暂时无法删除，"
+                    "请稍后重试（或先停止研究）。"
+                ),
+            ) from error
+        raise
     return {"deleted": str(task_id)}
 
 

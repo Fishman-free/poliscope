@@ -9,6 +9,7 @@ integration tests (test_worker_pipeline.py).
 
 from __future__ import annotations
 
+from typing import cast
 from uuid import uuid4
 
 from packages.reports.contracts import FinalPaper
@@ -17,6 +18,7 @@ from packages.reports.synthesis import (
     _fallback_integrated_paper,
     _phase_coverage,
 )
+from packages.research.repository import StoredClaim
 
 
 def _brief() -> ResearchBrief:
@@ -41,15 +43,18 @@ def _brief() -> ResearchBrief:
     )
 
 
-def _claim(statement: str, claim_type: str) -> object:
-    return type("_C", (), {
-        "statement": statement,
-        "claim_type": claim_type,
-        "falsification_condition": "不存在显著相关",
-    })()
+def _claim(statement: str, claim_type: str) -> StoredClaim:
+    return cast(
+        StoredClaim,
+        type("_C", (), {
+            "statement": statement,
+            "claim_type": claim_type,
+            "falsification_condition": "不存在显著相关",
+        })(),
+    )
 
 
-def _node(node_type: str, payload: dict[str, str]) -> BriefNode:
+def _node(node_type: str, payload: dict[str, object]) -> BriefNode:
     return BriefNode(
         node_id=uuid4(), node_type=node_type, status="active", payload=payload
     )
@@ -101,7 +106,7 @@ def test_fallback_paper_without_gaps_is_clean() -> None:
 
 
 def test_fallback_paper_consensus_lines_are_included() -> None:
-    consensus = {
+    consensus: dict[str, object] = {
         "conditional_consensus": "证据指向弱正相关，但因果方向未决。",
         "boundary_conditions": ["仅适用于社交媒体重度用户"],
     }

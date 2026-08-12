@@ -6,6 +6,9 @@
   right: 0;
   top: calc(100% + 8px);
   width: 21rem;
+  /* 下拉面板入场：复用全局 panel-in（320ms 柔和上浮），与主面板语言一致；
+     prefers-reduced-motion 已由 base.css 全局兜底。 */
+  animation: panel-in var(--duration-slow) var(--ease-smooth);
   max-height: min(80vh, 34rem);
   overflow-y: auto;
   background: var(--surface-0);
