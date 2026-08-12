@@ -58,6 +58,20 @@ TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
     }
 )
 
+
+class CouncilCancelled(Exception):
+    """The researcher's stop request landed mid-call (round-13 fix).
+
+    The orchestrator's ``cancel_check`` polls at phase boundaries only, so a
+    stop request could wait out a whole slow phase (up to 15 minutes of
+    per-seat retries) before taking effect. The deliberator now polls the same
+    channel around an in-flight model call and raises this from inside the
+    call; the orchestrator turns it into the CANCELLED report directly --
+    never into an absent seat or a phase failure, because stopping is a
+    redirection, not a verdict on the work (same principle as the
+    between-phase cancel path).
+    """
+
 PHASE_SEQUENCE: tuple[TaskPhase, ...] = (
     TaskPhase.PRECOMMITMENT,
     TaskPhase.ACQUISITION,

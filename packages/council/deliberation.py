@@ -19,21 +19,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from contextlib import suppress
+from typing import Any
 from uuid import UUID
 
 from packages.council.contracts import Seat
 from packages.council.roles import ROLE_SPECS
 from packages.council.rounds.registry import PhaseContext
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
-from packages.epistemo.contracts import TaskPhase
+from packages.epistemo.contracts import CouncilCancelled, TaskPhase
 from packages.evidence.process_stream import ProcessCallback
 from packages.models.contracts import (
     ModelClass,
     ModelGateway,
     ModelMessage,
     ModelRequest,
+    ModelResult,
     SchemaStatus,
     StreamEvent,
 )
@@ -45,6 +47,12 @@ logger = logging.getLogger(__name__)
 # "still working, waited N s" instead of an eternal silent "thinking…".
 # The front end also keeps its own clock; this is the server-side source.
 HEARTBEAT_INTERVAL_SECONDS = 15.0
+
+# Round-13 「停止研究」: the researcher's stop request is polled around an
+# in-flight model call at this granularity. The orchestrator's between-phase
+# check can leave a stop unanswered for a whole slow phase; one poll tick
+# bounds how long a stop request waits before the call is torn down.
+CANCEL_POLL_SECONDS = 1.0
 
 # What each seat is for. These are the questioning rules that make seven seats
 # different rather than seven copies; CLAUDE.md 3 forbids the latter.
@@ -428,6 +436,14 @@ class GatewayDeliberator:
         on_reasoning: ReasoningCallback | None = None,
         on_process: ProcessCallback | None = None,
         on_flush: Callable[[], Awaitable[None]] | None = None,
+        # Round-13 「停止研究」: the researcher's stop channel, polled around
+        # an in-flight model call. The orchestrator already polls it between
+        # phases; wiring it here too is what makes a stop land within one
+        # CANCEL_POLL_SECONDS tick instead of at the next phase boundary --
+        # the "停止研究停止不了" failure (a slow phase could hold the run for
+        # minutes). Same channel, same task, second reader. None keeps the
+        # evaluation harness and tests on the old between-phase-only behaviour.
+        cancel_check: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._gateway = gateway
         self._budget = budget
@@ -436,6 +452,7 @@ class GatewayDeliberator:
         self._on_reasoning = on_reasoning
         self._on_process = on_process
         self._on_flush = on_flush
+        self._cancel_check = cancel_check
         # Tokens since the last flush of the process stream: the relay batches
         # so the live view does not pay a database write per token.
         self._since_flush = 0
@@ -530,6 +547,50 @@ class GatewayDeliberator:
         with suppress(asyncio.CancelledError):
             await task
 
+    async def _await_or_cancel(
+        self, coro: Coroutine[Any, Any, ModelResult]
+    ) -> ModelResult:
+        """Await a gateway call while polling the cancel channel.
+
+        Round-13 「停止研究」: without this, a stop request is only noticed at
+        the next phase boundary, so a slow phase (up to 15 minutes of per-seat
+        retries) could ignore the researcher's stop the whole time. Polling
+        the channel every ``CANCEL_POLL_SECONDS`` around the in-flight call
+        makes a stop land almost immediately: the call is cancelled and
+        :class:`CouncilCancelled` raised, which the orchestrator turns into
+        the CANCELLED report -- never into an absent seat, never into a phase
+        failure.
+
+        ``asyncio.wait`` rather than ``wait_for`` on purpose: ``wait_for``
+        fires only on timeout; this loop re-checks the channel each second and
+        only tears the call down when the researcher actually asked.
+        """
+        if self._cancel_check is None:
+            return await coro
+        task: asyncio.Task[ModelResult] = asyncio.create_task(coro)
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {task}, timeout=CANCEL_POLL_SECONDS
+                )
+                if done:
+                    return task.result()
+                try:
+                    stop_requested = await self._cancel_check()
+                except Exception:
+                    # A broken stop channel must never break the call; the
+                    # next poll retries it.
+                    stop_requested = False
+                if stop_requested:
+                    raise CouncilCancelled(
+                        "researcher requested to stop the run"
+                    )
+        finally:
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
     async def _heartbeat(self, seat: Seat, phase: TaskPhase) -> None:
         started = time.monotonic()
         while True:
@@ -540,6 +601,24 @@ class GatewayDeliberator:
                 "seat_working",
                 {"seat": seat.value, "phase": phase.value, "elapsed": elapsed},
             )
+            # Round-13 fix: a heartbeat only reaches the live view through a
+            # flush, and flushes were triggered solely by token deltas -- so
+            # during a quiet stretch of model thinking (no deltas) the "已等待
+            # Ns" clock froze at its last delta-flush value, making a working
+            # seat look stuck. Flush right after each heartbeat so the wait is
+            # reported as it actually grows. A flush failure degrades to a
+            # warning -- the trace is auxiliary (CLAUDE.md 10), and the
+            # heartbeat must survive it.
+            if self._on_flush is not None:
+                try:
+                    await self._on_flush()
+                except Exception:
+                    logger.warning(
+                        "process stream heartbeat flush failed for %s/%s",
+                        seat.value,
+                        phase.value,
+                        exc_info=True,
+                    )
 
     async def deliberate(
         self,
@@ -577,7 +656,16 @@ class GatewayDeliberator:
                         await self._relay(event, seat, phase)
 
                     try:
-                        result = await streaming(request, relay_for_seat)
+                        result = await self._await_or_cancel(
+                            streaming(request, relay_for_seat)
+                        )
+                    except CouncilCancelled:
+                        # Round-13: the researcher stopped the run mid-call.
+                        # This is a redirection, not a vendor failure -- do
+                        # NOT fall back to a fresh invoke (that would ignore
+                        # the stop and pay for another call). Propagate to
+                        # the orchestrator, which records CANCELLED.
+                        raise
                     except Exception:
                         logger.warning(
                             "streaming call failed for %s/%s, falling back "
@@ -586,7 +674,9 @@ class GatewayDeliberator:
                             phase.value,
                             exc_info=True,
                         )
-                        result = await self._gateway.invoke(request)
+                        result = await self._await_or_cancel(
+                            self._gateway.invoke(request)
+                        )
                         # The fallback succeeded but never streamed a
                         # ``model_done`` (that event is emitted only by the
                         # stream's success path), so the live view would keep
@@ -600,9 +690,16 @@ class GatewayDeliberator:
                     finally:
                         self._since_flush = 0
                 else:
-                    result = await self._gateway.invoke(request)
+                    result = await self._await_or_cancel(
+                        self._gateway.invoke(request)
+                    )
             else:
-                result = await self._gateway.invoke(request)
+                result = await self._await_or_cancel(
+                    self._gateway.invoke(request)
+                )
+        except CouncilCancelled:
+            # Round-13: never degrade a researcher's stop into an absent seat.
+            raise
         except Exception as error:
             # A seat that cannot be reached is an absent seat, not a failed task.
             # CLAUDE.md 10 requires the run to degrade rather than abort, and the

@@ -528,6 +528,13 @@ Evidence Lineage Graph 至少识别：
 
 综合模型的 prompt 显式要求输出这些字段；无模型或模型失败时的确定性降级路径同样组装这些字段（从账本中的独立复判与条件化共识）。字段全部可选，旧模型输出不产出时解析器以空值兜底，仍生成合法论文。
 
+### 8.6.3 停止研究即时生效与思考时间实时可见（round-13）
+
+生产故障修复（盲点悬赏阶段表现为「卡死」：时间冻结在 60 秒、停止按钮无效）：
+
+- **停止即时生效**：取消通道（`task_cancel_requests`）原只在议会阶段边界被轮询，而一个慢阶段（盲点悬赏 7 席位串行、每席位最多 120s×2 次重试）可能持续 15 分钟——研究者点「停止研究」后要等整个阶段耗尽才生效。修复：`GatewayDeliberator` 在**每个在飞模型调用**外以 `_await_or_cancel` 每 1s 轮询同一取消通道；检测到停止请求即取消调用并抛 `CouncilCancelled`，orchestrator 将其转为 `CANCELLED` 报告——不写 `PHASE_FAILED`、不记录未完成槽位（停止是重定向，不是对工作的裁决），也绝不 fallback 到一次新的模型调用。停止因此最快 1 秒内生效。
+- **思考时间实时可见**：`seat_working` 心跳事件原只在收到模型 token delta 触发的 flush 时落库；模型长思考（无 delta）期间心跳全部积压在内存 buffer，前端「思考中… 已等待 Ns」冻结在最后一次 flush 的时刻。修复：每次心跳 emit 后立即 flush。`ProcessStreamWriter.flush` 以 `asyncio.Lock` 串行化，避免心跳 flush 与 token flush 并发分配重复 `seq`。
+
 ### 8.7 多入口产品交付
 
 Poliscope 保留完整 Web 科研工作台作为主要产品，同时提供稳定 API、CLI 和 Agent Skill 入口。四种入口共享同一套 Research Service、EpistemoBrain、7 人议会、MemoBrain、Evidence Gate、Scientific Event Ledger 与 Evidence Graph，不复制科研逻辑：

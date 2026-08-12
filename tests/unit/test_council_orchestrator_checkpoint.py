@@ -19,6 +19,7 @@ from packages.council.contracts import Seat
 from packages.epistemo.budget import BudgetTracker, ResearchBudget
 from packages.epistemo.contracts import (
     PHASE_SEQUENCE,
+    CouncilCancelled,
     CouncilCheckpoint,
     CouncilPhaseSnapshot,
     TaskPhase,
@@ -435,6 +436,86 @@ async def test_restart_from_first_failed_phase_reruns_only_unfinished_phases() -
     assert "EVIDENCE_EXCHANGE:round_failed" not in report.unfilled_slots
     assert "BLINDSPOT_BOUNTY:round_failed" not in report.unfilled_slots
     assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
+
+
+class _CancellingDeliberator:
+    """A deliberator whose model call is interrupted by the researcher's stop.
+
+    Mirrors what GatewayDeliberator now does when the cancel channel fires
+    around an in-flight model call (round-13): raise CouncilCancelled instead
+    of returning an absent seat, so the orchestrator records CANCELLED rather
+    than a degraded phase.
+    """
+
+    def __init__(self, cancel_on_phase: TaskPhase) -> None:
+        self._cancel_on_phase = cancel_on_phase
+
+    async def deliberate(
+        self,
+        seat: Seat,
+        phase: TaskPhase,
+        context: object,
+    ) -> dict[str, object] | None:
+        if phase == self._cancel_on_phase:
+            raise CouncilCancelled("researcher requested to stop the run")
+        return {"seat": seat.value, "judgment": "noted"}
+
+
+async def test_cancel_mid_phase_records_cancelled_not_a_failed_phase() -> None:
+    """A stop that lands inside a phase (round-13) must end the run CANCELLED.
+
+    The stop interrupts the very first phase: no phase is recorded as run,
+    no PHASE_FAILED event reaches the ledger, and the report says CANCELLED
+    with the phases that completed before the stop -- a redirection, not a
+    verdict on the work (identical contract to the between-phase cancel).
+    """
+    sink = _FakeEventSink()
+    budget = BudgetTracker(limits=_GENEROUS_BUDGET)
+    orchestrator = CouncilOrchestrator(
+        ledger=sink,
+        budget=budget,
+        deliberator=_CancellingDeliberator(TaskPhase.PRECOMMITMENT),
+    )
+    task_id = uuid4()
+
+    report = await orchestrator.run(task_id=task_id, question="does X cause Y?")
+
+    assert report.final_status == TaskStatus.CANCELLED
+    assert report.stop_reason.value == "CANCELLED"
+    assert report.phases_run == ()
+    assert report.phases_skipped == ()
+    # The interrupted phase is not reported as a failure or an unfilled slot:
+    # a stop is not a gap in the evidence.
+    assert report.failures == ()
+    assert report.unfilled_slots == ()
+    assert not any(key.endswith(":failed") for key in sink.recorded_keys())
+
+
+async def test_cancel_mid_phase_keeps_completed_phases() -> None:
+    """A stop during the second phase keeps the first phase's events and
+    reports exactly how far the run got."""
+    sink = _FakeEventSink()
+    budget = BudgetTracker(limits=_GENEROUS_BUDGET)
+    orchestrator = CouncilOrchestrator(
+        ledger=sink,
+        budget=budget,
+        deliberator=_CancellingDeliberator(TaskPhase.ACQUISITION),
+    )
+    task_id = uuid4()
+
+    report = await orchestrator.run(task_id=task_id, question="does X cause Y?")
+
+    assert report.final_status == TaskStatus.CANCELLED
+    assert report.phases_run == (TaskPhase.PRECOMMITMENT,)
+    assert sink.recorded_keys().count("PRECOMMITMENT:started") == 1
+    assert sink.recorded_keys().count("PRECOMMITMENT:completed") == 1
+    # The interrupted phase's start marker exists (the phase began), but it
+    # neither completed nor failed -- the run was redirected, not broken.
+    assert sink.recorded_keys().count("ACQUISITION:started") == 1
+    assert "ACQUISITION:completed" not in sink.recorded_keys()
+    assert "ACQUISITION:failed" not in sink.recorded_keys()
+    assert report.failures == ()
+    assert report.unfilled_slots == ()
 
 
 async def test_restart_from_phase_without_snapshots_falls_back_to_full_restart() -> (

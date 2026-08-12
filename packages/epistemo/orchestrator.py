@@ -44,6 +44,7 @@ from packages.council.rounds.registry import (
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.epistemo.contracts import (
     PHASE_SEQUENCE,
+    CouncilCancelled,
     CouncilCheckpoint,
     CouncilPhaseSnapshot,
     TaskPhase,
@@ -448,22 +449,41 @@ class CouncilOrchestrator:
                 state.unfilled.append(f"{phase.value}:not_reached")
                 await self._append_skip(task_id, phase, stop)
                 continue
-            await self._run_phase(
-                task_id,
-                phase,
-                question,
-                confirmed_claims,
-                quarantined,
-                pdf_object_ids,
-                user_dois,
-                knowledge_documents,
-                knowledge_search,
-                researcher_skills,
-                output_language,
-                state,
-                council_guidance,
-                paper_understanding,
-            )
+            try:
+                await self._run_phase(
+                    task_id,
+                    phase,
+                    question,
+                    confirmed_claims,
+                    quarantined,
+                    pdf_object_ids,
+                    user_dois,
+                    knowledge_documents,
+                    knowledge_search,
+                    researcher_skills,
+                    output_language,
+                    state,
+                    council_guidance,
+                    paper_understanding,
+                )
+            except CouncilCancelled:
+                # Round-13 「停止研究」: the deliberator raised this from
+                # inside an in-flight model call the researcher stopped. Same
+                # CANCELLED contract as the between-phase check -- the phases
+                # that ran keep their events, the report says exactly how far
+                # the run got, and no PHASE_FAILED/unfilled slot is recorded
+                # (a stop is a redirection, not a verdict on the work).
+                report.phases_run = tuple(run_phases)
+                report.phases_skipped = tuple(skipped)
+                report.events_appended = state.events
+                report.unfilled_slots = tuple(state.unfilled)
+                report.absent_seats = frozenset(state.absent)
+                report.failures = tuple(state.failures)
+                report.seat_runs = tuple(state.seat_runs)
+                report.stop_reason = StopReason.CANCELLED
+                report.final_status = TaskStatus.CANCELLED
+                machine.transition_to(TaskStatus.CANCELLED)
+                return report
             run_phases.append(phase)
             # One snapshot per phase that ran (successful or failed), with
             # the accumulated state after it -- the rewind material for
@@ -587,6 +607,14 @@ class CouncilOrchestrator:
         )
         try:
             outcome = await runner_for(phase)(context)
+        except CouncilCancelled:
+            # Round-13 「停止研究」: the researcher's stop request landed
+            # mid-call (the deliberator polls the cancel channel around every
+            # model call). Stopping is a redirection, not a failure -- neither
+            # a PHASE_FAILED event nor an unfilled slot belongs on the ledger
+            # for a run the researcher chose to end. Propagate to run(), which
+            # records the CANCELLED report.
+            raise
         except Exception as error:  # noqa: BLE001 - recorded, never swallowed
             # CLAUDE.md 10: one round's failure degrades the run. The reason is
             # written to the ledger so the researcher sees why the round is

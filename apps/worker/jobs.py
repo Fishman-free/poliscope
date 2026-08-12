@@ -473,24 +473,31 @@ async def _deliberate_impl(
     # task_id is the canonicalised argument, not task.task_id: the ORM row's
     # value is asyncpg's UUID subclass, which the frozen contracts reject
     # (same reason _confirmed_claim_ids canonicalises at its boundary).
+    # Resolved before the components below so an enabled skill's instructions
+    # reach every model call of the run -- the council's prompts and the
+    # finding extractor alike (round-5 request).
+    skills = await _skills_context(session, task)
+    repository = ResearchRepository(session)
     if deliberator is None and gateway is not None:
         # Every model call goes through the gateway, audited, per CLAUDE.md 8.
         # With no gateway the run still happens and reports every seat as
         # unavailable, which is the truthful outcome rather than a silent
         # success. A captured chain of thought is recorded as a process-only
         # ledger event in the same transaction (see _reasoning_emitter).
+        # Round-13 「停止研究」: the deliberator polls the same cancel channel
+        # the orchestrator checks between phases, so a stop request lands
+        # around an in-flight model call (~1s) instead of at the next phase
+        # boundary (up to minutes on a slow phase). Same repository, same
+        # session, same transaction -- the stop that interrupts a call and the
+        # CANCELLED status that ends the run commit together.
         deliberator = GatewayDeliberator(
             AuditedModelGateway(gateway, session),
             budget,
             on_reasoning=_reasoning_emitter(SqlEventLedger(session)),
             on_process=None if process is None else process.emit,
             on_flush=None if process is None else process.flush,
+            cancel_check=lambda: repository.check_cancel_request(task_id),
         )
-    # Resolved before the components below so an enabled skill's instructions
-    # reach every model call of the run -- the council's prompts and the
-    # finding extractor alike (round-5 request).
-    skills = await _skills_context(session, task)
-    repository = ResearchRepository(session)
     orchestrator = CouncilOrchestrator(
         ledger=SqlEventLedger(session),
         budget=budget,

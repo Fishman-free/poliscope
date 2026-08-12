@@ -24,6 +24,7 @@ Design rules:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -124,6 +125,11 @@ class ProcessStreamWriter:
         self._task_id = task_id
         self._flush_at = flush_at
         self._buffer: list[tuple[str, dict[str, object]]] = []
+        # Round-13 fix: ``next_seq`` reads ``MAX(seq)`` then inserts, so two
+        # concurrent flushes (token-delta flush racing a heartbeat flush) can
+        # allocate the same seq and silently drop a row in the live view.
+        # Serialising flushes makes seq allocation single-writer.
+        self._flush_lock = asyncio.Lock()
 
     def emit(self, kind: str, payload: dict[str, object]) -> None:
         """Queue one event. Never raises; a broken trace must not break a run."""
@@ -135,13 +141,8 @@ class ProcessStreamWriter:
             return
         pending, self._buffer = self._buffer, []
         try:
-            async with self._sessions() as session:
-                repo = ProcessStreamRepository(session)
-                seq = await repo.next_seq(self._task_id)
-                for kind, payload in pending:
-                    repo.append(self._task_id, seq, kind, payload)
-                    seq += 1
-                await session.commit()
+            async with self._flush_lock:
+                await self._flush_pending(pending)
         except Exception:
             # The trace is auxiliary. Log and drop the batch rather than
             # letting a live-view write failure fail the research round.
@@ -151,6 +152,17 @@ class ProcessStreamWriter:
                 len(pending),
                 exc_info=True,
             )
+
+    async def _flush_pending(
+        self, pending: list[tuple[str, dict[str, object]]]
+    ) -> None:
+        async with self._sessions() as session:
+            repo = ProcessStreamRepository(session)
+            seq = await repo.next_seq(self._task_id)
+            for kind, payload in pending:
+                repo.append(self._task_id, seq, kind, payload)
+                seq += 1
+            await session.commit()
 
     async def close(self) -> None:
         await self.flush()
