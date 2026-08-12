@@ -42,11 +42,13 @@
 }
 
 @keyframes phase-current-in {
+  /* 合成属性淡入（box-shadow 光圈逐帧重绘，改为 opacity 表达同样的
+     「阶段刚切换」语义，走 GPU 合成路径）。 */
   from {
-    box-shadow: 0 0 0 5px var(--accent-soft);
+    opacity: 0.55;
   }
   to {
-    box-shadow: 0 0 0 0 transparent;
+    opacity: 1;
   }
 }
 

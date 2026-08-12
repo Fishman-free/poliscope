@@ -57,6 +57,8 @@
   border-radius: var(--radius-3);
   box-shadow: var(--shadow-3);
   animation: popover-in var(--duration-standard) var(--ease-smooth);
+  /* 从触发器（右上角）缩放展开，而非元素中心 —— 触发锚定面板的 origin 规则。 */
+  transform-origin: top right;
 }
 
 @keyframes popover-in {

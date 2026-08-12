@@ -184,7 +184,7 @@ code,
  * content with no transition of its own can opt into this rather than each
  * defining its own identical keyframe. */
 .fade-in-up {
-  animation: fade-in-up 0.55s var(--ease-smooth) both;
+  animation: fade-in-up var(--duration-slow) var(--ease-smooth) both;
 }
 
 @keyframes fade-in-up {

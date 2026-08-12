@@ -440,13 +440,16 @@
 .app__tab-indicator {
   position: absolute;
   bottom: -1px;
+  left: 0;
   height: 2px;
   border-radius: var(--radius-pill);
   background: var(--app-accent);
-  left: var(--indicator-left, 0px);
   width: var(--indicator-width, 0px);
-  transition: left var(--duration-slow) var(--ease-smooth),
-    width var(--duration-slow) var(--ease-smooth);
+  /* 合成属性滑动：translateX 走 GPU 合成，宽度瞬间更新（320ms 滑动中人眼
+     跟踪位置而非宽度）。与 App.tsx 注释「App.css transitions the transform」
+     的本意一致。 */
+  transform: translateX(var(--indicator-left, 0px));
+  transition: transform var(--duration-slow) var(--ease-smooth);
 }
 
 /* 768px 以下：隐藏 tab 副标题，标签栏横向滚动省下空间。 */
