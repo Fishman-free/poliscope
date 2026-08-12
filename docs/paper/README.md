@@ -44,16 +44,21 @@ pdflatex epistemobrain
 | 1 Introduction | 问题动机（复现危机文献）+ 系统概述 + 三点贡献 | 1 Introduction |
 | 2 Related Work | 多智能体辩论 / 记忆 / RAG 与事实核验 / 科学智能体 | 2 Related Work |
 | 3 Method | 3.1 Overview / 3.2 七席议会 / 3.3 分层记忆 / 3.4 双图治理 / 3.5 证据门 / 3.6 认识论路由 / 3.7 人类检查点 / 3.8 工程实现 | 3 Method |
-| 4 Experiments | 4.1 ForesightBlindspot 基准设计 / 4.2 五基线 / 4.3 基线构造正确性（评测管道发现的修复）/ 4.4 脚本化案例结果（5 变体对比表）/ 4.5 系统验证 | 4 Experiment |
+| 4 Experiments | 4.1 ForesightBlindspot 基准设计 / 4.2 五基线 / 4.3 基线构造正确性（评测管道发现的修复）/ 4.4 脚本化案例结果（5 变体对比表）/ 4.5 消融分析（6 变体消融表，round-15 新增）/ 4.6 系统验证 | 4 Experiment |
 | 5 Conclusion | 结论与未来工作 | 5 Conclusion |
 | Appendix A | 实现细节：确定性 harness、权限即设计、可复现性 | Appendix A |
 
 ## 实验数字的来源（诚实性声明）
 
-第 4.4 节表格中的数字来自 `scripts/arbor_eval.py` 在脚本化 demo case
+第 4.4 节（五基线表）与第 4.5 节（六消融表）中的数字来自
+`scripts/arbor_eval.py`（`--all` 一次跑出 11 变体）在脚本化 demo case
 （无模型调用、无网络、无数据库）上的确定性测量，属于受控脚本化素材上的
-**B_dev** 结果；`packages/evaluation/` 的评测 harness 与 scoring 函数可
-直接复现。以下内容论文中如实标注为未来工作，**没有编造任何数字**：
+**B_dev** 结果；`packages/evaluation/` 的评测 harness、scoring 函数与
+`tests/unit/test_evaluation_ablations.py` 可逐项复现。消融表的数字
+解读：三个消融有机制级效应（去证伪者/去审计员 → 盲点 recall 下降；
+去谱系 → 证据独立性被抬高为 1.0），两个消融在脚本化素材上无差异
+（去预承诺、去 MemoBrain）——论文如实标注为测量边界而非机制无效。
+以下内容论文中如实标注为未来工作，**没有编造任何数字**：
 
 - 时间切片语料（截止日前封闭语料）尚未采集 → 无独立 B_test
 - 真实模型 + 真实语料的五基线受控对照实验尚未运行（需模型凭证与语料采集）

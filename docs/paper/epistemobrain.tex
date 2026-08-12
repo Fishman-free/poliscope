@@ -64,11 +64,14 @@ time-sliced evaluation protocol for blindspot discovery in computational
 social science, and report a controlled scripted-case comparison of five
 baselines (single-agent deep research, fixed multi-agent debate, council
 with linear context, council with executive memory but no evidence engine,
-and the full system) together with end-to-end verification on real research
-tasks. The comparison confirms that blindspot coverage is driven by the
-council's seat coverage -- a lone researcher misses seven of eight
-specialist blindspots -- and isolates where the protocol's remaining
-contributions become observable.
+and the full system) plus a six-variant ablation ladder in which one
+capability is removed at a time. The comparison confirms that blindspot
+coverage is driven by the council's seat coverage -- a lone researcher
+misses six of seven specialist blindspots -- and the ablations show that
+removing the adversarial falsifier or the evidence auditor each costs a
+gold blindspot, while removing lineage tracking inflates the system's own
+evidence-independence report. End-to-end verification on real research
+tasks is reported alongside.
 
 \end{abstract}
 
@@ -564,10 +567,91 @@ evidence independence) and require real-model runs to observe on
 blindspots. We treat this as an identified boundary of the measurement,
 not a claim about the mechanisms.
 
+\subsection{Ablation Analysis}
+
+Beyond the five-baseline ladder, we ablate the full system one capability
+at a time (design spec 11.4): six \emph{full minus X} variants, each
+removing exactly one mechanism while keeping everything else -- including
+the evidence gate -- intact. The removals are (1)~independent
+precommitment (the phase does not run); (2)~the adversarial falsifier
+seat; (3)~the evidence auditor seat; (4)~the dialectical fold (JOINT
+MODELING skips the DebateCapsule and records an unfilled slot instead of
+silently dropping the opposition); (5)~evidence lineage (acquired sources
+arrive without dataset metadata, so evidence independence cannot see that
+two papers share one dataset); (6)~MemoBrain (per-seat private memory
+replaced by one undifferentiated transcript). Each ablation is a
+configuration of the same orchestrator the full system runs -- the switch
+is one flag or one seat subset, not a reimplementation -- so the contrast
+with Full Poliscope isolates that capability's contribution.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Variant} & \textbf{Rec.} & \textbf{Prec.} & \textbf{F1} & \textbf{Indep.} & \textbf{Unfilled} \\
+\midrule
+Full Poliscope & 1.000 & 0.778 & 0.875 & 0.667 & 1 \\
+\quad$-$ Precommitment & 1.000 & 0.778 & 0.875 & 0.667 & 1 \\
+\quad$-$ Adversarial falsifier & 0.857 & 0.857 & 0.857 & 0.667 & 1 \\
+\quad$-$ Evidence auditor & 0.857 & 0.750 & 0.800 & 0.667 & 1 \\
+\quad$-$ Dialectical fold & 1.000 & 0.778 & 0.875 & 0.667 & 2 \\
+\quad$-$ Lineage & 1.000 & 0.778 & 0.875 & 1.000 & 1 \\
+\quad$-$ MemoBrain & 1.000 & 0.778 & 0.875 & 0.667 & 1 \\
+\bottomrule
+\end{tabular}
+\caption{Ablations of the full system on the same scripted case (B\_dev).
+``Indep.'' is evidence independence; ``Unfilled'' counts slots the run
+records as unfinished rather than fabricating. Each ablation removes
+exactly one capability; the adversarial falsifier and the evidence
+auditor each carry a gold blindspot of their own, which is why removing
+them costs recall.}
+\label{tab:ablations}
+\end{table}
+
+Table~\ref{tab:ablations} shows three mechanism-level effects. First,
+removing the adversarial falsifier drops recall from 1.000 to 0.857: the
+publication-bias blindspot was \emph{its} nomination and no other seat
+covers it, so a council without a dedicated falsifier misses exactly the
+gap it exists to find. Precision simultaneously rises (0.778 to 0.857)
+because the falsifier's second nomination deliberately duplicates the
+boundary scientist's -- without the falsifier, no statement is
+double-paid. Second, removing the evidence auditor costs recall as well
+(1.000 to 0.857, F1 0.800): the provenance blindspot belonged to that
+seat. Third, removing lineage raises evidence independence from 0.667 to
+1.000 -- without dataset metadata, two papers that share a cohort are
+counted as independent evidence (CLAUDE.md 7.4's paper-count-vs-
+independent-cluster distinction), so the number the system reports about
+its own evidence quality is \emph{inflated by the absence of the
+mechanism that would correct it}. The dialectical-fold ablation cannot
+affect the blindspot metric but is visible in the honesty signal: the
+DebateCapsule disappears and the run records one additional unfilled
+slot rather than pretending the debate had no opposition -- dissent
+preservation is a property of the protocol, and its absence is reported,
+not hidden.
+
+Two ablations show no effect on this scripted material, and we report
+that plainly rather than manufacturing a difference: removing
+precommitment removes the seven PRECOMMITMENT\_SEALED events but leaves
+every score unchanged, and removing MemoBrain changes nothing either.
+This is the same structural boundary identified for the baseline ladder:
+the scripted gateway answers identically regardless of prompt, memory, or
+phase history, so protocol-level integration effects -- what precommitment
+changes about later reasoning, what per-seat memory changes about what a
+seat recalls -- are not observable without real models. The two ablations
+that do show effects (\emph{falsifier}, \emph{auditor}) do so because
+they remove a \emph{participant} with scripted content, not because the
+mechanism's behavioral consequences are being measured. The
+\emph{lineage} ablation shows an effect for the same reason: the strip
+changes the data the scoring function sees. We therefore treat the
+three effects as validated mechanism checks and the two null results as
+an identified measurement boundary, not as evidence that the two
+capabilities contribute nothing.
+
 \subsection{System Verification}
 
 Beyond the controlled comparison, Poliscope is verified end to end.
-The test suite comprises 642 unit tests and 290 integration tests over a
+The test suite comprises 714 unit tests and 359 integration tests over a
 real PostgreSQL instance with three database identities, including
 privilege tests that assert the application role cannot write the
 evidence graph and the projector role cannot rewrite the ledger -- the
@@ -592,12 +676,13 @@ The design's thesis is that reliable blindspot discovery is an
 organizational and governance problem, not a prompt problem: dissent must
 survive by construction, evidence must be audited by construction, and
 process must never become evidence by construction. The ForesightBlindspot
-protocol and the five-baseline comparison establish a measurement basis --
-with the caveat, reported openly, that scripted gateways make the
-protocol's integration-level contributions unobservable on the blindspot
-metric and that a time-sliced corpus with a held-out split, human
-annotation, and real-model controlled runs is the next step of this
-research program.
+protocol, the five-baseline comparison, and the six-variant ablation ladder
+establish a measurement basis -- with the caveat, reported openly, that
+scripted gateways make the protocol's integration-level contributions
+unobservable on the blindspot metric (two of the six ablations are null on
+this material for exactly that reason), and that a time-sliced corpus with
+a held-out split, human annotation, and real-model controlled runs is the
+next step of this research program.
 
 \section*{Acknowledgments}
 

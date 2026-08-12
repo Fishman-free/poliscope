@@ -234,6 +234,8 @@ class CouncilOrchestrator:
         acquirer: SourceAcquirer | None = None,
         finding_extractor: FindingExtractor | None = None,
         cancel_check: Callable[[], Awaitable[bool]] | None = None,
+        phases: tuple[TaskPhase, ...] | None = None,
+        dialectical_fold: bool = True,
     ) -> None:
         self._ledger = ledger
         self._budget = budget
@@ -244,6 +246,14 @@ class CouncilOrchestrator:
         self._memory = memory
         self._acquirer = acquirer
         self._finding_extractor = finding_extractor
+        # Evaluation-only protocol switches (design spec 11.4's ablation
+        # ladder): ``phases`` runs a subset of the protocol (None = all eight,
+        # which is every production caller), ``dialectical_fold`` turns the
+        # JOINT_MODELING DebateCapsule into a plain fold that keeps no
+        # opposition (True = the full system). Both default to the production
+        # behaviour so existing callers are untouched.
+        self._phases = phases
+        self._dialectical_fold = dialectical_fold
         self._run_started: float | None = None
         # Round-10 「停止研究」: polled between phases. When it returns True
         # the run halts at the next phase boundary with CANCELLED as the
@@ -376,7 +386,16 @@ class CouncilOrchestrator:
         # phases it still has left, not the ones already on the ledger.
         self._run_started = time.monotonic()
 
+        phases = self._phases if self._phases is not None else PHASE_SEQUENCE
         for phase in PHASE_SEQUENCE:
+            if phase not in phases:
+                # Evaluation-only phase subset (design spec 11.4's
+                # precommitment ablation): the state machine still advances
+                # through the excluded phase -- its strict "current + 1"
+                # rule holds -- but nothing runs and no event lands on the
+                # ledger for it. Production callers never pass ``phases``.
+                machine.transition_to(phase)
+                continue
             if phase in kept:
                 # Already-completed phases were fast-forwarded above and are
                 # not executed again -- their events and carried state are
@@ -604,6 +623,7 @@ class CouncilOrchestrator:
             output_language=output_language,
             guidance=council_guidance,
             paper_understanding=paper_understanding,
+            dialectical_fold=self._dialectical_fold,
         )
         try:
             outcome = await runner_for(phase)(context)

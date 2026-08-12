@@ -63,8 +63,7 @@ BLINDSPOT_KEYWORDS = (
 BLINDSPOTS_BY_SEAT: dict[str, tuple[tuple[str, str, str], ...]] = {
     Seat.THEORY_BUILDER.value: (
         (
-            "the biological mechanism linking screen time to depression "
-            "is untested",
+            "the biological mechanism linking screen time to depression is untested",
             "0.8",
             "0.7",
         ),
@@ -162,9 +161,7 @@ class DemoAcquirer(SourceAcquirer):
             )
         )
 
-    async def acquire_uploaded(
-        self, object_ids: tuple[UUID, ...]
-    ) -> AcquisitionResult:
+    async def acquire_uploaded(self, object_ids: tuple[UUID, ...]) -> AcquisitionResult:
         # Not exercised by the demo scenario -- see the module docstring.
         return AcquisitionResult()
 
@@ -175,6 +172,38 @@ class DemoAcquirer(SourceAcquirer):
         self, documents: tuple[object, ...]
     ) -> AcquisitionResult:
         return AcquisitionResult()
+
+
+class DemoAcquirerNoLineage(DemoAcquirer):
+    """Acquisition without lineage metadata (design spec 11.4 ablation).
+
+    Returns the same three sources with ``dataset_id`` stripped, so evidence
+    independence (CLAUDE.md 7.4) cannot see that two of them share a dataset --
+    exactly what a system with no lineage tracking would report: every source
+    looks independent. The full variant passes :class:`DemoAcquirer`; the
+    ``full_ablate_lineage`` ablation passes this one.
+    """
+
+    async def acquire(self, requests: list[tuple[Seat, str]]) -> AcquisitionResult:
+        result = await super().acquire(requests)
+        return AcquisitionResult(
+            acquired=tuple(
+                Acquired(
+                    source_id=item.source_id,
+                    doi=item.doi,
+                    title=item.title,
+                    evidence_level=item.evidence_level,
+                    already_known=item.already_known,
+                    authors=item.authors,
+                    dataset_id=None,
+                    object_id=item.object_id,
+                    document_id=item.document_id,
+                )
+                for item in result.acquired
+            ),
+            refused=result.refused,
+            unresolvable=result.unresolvable,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,9 +255,7 @@ class DemoFindingExtractor(FindingExtractor):
     async def extract(self, source_id: UUID, doi: str) -> Extraction:
         return self._by_doi[doi]
 
-    async def extract_uploaded(
-        self, source_id: UUID, object_id: UUID
-    ) -> Extraction:
+    async def extract_uploaded(self, source_id: UUID, object_id: UUID) -> Extraction:
         # Not exercised by the demo scenario -- see the module docstring.
         raise NotImplementedError
 
@@ -286,12 +313,19 @@ class DemoGateway:
                     ]
                 }
         elif phase is TaskPhase.JOINT_MODELING:
+            # The two required dialectical fields plus both optional ones, so
+            # the handler is ready and the full system folds a DebateCapsule
+            # (the plain-fold ablation then has something real to omit).
             payload = {
                 "boundary_conditions": [
                     "limited to adolescent samples in high-income countries."
                 ],
                 "unresolved_conflicts": [
                     "effect direction differs by gender in two cohorts."
+                ],
+                "strongest_opposition_refs": [str(uuid4())],
+                "falsification_conditions": [
+                    "a preregistered RCT with adequate power would falsify it."
                 ],
             }
         elif phase is TaskPhase.FINAL_REJUDGMENT:

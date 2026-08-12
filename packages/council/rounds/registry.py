@@ -382,6 +382,11 @@ class PhaseContext:
     # records an unfilled slot per newly acquired source instead of leaving a
     # Level B source with no StudyFinding attempt at all.
     finding_extractor: FindingExtractor | None = None
+    # Evaluation-only protocol switch (design spec 11.4): False folds the
+    # JOINT_MODELING debate without a Dialectical Fold -- the capsule that
+    # preserves opposition is skipped, exactly what the "plain Fold" ablation
+    # must measure. True is the production behaviour.
+    dialectical_fold: bool = True
     # Nodes quarantined in an earlier run of this task, loaded from the ledger
     # by the worker (see apps/worker/jobs.py::_quarantined_nodes). Empty for a
     # task with nothing quarantined yet -- Resurrect then has nothing to do.
@@ -1864,7 +1869,14 @@ async def run_joint_modeling(context: PhaseContext) -> PhaseOutcome:
         # consensus with no recorded boundary and no recorded conflict is not
         # a debate, it is an agreement, and CLAUDE.md 5.2 requires a Dialectical
         # Fold to preserve both -- there would be nothing to preserve.
-        if result.boundary_conditions and result.unresolved_conflicts:
+        # ``context.dialectical_fold`` is the design-spec 11.4 ablation: with
+        # it False the debate is folded without the capsule, so the opposition
+        # is not preserved anywhere (the "plain Fold" baseline to ablate).
+        if (
+            context.dialectical_fold
+            and result.boundary_conditions
+            and result.unresolved_conflicts
+        ):
             source_refs = tuple(
                 dict.fromkeys((*result.supporting_refs, *result.opposing_refs))
             )

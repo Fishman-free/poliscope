@@ -1,4 +1,4 @@
-"""ForesightBlindspot's five baselines, as configurations of the real council.
+"""ForesightBlindspot's baselines and ablations, as configurations of the real council.
 
 Design spec 11.3 asks for five points of comparison, not five separate
 implementations: Single-Agent Deep Research, Fixed Multi-Agent Debate,
@@ -7,6 +7,16 @@ the full Poliscope. Read as a progression, each adds exactly one capability
 over the last -- seat specialisation, then the shared protocol and per-seat
 memory, then the evidence gate -- so this module builds all five from the
 same three collaborators the production system already has:
+
+Design spec 11.4's ablation ladder is expressed the same way: six
+``full minus X`` variants (precommitment, adversarial falsifier, evidence
+auditor, dialectical fold, lineage, MemoBrain) that remove exactly one
+capability from the full system. They reuse the same configuration functions
+rather than duplicating the protocol. The lineage ablation strips
+``dataset_id`` off acquired sources, which the caller supplies by passing a
+lineage-free acquirer (``DemoAcquirerNoLineage``) -- scoring's evidence
+independence then cannot see shared datasets (CLAUDE.md 7.4), exactly what a
+system without lineage tracking would report.
 :class:`~packages.epistemo.orchestrator.CouncilOrchestrator`,
 :class:`~packages.council.deliberation.GatewayDeliberator`, and
 :class:`~packages.memory.council_memory.CouncilMemory`. Nothing here
@@ -38,6 +48,7 @@ from packages.council.rounds.registry import (
     SourceAcquirer,
 )
 from packages.epistemo.budget import BudgetTracker, ResearchBudget
+from packages.epistemo.contracts import PHASE_SEQUENCE, TaskPhase
 from packages.epistemo.orchestrator import (
     ORDERED_SEATS,
     CouncilOrchestrator,
@@ -61,13 +72,34 @@ from packages.models.contracts import ModelGateway
 
 
 class BaselineVariant(StrEnum):
-    """The five points on design spec 11.3's comparison ladder, ordered."""
+    """The five points on design spec 11.3's comparison ladder, ordered.
+
+    The six ``ABLATE_*`` members are design spec 11.4's ablation ladder:
+    each removes exactly one capability from the full system, so the contrast
+    with :attr:`FULL_POLISCOPE` isolates that capability's contribution.
+    """
 
     SINGLE_AGENT = "single_agent_deep_research"
     FIXED_DEBATE = "fixed_multi_agent_debate"
     COUNCIL_LINEAR_CONTEXT = "council_linear_context"
     COUNCIL_MEMOBRAIN_NO_GATE = "council_memobrain_no_evidence_engine"
     FULL_POLISCOPE = "full_poliscope"
+    # Ablations of the full system (CLAUDE.md 13 优先消融). Naming is
+    # "full minus X" for every one.
+    ABLATE_PRECOMMITMENT = "full_ablate_precommitment"
+    ABLATE_FALSIFIER = "full_ablate_adversarial_falsifier"
+    ABLATE_AUDITOR = "full_ablate_evidence_auditor"
+    ABLATE_DIALECTICAL_FOLD = "full_ablate_dialectical_fold"
+    ABLATE_LINEAGE = "full_ablate_lineage"
+    ABLATE_MEMOBRAIN = "full_ablate_memobrain"
+
+
+# The six ablations all keep the evidence gate: they remove one capability
+# each, not the whole gate -- that rung already exists as
+# COUNCIL_MEMOBRAIN_NO_GATE.
+ABLATIONS: frozenset[BaselineVariant] = frozenset(
+    variant for variant in BaselineVariant if variant.value.startswith("full_ablate_")
+)
 
 
 class SharedLinearMemoryAdapter:
@@ -184,14 +216,23 @@ class EvalLedger:
 
 
 def _gate_for(variant: BaselineVariant) -> FullEvidenceGate | None:
-    """Only the full system gates. Every earlier rung is ungated by design."""
-    return FullEvidenceGate() if variant is BaselineVariant.FULL_POLISCOPE else None
+    """The full system and every ablation gate. Earlier rungs are ungated."""
+    if variant is BaselineVariant.FULL_POLISCOPE or variant in ABLATIONS:
+        return FullEvidenceGate()
+    return None
 
 
 def _memory_for(variant: BaselineVariant, task_id: UUID) -> CouncilMemory | None:
     if variant in (BaselineVariant.SINGLE_AGENT, BaselineVariant.FIXED_DEBATE):
         return None
     if variant is BaselineVariant.COUNCIL_LINEAR_CONTEXT:
+        return CouncilMemory(SharedLinearMemoryAdapter(), task_id)
+    if variant is BaselineVariant.ABLATE_MEMOBRAIN:
+        # Full council structure and gate, but per-seat private memory is
+        # replaced by one undifferentiated transcript -- the "no MemoBrain"
+        # ablation. (COUNCIL_LINEAR_CONTEXT also uses this adapter, but that
+        # rung additionally drops the evidence gate; this ablation drops only
+        # the memory.)
         return CouncilMemory(SharedLinearMemoryAdapter(), task_id)
     return CouncilMemory(create_memory_adapter(), task_id)
 
@@ -209,7 +250,27 @@ def _seats_for(variant: BaselineVariant) -> tuple[Seat, ...]:
     # one generic mechanism blindspot.
     if variant is BaselineVariant.SINGLE_AGENT:
         return (Seat.THEORY_BUILDER,)
+    if variant is BaselineVariant.ABLATE_FALSIFIER:
+        return tuple(
+            seat for seat in ORDERED_SEATS if seat is not Seat.ADVERSARY_FALSIFIER
+        )
+    if variant is BaselineVariant.ABLATE_AUDITOR:
+        return tuple(
+            seat for seat in ORDERED_SEATS if seat is not Seat.EVIDENCE_AUDITOR
+        )
     return ORDERED_SEATS
+
+
+def _phases_for(variant: BaselineVariant) -> tuple[TaskPhase, ...] | None:
+    """None runs the full protocol; the precommitment ablation skips it."""
+    if variant is BaselineVariant.ABLATE_PRECOMMITMENT:
+        return tuple(PHASE_SEQUENCE[1:])
+    return None
+
+
+def _dialectical_fold_for(variant: BaselineVariant) -> bool:
+    """True keeps the DebateCapsule; the plain-fold ablation drops it."""
+    return variant is not BaselineVariant.ABLATE_DIALECTICAL_FOLD
 
 
 def generic_debate_deliberator(
@@ -286,6 +347,8 @@ async def run_baseline(
         memory=_memory_for(variant, resolved_task_id),
         acquirer=acquirer,
         finding_extractor=finding_extractor,
+        phases=_phases_for(variant),
+        dialectical_fold=_dialectical_fold_for(variant),
     )
     report = await orchestrator.run(
         resolved_task_id, question, confirmed_claims=confirmed_claims
@@ -300,6 +363,7 @@ async def run_baseline(
 
 
 __all__ = [
+    "ABLATIONS",
     "BaselineOutcome",
     "BaselineVariant",
     "EvalLedger",
