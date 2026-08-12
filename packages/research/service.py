@@ -10,15 +10,27 @@ would let the council pick its own question.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from uuid import UUID
+from datetime import date
+from decimal import Decimal
+from uuid import UUID, uuid4
 
 from packages.epistemo.contracts import (
     CouncilCheckpoint,
     TaskStatus,
     first_unfinished_phase,
 )
-from packages.research.atomization import suggest_atomic_claims
-from packages.research.contracts import ResearchContract
+from packages.evidence.contracts import ClaimType
+from packages.research.atomization import (
+    AtomicClaimCandidate,
+    suggest_atomic_claims,
+)
+from packages.research.contracts import (
+    ResearchBudget,
+    ResearchContract,
+    ResearchScope,
+    TaskModelConfig,
+    UserEvidenceInput,
+)
 from packages.research.repository import (
     CLAIM_CONFIRMED,
     ResearchRepository,
@@ -199,6 +211,93 @@ class ResearchService:
         await self._repository.set_checkpoint(task_id, None)
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
+
+    async def rerun_fresh(
+        self,
+        task_id: UUID,
+        created_by: str,
+        user_id: UUID | None = None,
+    ) -> UUID:
+        """「从头研究」(round-13): start a brand-new task from PRECOMMITMENT.
+
+        Re-running *the same task* from the start cannot be a true restart:
+        the ledger's idempotency keys are derived from phase and seat, not
+        from the run, so a fresh pass's events would be swallowed as no-ops by
+        the previous run's rows -- the council would be re-polled and the
+        researcher would still see the old round's evidence. The only honest
+        "start over" is a new task: fresh ledger, fresh evidence graph, fresh
+        process stream, same question, same scope, same confirmed atomic
+        claims (copied with new ids), same budget and model configuration.
+        The original task is left untouched as audit history.
+
+        The fresh task goes straight to QUEUED -- the researcher already
+        confirmed these claims once; re-confirming a copy would be ceremony
+        without a decision.
+        """
+        task = await self._repository.get_task(task_id, user_id=user_id)
+        if task.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            raise InvalidPauseState(
+                f"task {task_id} is {task.status}, not {TaskStatus.FAILED} or "
+                f"{TaskStatus.CANCELLED}; a fresh rerun starts from a task "
+                "that ended in failure or was stopped"
+            )
+        scope = await self._repository.get_scope(task_id)
+        if scope is None:
+            # Legacy row with no research_scopes entry: a permissive default
+            # rather than inventing a scope the researcher never set.
+            scope = ResearchScope(
+                populations=(),
+                regions=(),
+                languages=(),
+                date_from=None,
+                date_until=date.today(),
+                evidence_priorities=(),
+                allow_preprints=True,
+            )
+        contract = ResearchContract(
+            question=task.question,
+            scope=scope,
+            budget=ResearchBudget(
+                wall_clock_minutes=task.wall_clock_minutes,
+                model_cost_usd=Decimal(task.model_cost_usd),
+                tool_call_limit=task.tool_call_limit,
+                source_limit=task.source_limit,
+            ),
+            user_evidence=UserEvidenceInput.model_validate(task.user_evidence or {}),
+            task_model_config=(
+                TaskModelConfig.model_validate(task.model_config)
+                if task.model_config is not None
+                else None
+            ),
+            knowledge_base_id=task.knowledge_base_id,
+            skill_ids=task.skill_ids,
+            output_language=task.output_language,
+            task_type=task.task_type,
+        )
+        claims = await self._repository.list_claims(task_id)
+        confirmed = tuple(c for c in claims if c.status == CLAIM_CONFIRMED)
+        if not confirmed:
+            raise UnconfirmedClaims(
+                "the source task has no confirmed atomic claims to rerun"
+            )
+        candidates = tuple(
+            AtomicClaimCandidate(
+                claim_id=uuid4(),
+                statement=claim.statement,
+                claim_type=ClaimType(claim.claim_type),
+                scope={key: str(value) for key, value in claim.scope.items()},
+                falsification_condition=claim.falsification_condition,
+            )
+            for claim in confirmed
+        )
+        fresh_id = await self._repository.create_task(
+            contract, candidates, created_by, user_id=user_id
+        )
+        await self._repository.confirm_claims(
+            fresh_id, tuple(candidate.claim_id for candidate in candidates)
+        )
+        await self._repository.set_status(fresh_id, TaskStatus.QUEUED)
+        return fresh_id
 
     async def cancel(self, task_id: UUID, requested_by: str = "researcher") -> str:
         """Stop a task: QUEUED/PAUSED directly, RUNNING via the side channel.

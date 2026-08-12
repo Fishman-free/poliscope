@@ -436,6 +436,21 @@ export function reResearch(
   );
 }
 
+/** 「从头研究」（round-13）: the only true restart. Re-running the same task
+ * cannot start over -- its ledger idempotency keys derive from phase and
+ * seat, so a fresh pass's events would be swallowed by the previous run's
+ * rows. The server therefore creates a brand-new task (fresh ledger and
+ * evidence graph) carrying over the question, scope, confirmed claims,
+ * budget and model config; this returns the new task id to open. */
+export function rerunFresh(
+  taskId: string,
+): Promise<{ task_id: string; status: string; source_task_id: string }> {
+  return postJson<{ task_id: string; status: string; source_task_id: string }>(
+    `/api/tasks/${taskId}/rerun-fresh`,
+    {},
+  );
+}
+
 /** 「继续研究」: move a PAUSED task back to QUEUED so a worker can claim it
  * again. The requeue path is proven idempotent server-side (already-run
  * phases replay as no-ops via stable idempotency keys), so resuming is safe. */

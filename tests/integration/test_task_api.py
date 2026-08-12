@@ -259,6 +259,64 @@ async def test_re_research_unknown_task_returns_404(
     ).status_code == 404
 
 
+async def test_rerun_fresh_creates_a_brand_new_queued_task(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """从头研究（round-13）：不是把原任务重新入队，而是创建**全新任务**
+    ——新 task_id、直接 QUEUED、继承问题——从独立预承诺真正重新开始。"""
+    created = await _create(api_client)
+    task_id = created["task_id"]
+    chosen = created["suggested_claims"][0]["id"]
+    await api_client.post(
+        f"/api/tasks/{task_id}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(status=TaskStatus.FAILED)
+        )
+        await session.commit()
+
+    response = await api_client.post(f"/api/tasks/{task_id}/rerun-fresh")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    fresh_id = body["task_id"]
+    assert fresh_id != task_id
+    assert body["source_task_id"] == task_id
+    assert body["status"] == TaskStatus.QUEUED
+
+    readback = await api_client.get(f"/api/tasks/{fresh_id}")
+    assert readback.status_code == 200, readback.text
+    assert readback.json()["question"] == _contract_payload()["question"]
+    assert readback.json()["status"] == TaskStatus.QUEUED
+
+    # 原任务仍是 FAILED —— 从头研究保留审计历史，不动旧任务。
+    original = await api_client.get(f"/api/tasks/{task_id}")
+    assert original.json()["status"] == TaskStatus.FAILED
+
+
+async def test_rerun_fresh_refused_for_non_failed_task(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """A task that is not FAILED/CANCELLED cannot start a fresh rerun (409)."""
+    created = await _create(api_client)
+    response = await api_client.post(
+        f"/api/tasks/{created['task_id']}/rerun-fresh"
+    )
+    assert response.status_code == 409
+
+
+async def test_rerun_fresh_unknown_task_returns_404(
+    api_client: httpx.AsyncClient,
+) -> None:
+    assert (
+        await api_client.post(f"/api/tasks/{uuid4()}/rerun-fresh")
+    ).status_code == 404
+
+
 async def test_an_invalid_contract_is_rejected_with_422(
     api_client: httpx.AsyncClient,
 ) -> None:

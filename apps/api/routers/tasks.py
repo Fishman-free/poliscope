@@ -32,6 +32,7 @@ from apps.api.schemas import (
 )
 from apps.api.task_lifecycle import delete_task_cascade
 from packages.accounts.repository import StoredUser
+from packages.epistemo.contracts import TaskStatus
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
 from packages.models.endpoint_config import normalize_base_url
 from packages.models.free_trial import (
@@ -827,6 +828,46 @@ async def re_research_task(
             detail=str(error),
         ) from error
     return {"task_id": str(task_id), "status": new_status}
+
+
+@router.post("/{task_id}/rerun-fresh")
+async def rerun_fresh_task(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """「从头研究」(round-13): start a genuinely fresh task from PRECOMMITMENT.
+
+    Re-running the *same* task from the start cannot be a true restart: the
+    ledger's idempotency keys derive from phase and seat, so the previous
+    run's events would swallow the new pass's as no-ops -- the council would
+    be re-polled but the researcher would still see the old round's evidence.
+    This endpoint creates a brand-new task (fresh ledger, fresh evidence
+    graph, fresh process stream) carrying over the question, scope, budget,
+    confirmed atomic claims, model configuration, and uploaded paper
+    references. The original task stays untouched as audit history. The fresh
+    task is queued immediately -- the researcher already confirmed these
+    claims once, and the result is its own new task id the client opens.
+    """
+    await _owned_task(session, task_id, current_user)
+    try:
+        fresh_id = await _service(session).rerun_fresh(
+            task_id,
+            created_by=current_user.username,
+            user_id=current_user.id,
+        )
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
+    except (InvalidPauseState, UnconfirmedClaims) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+    return {
+        "task_id": str(fresh_id),
+        "status": TaskStatus.QUEUED,
+        "source_task_id": str(task_id),
+    }
 
 
 @router.post("/{task_id}/cancel")

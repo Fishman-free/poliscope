@@ -558,7 +558,7 @@ export const en: Record<string, string> = {
   "从断点处研究": "Restart from the first gap",
   "从第一个未完成（失败或跳过）的阶段重新执行，已完成阶段原样保留；没有断点时自动从头研究。": "Re-runs from the first unfinished (failed or skipped) phase; completed phases stay as they are; with no recorded gap this falls back to a full restart.",
   "从头研究": "Restart from scratch",
-  "整个研究过程从预承诺阶段开始重新执行。": "The whole protocol re-runs from the precommitment phase.",
+  "创建全新一轮研究，从独立预承诺真正重新开始（全新账本与证据图，原任务保留为历史）。": "Starts a brand-new round of research from the precommitment phase — a fresh ledger and evidence graph, with the original task kept as history.",
   "关闭": "Close",
   "各方观点与缺陷": "Positions and their weaknesses",
   "每一方的立场、其薄弱之处与支撑证据——争议不被折叠成单一声音。": "Each side's position, its weakness, and the evidence it leans on -- disagreement is not folded into one voice.",

@@ -18,7 +18,7 @@
 import { flushSync } from "react-dom";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout, reResearch, resumeTask } from "./api/client";
+import { cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout, reResearch, rerunFresh, resumeTask } from "./api/client";
 import type { ResearchBrief, TaskSummary } from "./api/types";
 import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
@@ -533,9 +533,21 @@ export function App() {
     (mode: "full" | "first_gap") => {
       const target = rerunTarget;
       setRerunTarget(null);
-      if (target) void runMutation(target, (id) => reResearch(id, mode));
+      if (!target) return;
+      if (mode === "full") {
+        // round-13 「从头研究」：同一任务无法真正重来——账本幂等键按
+        // 阶段/席位派生，旧一轮的事件会吞掉新一轮（模型重新征询但结果
+        // 写不进去）。服务器创建一个全新任务（全新账本与证据图、继承
+        // 问题/范围/确认主张/预算/模型配置），完成后直接打开新任务。
+        void runMutation(target, async (id) => {
+          const fresh = await rerunFresh(id);
+          open(fresh.task_id);
+        });
+      } else {
+        void runMutation(target, (id) => reResearch(id, mode));
+      }
     },
-    [rerunTarget, runMutation],
+    [rerunTarget, runMutation, open],
   );
 
   const handleRerunCancel = useCallback(() => setRerunTarget(null), []);

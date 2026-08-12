@@ -376,3 +376,71 @@ async def test_re_research_first_gap_with_gap_marks_restart_from(
     assert restored.restart_from == "EVIDENCE_EXCHANGE"
     assert restored.failures == ("EVIDENCE_EXCHANGE: ValueError('boom')",)
     await app_session.rollback()
+
+
+async def test_rerun_fresh_creates_a_brand_new_queued_task(
+    app_session: AsyncSession,
+) -> None:
+    """从头研究（round-13）：创建全新任务，从独立预承诺真正重新开始。
+
+    新任务拿到新 id 并直接 QUEUED；问题/范围/预算/模型配置/语言/技能原样
+    继承；只复制**已确认**的主张（被丢弃的主张不进入新一轮，其审计留在
+    原任务）；原任务保持 FAILED 作为历史。
+    """
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    all_claims = created.suggested_claims
+    chosen = all_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_status(created.task_id, TaskStatus.FAILED)
+    original = await service.get_task(created.task_id)
+
+    fresh_id = await service.rerun_fresh(created.task_id, created_by="api")
+
+    assert fresh_id != created.task_id
+    fresh = await service.get_task(fresh_id)
+    assert fresh.status == TaskStatus.QUEUED
+    assert fresh.question == original.question
+    assert fresh.task_type == original.task_type
+    assert fresh.model_config == original.model_config
+    assert fresh.output_language == original.output_language
+    assert fresh.skill_ids == original.skill_ids
+
+    fresh_claims = await service.suggested_claims(fresh_id)
+    # 新主张 id（全新任务，绝不与旧主张共享标识），内容来自已确认主张，
+    # 且全部处于 CONFIRMED（新一轮无需再次确认）。
+    assert {claim.claim_id for claim in fresh_claims} != {
+        claim.claim_id for claim in all_claims
+    }
+    assert [claim.statement for claim in fresh_claims] == [
+        claim.statement for claim in all_claims if claim.claim_id == chosen
+    ]
+    assert all(claim.status == CLAIM_CONFIRMED for claim in fresh_claims)
+
+    # 原任务保持 FAILED —— 从头研究不触碰审计历史。
+    assert (await service.get_task(created.task_id)).status == TaskStatus.FAILED
+    await app_session.rollback()
+
+
+async def test_rerun_fresh_refused_for_a_non_terminal_task(
+    app_session: AsyncSession,
+) -> None:
+    """非 FAILED/CANCELLED 的任务不能被从头研究（409 的领域层对应）。"""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    with pytest.raises(InvalidPauseState):
+        await service.rerun_fresh(created.task_id, created_by="api")
+    await app_session.rollback()
+
+
+async def test_rerun_fresh_without_confirmed_claims_is_refused(
+    app_session: AsyncSession,
+) -> None:
+    """没有已确认主张的任务没有可继承的研究范围，拒绝而非伪造。"""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    await service._repository.set_status(created.task_id, TaskStatus.FAILED)
+    with pytest.raises(UnconfirmedClaims):
+        await service.rerun_fresh(created.task_id, created_by="api")
+    await app_session.rollback()

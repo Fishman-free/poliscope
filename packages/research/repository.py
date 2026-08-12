@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -24,7 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.epistemo.contracts import TaskStatus
 from packages.research.atomization import AtomicClaimCandidate
-from packages.research.contracts import ResearchContract
+from packages.research.contracts import (
+    EvidenceDemandType,
+    ResearchContract,
+    ResearchScope,
+)
 from packages.research.models import (
     AtomicClaimModel,
     ResearchScopeModel,
@@ -84,6 +89,16 @@ class StoredTask:
     # filled by get_task -- the API's paper-review guard and the worker's
     # understanding step both need it.
     user_evidence: dict[str, Any] | None = None
+    # Round-13 「从头研究」: the budget dimensions and run language/skills are
+    # needed to rebuild a ResearchContract for the fresh task, so get_task
+    # fills them (list_tasks keeps its lightweight summary and leaves the
+    # defaults).
+    wall_clock_minutes: int = 0
+    model_cost_usd: Decimal = Decimal("0")
+    tool_call_limit: int = 0
+    source_limit: int = 0
+    output_language: str = "auto"
+    skill_ids: tuple[UUID, ...] = ()
 
 
 class TaskNotFound(Exception):
@@ -204,6 +219,40 @@ class ResearchRepository:
             updated_at=row.updated_at,
             task_type=row.task_type,
             user_evidence=row.user_evidence,
+            wall_clock_minutes=row.wall_clock_minutes,
+            model_cost_usd=row.model_cost_usd,
+            tool_call_limit=row.tool_call_limit,
+            source_limit=row.source_limit,
+            output_language=row.output_language,
+            skill_ids=tuple(row.skill_ids or ()),
+        )
+
+    async def get_scope(self, task_id: UUID) -> ResearchScope | None:
+        """Read the task's research scope, or None for a legacy row without one.
+
+        The scope lives in its own table (``research_scopes``) and every task
+        created through ``create_task`` has one, so None only occurs for rows
+        written outside that path -- the caller falls back to a permissive
+        default rather than guessing (round-13 「从头研究」 rebuilds the
+        contract from the stored task).
+        """
+        row = await self._session.scalar(
+            select(ResearchScopeModel).where(
+                ResearchScopeModel.task_id == task_id
+            )
+        )
+        if row is None:
+            return None
+        return ResearchScope(
+            populations=tuple(row.populations or ()),
+            regions=tuple(row.regions or ()),
+            languages=tuple(row.languages or ()),
+            date_from=row.date_from,
+            date_until=row.date_until,
+            evidence_priorities=tuple(
+                EvidenceDemandType(item) for item in (row.evidence_priorities or ())
+            ),
+            allow_preprints=row.allow_preprints,
         )
 
     async def list_tasks(

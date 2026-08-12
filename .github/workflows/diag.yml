@@ -1,0 +1,68 @@
+# 一次性诊断 workflow：收集盲点悬赏「卡死」的服务器事实。
+#
+# 用法：push 后 `gh workflow run diag.yml`，然后 `gh run watch`。
+# 输出 worker 日志、任务状态、模型配置（只取 base_url/model_name，
+# 绝不输出 api_key）、进程事件流与取消请求，供定位根因。
+name: Diag
+
+on:
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect server facts over SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          for i in 1 2 3 4 5; do
+            if ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "ssh-keyscan ok"
+              break
+            fi
+            sleep 5
+          done
+          ssh -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            "$SERVER_USER@$SERVER_HOST" 'bash -s' << 'EOF'
+            set -x
+            cd /opt/poliscope || exit 1
+            echo "===== compose ps ====="
+            docker compose ps --format '{{.Name}} | {{.Status}}'
+            echo "===== worker recent logs (grep-worthy) ====="
+            docker compose logs --tail 400 worker 2>&1 | tail -250
+            echo "===== api recent errors ====="
+            docker compose logs --tail 200 api 2>&1 | grep -iE "error|traceback|timeout|exception" | tail -40 || true
+            echo "===== task status + model config (no keys) ====="
+            docker compose exec -T postgres psql -U poliscope_admin -d poliscope -c \
+              "SELECT left(question, 40) AS question, status, task_type,
+                      model_config->>'base_url' AS base_url,
+                      model_config->>'model_name' AS model_name,
+                      now() - created_at AS age,
+                      now() - updated_at AS since_update
+               FROM research_tasks ORDER BY created_at DESC LIMIT 12;"
+            echo "===== recent process stream (per task) ====="
+            docker compose exec -T postgres psql -U poliscope_admin -d poliscope -c \
+              "SELECT left(task_id::text, 8) AS task, kind, count(*) AS n, max(created_at) AS last
+               FROM process_stream
+               WHERE created_at > now() - interval '2 hours'
+               GROUP BY 1, 2 ORDER BY last DESC LIMIT 40;" 2>&1 || true
+            echo "===== open cancel requests ====="
+            docker compose exec -T postgres psql -U poliscope_admin -d poliscope -c \
+              "SELECT * FROM task_cancel_requests ORDER BY created_at DESC LIMIT 10;" 2>&1 || true
+            echo "===== event ledger recent phase events ====="
+            docker compose exec -T postgres psql -U poliscope_admin -d poliscope -c \
+              "SELECT left(task_id::text, 8) AS task, event_type,
+                      payload->>'phase' AS phase, created_at
+               FROM scientific_events
+               WHERE event_type IN ('PHASE_STARTED','PHASE_COMPLETED','PHASE_FAILED','PHASE_SKIPPED')
+                 AND created_at > now() - interval '4 hours'
+               ORDER BY created_at DESC LIMIT 40;" 2>&1 || true
+          EOF
