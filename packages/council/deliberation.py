@@ -158,6 +158,10 @@ PHASE_INSTRUCTIONS: dict[TaskPhase, str] = {
         "to a DOI.\n"
         "5. An empty requests list is correct when you need no further "
         "evidence; never invent requests to fill the schema.\n"
+        "6. Every search phrase MUST be English academic keywords (even when "
+        "the rest of your output is Chinese). Never attach a Chinese essay, "
+        "a claim UUID, or an unrelated domain (power plants, bidding, "
+        "instrumentation, nuclear) just because a word overlaps.\n"
     ),
 }
 
@@ -206,8 +210,18 @@ def _system_prompt(seat: Seat, phase: TaskPhase, output_language: str = "en") ->
 def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     lines = [f"Research question: {context.question}"]
     if context.confirmed_claims:
-        joined = ", ".join(str(claim) for claim in context.confirmed_claims)
-        lines.append(f"Confirmed atomic claims: {joined}")
+        statements = context.claim_statements
+        if statements:
+            lines.append("Confirmed atomic claims:")
+            for claim_id in context.confirmed_claims:
+                text = statements.get(claim_id)
+                if text:
+                    lines.append(f"- {text}")
+                else:
+                    lines.append(f"- {claim_id}")
+        else:
+            joined = ", ".join(str(claim) for claim in context.confirmed_claims)
+            lines.append(f"Confirmed atomic claims: {joined}")
     # This seat's own recall only. Handing a seat the whole council's memory
     # would collapse the seven private states CLAUDE.md 3 requires into one.
     private = context.recall.get(seat, "")
@@ -301,8 +315,25 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     # reads it (it lives in `carried`, not in any event payload). The value
     # is a tuple of dicts, or of FrozenDicts once a checkpoint has frozen it;
     # both are Mappings, so one rendering path covers both shapes.
+    # Knowledge hits and skills are process context. They are expensive and
+    # only change the rounds that actually retrieve or judge; later phases
+    # already carry a compressed recall of what happened.
+    _SKILL_PHASES = {
+        TaskPhase.PRECOMMITMENT,
+        TaskPhase.ACQUISITION,
+        TaskPhase.CROSS_EXAMINATION,
+        TaskPhase.FINAL_REJUDGMENT,
+    }
+    _PAPER_PHASES = {
+        TaskPhase.ACQUISITION,
+        TaskPhase.EVIDENCE_EXCHANGE,
+        TaskPhase.CROSS_EXAMINATION,
+        TaskPhase.FINAL_REJUDGMENT,
+    }
     kb_hits = context.carried.get("knowledge_base_context")
-    if isinstance(kb_hits, (list, tuple)):
+    if context.phase is not TaskPhase.PRECOMMITMENT and isinstance(
+        kb_hits, (list, tuple)
+    ):
         for raw in kb_hits:
             if not isinstance(raw, Mapping):
                 continue
@@ -319,18 +350,19 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     # labelled explicitly as non-evidence process context -- it never supports
     # or refutes a claim, and the Evidence Gate never reads it (it lives on
     # the PhaseContext, not in any event payload).
-    for name, markdown in context.researcher_skills:
-        if markdown.strip():
-            lines.append(
-                f"【研究者提供的技能指令（非正式证据，来源：{name}）】{markdown}"
-            )
+    if context.phase in _SKILL_PHASES:
+        for name, markdown in context.researcher_skills:
+            if markdown.strip():
+                lines.append(
+                    f"【研究者提供的技能指令（非正式证据，来源：{name}）】{markdown}"
+                )
     # Round-7 paper-review tasks: the machine's reading of the uploaded paper
     # (see packages/papers/understanding.py), injected so the seven seats
     # critique the paper's actual claims and evidence. Explicitly labelled as
     # non-evidence process context, exactly like the knowledge-base hits and
     # skills above: the paper's own extracted text is the Level A evidence
     # (acquired via acquire_uploaded), this summary only orients the seats.
-    if context.paper_understanding:
+    if context.paper_understanding and context.phase in _PAPER_PHASES:
         understanding = context.paper_understanding
         lines.append(
             "【论文理解（研究者上传论文的机器摘要，非正式证据；"

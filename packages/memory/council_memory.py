@@ -21,7 +21,10 @@ from packages.memory.contracts import Episode, MemoryAdapter
 # How much recall a seat gets in one prompt. Small on purpose: recall competes
 # with the evidence projection for the same context, and CLAUDE.md 6 wants the
 # scientific skeleton preserved rather than the transcript replayed.
-DEFAULT_RECALL_BUDGET = 2000
+# Character budget, not tokenizer tokens (InMemoryMemoryAdapter slices).
+# 800 keeps the scientific skeleton (current task + last few phase summaries)
+# without replaying a growing transcript into every later seat prompt.
+DEFAULT_RECALL_BUDGET = 800
 
 
 def agent_id(task_id: UUID, seat: Seat) -> str:

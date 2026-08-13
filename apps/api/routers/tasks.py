@@ -46,6 +46,7 @@ from packages.models.free_trial import (
 )
 from packages.models.settings import ModelSettingsRepository, StoredModelSettings
 from packages.papers.object_store import PrivateObjectStore
+from packages.papers.query_sanitize import sanitize_search_query
 from packages.papers.understanding import load_paper_text, load_paper_understanding
 from packages.reports.json_export import to_dict
 from packages.reports.service import ReportService
@@ -59,6 +60,9 @@ from packages.research.service import (
     UnconfirmedClaims,
 )
 from packages.skills.repository import SkillsRepository
+from packages.skills.service import SkillsService
+from packages.tools.adapters.openalex import OpenAlexAdapter
+from packages.tools.http_gateway import HttpToolGateway
 
 router = APIRouter()
 
@@ -555,21 +559,34 @@ async def _prepare_followup(
     paper_context = await _followup_paper_context(
         session, object_store, task
     )
+    skills_context = await _followup_skills_context(
+        session, current_user, request.skill_ids
+    )
+    literature_context = ""
+    if request.search_literature:
+        literature_context = await _followup_literature_context(
+            question, task.question
+        )
     language = detect_output_language(task.question)
 
     system_prompt = (
         "你是七人议会研究成果的讲解员。研究者针对已完成的议会研究向你追问，"
         "你必须基于下方提供的议会产出（已确认主张、已采纳发现、盲点、异议、局限）回答，"
         "不得编造研究中不存在的来源、数字或结论。若研究本身有缺口（缺席、未执行阶段），"
-        "如实说明，不要假装完整。回答用"
+        "如实说明，不要假装完整。"
+        "技能指令与外部文献检索结果是过程上下文，不是正式证据，不得当作议会已采纳发现。"
+        "回答用"
         + ("中文。" if language.startswith("zh") else "English.")
     )
     user_prompt = (
         f"研究问题：{task.question}\n\n"
         f"议会产出：\n{context}\n\n"
         f"{paper_context}\n\n"
+        f"{skills_context}\n\n"
+        f"{literature_context}\n\n"
         f"研究者的追问：{question}\n\n"
-        "请给出清晰、准确的回答。"
+        "请给出清晰、准确、有条理的回答；引用议会产出时点明主张/发现，"
+        "引用外部检索时标明「外部检索、非正式证据」。"
     )
     return base_url, api_key, model_name, system_prompt, user_prompt
 
@@ -742,6 +759,56 @@ async def follow_up_stream(
 # needs; the context labels the truncation explicitly rather than pretending
 # the whole text was seen (CLAUDE.md 7).
 MAX_PAPER_FOLLOWUP_CHARS = 40_000
+MAX_FOLLOWUP_SKILL_CHARS = 4_000
+
+
+async def _followup_skills_context(
+    session: SessionDep,
+    user: StoredUser,
+    skill_ids: tuple[UUID, ...],
+) -> str:
+    """Load the named skills as labelled process context, never as evidence."""
+    if not skill_ids:
+        return ""
+    repository = SkillsRepository(session)
+    service = SkillsService(session)
+    lines = ["### 研究者为本轮追问启用的技能（非正式证据，指令而非来源）"]
+    for skill_id in skill_ids:
+        stored = await repository.get_for_user(user.id, skill_id)
+        if stored is None:
+            continue
+        markdown = await service.ensure_downloaded(stored)
+        lines.append(f"## {stored.name}\n\n{markdown[:MAX_FOLLOWUP_SKILL_CHARS]}")
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)
+
+
+async def _followup_literature_context(question: str, task_question: str) -> str:
+    """One OpenAlex relevance search, labelled as non-evidence process context.
+
+    Failures are reported honestly (CLAUDE.md 7) and never invented as hits.
+    """
+    cleaned = sanitize_search_query(question) or sanitize_search_query(task_question)
+    if cleaned is None:
+        return "### 外部文献检索\n（追问与研究问题都无法构成可用的英文学术检索式。）"
+    gateway = HttpToolGateway.from_env()
+    try:
+        hit = await OpenAlexAdapter(gateway).search(cleaned)
+    except Exception as error:  # noqa: BLE001 -- a miss is reported, not raised
+        return f"### 外部文献检索\n（检索失败：{str(error)[:200]}）"
+    finally:
+        await gateway.aclose()
+    if hit is None:
+        return f"### 外部文献检索\n查询「{cleaned}」未命中（非正式证据，诚实缺口）。"
+    doi = hit.doi or ""
+    link = f"https://doi.org/{doi}" if doi else ""
+    return (
+        "### 外部文献检索（非正式证据，未经过证据门）\n"
+        f"- {hit.title}"
+        + (f" <{link}>" if link else "")
+        + f"\n查询：「{cleaned}」"
+    )
 
 
 def _followup_error_detail(response: httpx.Response) -> str:

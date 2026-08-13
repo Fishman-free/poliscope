@@ -137,6 +137,12 @@ class FollowUpRequest(ContractModel):
     """
 
     question: str = ""
+    # Optional skills the researcher wants applied to this one answer
+    # (same SKILL.md texts the council already knows; never evidence).
+    skill_ids: tuple[UUID, ...] = ()
+    # When true, one OpenAlex relevance search is appended as labelled
+    # process context -- not a new Source, never Evidence Graph input.
+    search_literature: bool = False
 
 
 class ReResearchRequest(ContractModel):

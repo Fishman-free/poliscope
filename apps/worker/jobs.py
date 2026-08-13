@@ -238,6 +238,29 @@ async def _confirmed_claim_ids(
     return tuple(canonical_uuid(value) for value in result.scalars())
 
 
+async def _confirmed_claim_statements(
+    session: AsyncSession,
+    task_id: UUID,
+) -> dict[UUID, str]:
+    """Map confirmed claim ids to their statement text.
+
+    Adversarial retrieval builds English search phrases from the statement
+    (not the UUID). Empty when the task has no confirmed claims.
+    """
+    result = await session.execute(
+        select(AtomicClaimModel.id, AtomicClaimModel.statement)
+        .where(
+            AtomicClaimModel.task_id == task_id,
+            AtomicClaimModel.status == CLAIM_CONFIRMED,
+        )
+        .order_by(AtomicClaimModel.created_at, AtomicClaimModel.id)
+    )
+    return {
+        canonical_uuid(row.id): str(row.statement)
+        for row in result.all()
+    }
+
+
 async def _quarantined_nodes(
     session: AsyncSession,
     task_id: UUID,
@@ -598,6 +621,7 @@ async def _deliberate_impl(
             task_id=task_id,
             question=task.question,
             confirmed_claims=await _confirmed_claim_ids(session, task_id),
+            claim_statements=await _confirmed_claim_statements(session, task_id),
             quarantined=await _quarantined_nodes(session, task_id),
             pdf_object_ids=_pdf_object_ids(task),
             user_dois=_user_dois(task),
@@ -613,6 +637,7 @@ async def _deliberate_impl(
             task_id=task_id,
             question=task.question,
             confirmed_claims=await _confirmed_claim_ids(session, task_id),
+            claim_statements=await _confirmed_claim_statements(session, task_id),
             quarantined=await _quarantined_nodes(session, task_id),
             pdf_object_ids=_pdf_object_ids(task),
             user_dois=_user_dois(task),

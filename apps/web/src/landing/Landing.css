@@ -194,18 +194,20 @@ body:has(.landing) {
 .landing__word {
   margin: 0;
   color: #051a24;
-  font-weight: 500;
-  letter-spacing: -0.04em;
-  line-height: 1;
+  font-family: var(--serif);
+  font-weight: 400;
+  letter-spacing: -0.05em;
+  line-height: 0.92;
   white-space: nowrap;
 }
 
 .landing__word h1 {
   margin: 0;
-  font-size: clamp(2.25rem, 7.5vw, 6rem);
-  font-weight: 500;
-  letter-spacing: -0.04em;
-  line-height: 1;
+  font-family: var(--serif);
+  font-size: clamp(2.75rem, 9vw, 7.25rem);
+  font-weight: 400;
+  letter-spacing: -0.05em;
+  line-height: 0.92;
 }
 
 /* Z 字错落：左 → 右 → 中左，三个词三个水平位置。 */

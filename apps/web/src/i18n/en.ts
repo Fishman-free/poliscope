@@ -5,6 +5,10 @@
 export const en: Record<string, string> = {
   // App navigation & header
   "实时进展": "Live Progress",
+  "Live Progress": "Live Progress",
+  "Final Paper": "Final Paper",
+  "Knowledge Base": "Knowledge Base",
+  "Follow-up": "Follow-up",
   "Research Brief": "Research Brief",
   "Controversy Map": "Controversy Map",
   "Council": "Council",
@@ -533,6 +537,9 @@ export const en: Record<string, string> = {
   "追问研究结论、证据或局限…": "Ask about the conclusions, evidence, or limitations…",
   "提问": "Ask",
   "回答中…": "Answering…",
+  "本轮启用的技能": "Skills for this turn",
+  "同时检索外部文献（非正式证据）": "Also search external literature (not formal evidence)",
+  "导出 Word": "Export Word",
 
   // Round: workspace redesign -- lifecycle status labels (operational, not
   // evidence tones), resume/restart entry points, and live-seat state.

@@ -463,8 +463,16 @@ export function resumeTask(taskId: string): Promise<{ task_id: string; status: s
 
 /** 「补充提问」: ask a finished task a follow-up question; the answer is
  * grounded in the task's Research Brief and confirmed claims (round-9). */
-export function followUp(taskId: string, question: string): Promise<FollowUpResult> {
-  return postJson<FollowUpResult>(`/api/tasks/${taskId}/followup`, { question });
+export function followUp(
+  taskId: string,
+  question: string,
+  options?: { skillIds?: string[]; searchLiterature?: boolean },
+): Promise<FollowUpResult> {
+  return postJson<FollowUpResult>(`/api/tasks/${taskId}/followup`, {
+    question,
+    skill_ids: options?.skillIds ?? [],
+    search_literature: options?.searchLiterature ?? false,
+  });
 }
 
 /** 「停止研究」(round-10): stop a running or queued task. A QUEUED/PAUSED
@@ -493,13 +501,18 @@ export async function followUpStream(
   question: string,
   onDelta: (text: string) => void,
   signal?: AbortSignal,
+  options?: { skillIds?: string[]; searchLiterature?: boolean },
 ): Promise<void> {
   let response: Response;
   try {
     response = await fetch(`${BASE}/api/tasks/${taskId}/followup/stream`, {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({
+        question,
+        skill_ids: options?.skillIds ?? [],
+        search_literature: options?.searchLiterature ?? false,
+      }),
       signal,
     });
   } catch (cause) {

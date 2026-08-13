@@ -138,6 +138,30 @@ def render_paper_markdown(
             lines.extend(section.paragraphs)
             lines.append("")
 
+        if paper.standpoints:
+            lines += ["## 各方观点与缺陷", ""]
+            for standpoint in paper.standpoints:
+                lines.append(f"### {standpoint.seat}")
+                lines.append("")
+                lines.append(f"- **观点**：{standpoint.position}")
+                if standpoint.weakness:
+                    lines.append(f"- **缺陷**：{standpoint.weakness}")
+                if standpoint.disagreement:
+                    lines.append(f"- **分歧**：{standpoint.disagreement}")
+                if standpoint.supporting_evidence:
+                    lines.append("- **支撑证据**：")
+                    lines.extend(
+                        f"  - {item}" for item in standpoint.supporting_evidence
+                    )
+                lines.append("")
+
+        if paper.overall_conclusion:
+            lines += ["## 总体结论", "", paper.overall_conclusion, ""]
+            if paper.conclusion_evidence:
+                lines.append("**支撑证据：**")
+                lines.extend(f"- {item}" for item in paper.conclusion_evidence)
+                lines.append("")
+
         # Limitations beside the conclusions, not at the end -- CLAUDE.md 11.
         lines += ["## 结论与局限", ""]
         if paper.limitations:

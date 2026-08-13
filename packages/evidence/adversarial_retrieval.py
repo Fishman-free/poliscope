@@ -40,30 +40,42 @@ from __future__ import annotations
 
 from uuid import UUID
 
-# The six reverse-search intents design spec 7.9 names, in the order it lists
-# them. Kept as a plain tuple rather than a StrEnum: nothing outside this
-# module branches on which intent is which -- the point is coverage of all
-# six, not dispatch on any one of them.
+# The six reverse-search intents design spec 7.9 names. English academic
+# phrases -- OpenAlex / Crossref / Semantic Scholar index English metadata;
+# a Chinese intent glued to a claim UUID (the previous form) is a random
+# keyword hit and is how a question about love retrieved nuclear-plant papers.
 _INTENTS: tuple[str, ...] = (
-    "反驳该主张的证据",
-    "零结果或不显著效应",
-    "替代理论或替代机制",
-    "测量批评（构念效度质疑）",
-    "复现失败的报告",
-    "边界反转情形",
+    "contradictory evidence refutation",
+    "null result non-significant effect",
+    "alternative theory mechanism",
+    "construct validity measurement critique",
+    "failed replication",
+    "boundary condition reversal moderator",
 )
 
+# Keep a search phrase short enough that vendors treat it as a topic, not an
+# essay. The claim id is deliberately *not* interpolated: UUIDs have no
+# bibliographic meaning and pollute ranking.
+_MAX_TOPIC_CHARS = 160
 
-def adversarial_retrieval_queries(claim_id: UUID) -> tuple[str, ...]:
+
+def adversarial_retrieval_queries(
+    claim_id: UUID,
+    statement: str = "",
+    question: str = "",
+) -> tuple[str, ...]:
     """Six reverse-search-intent query strings for one confirmed claim.
 
-    Each string names the claim by id -- the only handle available at query-
-    planning time -- and one adversarial intent. Resolving the id to the
-    claim's actual statement text is out of scope here; the string is instead
-    tried as-is against real search adapters downstream in
-    ``SourceAcquisition.acquire`` -- see the module docstring above.
+    ``claim_id`` is kept in the signature so callers and the audit trail can
+    still attribute the six queries to a claim; it is not part of the search
+    string. The topic is the claim statement (falling back to the research
+    question) so the vendor is asked about the *science*, not an opaque id.
     """
-    return tuple(f"claim {claim_id}: {intent}" for intent in _INTENTS)
+    topic = (statement or "").strip() or (question or "").strip()
+    topic = " ".join(topic.split())[:_MAX_TOPIC_CHARS]
+    if not topic:
+        return tuple(_INTENTS)
+    return tuple(f"{topic} {intent}" for intent in _INTENTS)
 
 
 __all__ = ["adversarial_retrieval_queries"]

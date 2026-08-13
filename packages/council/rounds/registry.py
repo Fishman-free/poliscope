@@ -441,6 +441,12 @@ class PhaseContext:
     # paper, so the seats critique the paper's actual claims (the paper's own
     # text is the Level A evidence via the acquisition pass).
     paper_understanding: dict[str, object] | None = None
+    # Claim id -> statement text. Used only to build searchable adversarial
+    # retrieval phrases (see packages.evidence.adversarial_retrieval); never
+    # written into the Evidence Graph from here. Empty when the caller only
+    # has ids (evaluation harness, older tests) -- queries then fall back to
+    # the research question.
+    claim_statements: Mapping[UUID, str] = field(default_factory=dict)
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase.
@@ -855,7 +861,13 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     # worth looking for.
     adversarial_queries: list[str] = []
     for claim_id in context.confirmed_claims:
-        adversarial_queries.extend(adversarial_retrieval_queries(claim_id))
+        adversarial_queries.extend(
+            adversarial_retrieval_queries(
+                claim_id,
+                statement=str(context.claim_statements.get(claim_id, "")),
+                question=context.question,
+            )
+        )
     if adversarial_queries:
         all_requests.extend(
             (Seat.ADVERSARY_FALSIFIER, query) for query in adversarial_queries

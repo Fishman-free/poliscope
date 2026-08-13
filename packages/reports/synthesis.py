@@ -529,16 +529,21 @@ def _build_user_prompt(
         "guess is not.",
         "",
         "The paper MUST make the debate explicit, not blend it into one voice. ",
-        "In the standpoints field, name each distinct side of the controversy: ",
-        "which seat(s) argue what (position), where that position is weak or ",
-        "contested (weakness), the admitted evidence it leans on ",
-        "(supporting_evidence, citing the findings and claims listed below), ",
-        "and how it disagrees with the other sides (disagreement). Then state ",
-        "whether the council reached an overall conclusion and what it is ",
-        "(overall_conclusion) -- or that no overall conclusion was reached and "
-        "why -- and list the admitted evidence the overall conclusion rests on "
-        "(conclusion_evidence). Be detailed; do not collapse dissenting "
-        "positions into the majority view.",
+        "In the standpoints field, write one entry per scientist seat that ",
+        "produced a final judgment: name the seat, state its position in full ",
+        "(not a slogan), name where that position is weak or contested ",
+        "(weakness), list the admitted evidence it leans on ",
+        "(supporting_evidence -- quote the finding/claim statements below, ",
+        "never invent a source), and say how it disagrees with the other ",
+        "sides (disagreement). Then state whether the council reached an ",
+        "overall conclusion and what it is (overall_conclusion) -- or that ",
+        "no overall conclusion was reached and why -- and list the admitted ",
+        "evidence the overall conclusion rests on (conclusion_evidence). ",
+        "investigation_process must narrate the eight-phase protocol as it ",
+        "actually ran (precommitment, acquisition, exchange, cross-exam, ",
+        "bounty, joint modeling, final rejudgment, reporting), naming ",
+        "absences, refusals, and unresolved conflicts as facts. Be detailed; ",
+        "do not collapse dissenting positions into the majority view.",
         "",
     ]
     lines.extend(_material_brief_lines(brief))
@@ -553,13 +558,19 @@ def _build_user_prompt(
             lines.append(f"- {seat}: {judgment}")
     lines.append("")
     lines.append(
-        "The paper's `sections` must cover, at minimum: background / methods "
-        "(how the council investigated), findings with evidence, controversy "
-        "and dissent, conclusions and limitations. `references` must cite the "
-        "source ids/DOIs of the admitted findings; every `id` in references "
-        "must be one of the finding/source ids present in the materials above. "
-        "`investigation_process` describes how the council ran (phases, "
-        "absences, refusals) as plain facts."
+        "The paper's `sections` must cover, at minimum, and in this order: "
+        "(1) background and the confirmed atomic claims; "
+        "(2) methods -- how the seven-seat council investigated (phases, "
+        "what was retrieved, what was refused); "
+        "(3) findings with the admitted evidence each rests on; "
+        "(4) controversy, dissent, and unresolved conflicts, naming the "
+        "seats on each side; "
+        "(5) conditioned consensus and its boundary conditions; "
+        "(6) conclusions and limitations side by side. "
+        "`references` must cite the source ids/DOIs of the admitted findings; "
+        "every `id` in references must be one of the finding/source ids "
+        "present in the materials above. `investigation_process` is a "
+        "factual timeline, not a restatement of the conclusion."
     )
     return sanitize_export("\n".join(lines))
 

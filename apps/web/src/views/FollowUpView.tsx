@@ -13,7 +13,8 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { followUpStream } from "../api/client";
+import { fetchPaperMarkdown, fetchSkills, followUpStream } from "../api/client";
+import type { SkillSummary } from "../api/types";
 import { t } from "../i18n";
 
 import "./FollowUpView.css";
@@ -39,10 +40,27 @@ export function FollowUpView({
   const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skills, setSkills] = useState<SkillSummary[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<Set<string>>(new Set());
+  const [searchLiterature, setSearchLiterature] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const terminal = TERMINAL.has(status);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSkills()
+      .then((list) => {
+        if (!cancelled) setSkills(list);
+      })
+      .catch(() => {
+        // Skills are optional process context; a failed list must not block asking.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 新回答到达时把对话滚到底——研究者在看「现在」的答案。
   useEffect(() => {
@@ -53,6 +71,61 @@ export function FollowUpView({
   useEffect(() => {
     if (terminal) inputRef.current?.focus();
   }, [terminal]);
+
+  function downloadBlob(content: Blob, filename: string) {
+    const anchor = document.createElement("a");
+    anchor.href = URL.createObjectURL(content);
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(anchor.href);
+  }
+
+  async function downloadMarkdown(fetch: () => Promise<string>, basename: string) {
+    const markdown = await fetch();
+    downloadBlob(
+      new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
+      `${basename}-${taskId.slice(0, 8)}.md`,
+    );
+  }
+
+  function threadMarkdown(): string {
+    const lines = [`# ${t("补充提问")}`, ""];
+    for (const exchange of exchanges) {
+      lines.push(`## ${t("你")}`, "", exchange.question, "");
+      lines.push(`## ${t("模型")}`, "", exchange.ok ? exchange.answer : t("回答不可用"), "");
+    }
+    return lines.join("\n");
+  }
+
+  function exportThread(kind: "md" | "docx") {
+    const markdown = threadMarkdown();
+    if (kind === "md") {
+      downloadBlob(
+        new Blob([markdown], { type: "text/markdown;charset=utf-8" }),
+        `poliscope-followup-${taskId.slice(0, 8)}.md`,
+      );
+      return;
+    }
+    // Minimal WordprocessingML document — no extra dependency.
+    const escaped = markdown
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const paragraphs = escaped.split("\n").map(
+      (line) =>
+        `<w:p><w:r><w:t xml:space="preserve">${line || " "}</w:t></w:r></w:p>`,
+    );
+    const documentXml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+      `<w:body>${paragraphs.join("")}</w:body></w:document>`;
+    downloadBlob(
+      new Blob([documentXml], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+      `poliscope-followup-${taskId.slice(0, 8)}.docx`,
+    );
+  }
 
   async function ask(event: FormEvent) {
     event.preventDefault();
@@ -68,19 +141,28 @@ export function FollowUpView({
     ]);
     setQuestion("");
     try {
-      await followUpStream(taskId, text, (delta) => {
-        setExchanges((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.pending) {
-            next[next.length - 1] = {
-              ...last,
-              answer: last.answer + delta,
-            };
-          }
-          return next;
-        });
-      });
+      await followUpStream(
+        taskId,
+        text,
+        (delta) => {
+          setExchanges((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last && last.pending) {
+              next[next.length - 1] = {
+                ...last,
+                answer: last.answer + delta,
+              };
+            }
+            return next;
+          });
+        },
+        undefined,
+        {
+          skillIds: [...selectedSkills],
+          searchLiterature,
+        },
+      );
       setExchanges((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -158,6 +240,43 @@ export function FollowUpView({
       ) : null}
 
       <form className="followup__form" onSubmit={ask}>
+        {skills.length > 0 ? (
+          <div className="followup__skills" role="group" aria-label={t("本轮启用的技能")}>
+            {skills.map((skill) => {
+              const on = selectedSkills.has(skill.id);
+              return (
+                <button
+                  key={skill.id}
+                  type="button"
+                  className={
+                    "followup__chip" + (on ? " followup__chip--on" : "")
+                  }
+                  aria-pressed={on}
+                  disabled={!terminal || sending}
+                  onClick={() => {
+                    setSelectedSkills((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(skill.id)) next.delete(skill.id);
+                      else next.add(skill.id);
+                      return next;
+                    });
+                  }}
+                >
+                  {skill.name}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <label className="followup__search">
+          <input
+            type="checkbox"
+            checked={searchLiterature}
+            disabled={!terminal || sending}
+            onChange={(event) => setSearchLiterature(event.target.checked)}
+          />
+          {t("同时检索外部文献（非正式证据）")}
+        </label>
         <textarea
           ref={inputRef}
           className="followup__input"
@@ -174,13 +293,44 @@ export function FollowUpView({
             }
           }}
         />
-        <button
-          type="submit"
-          className="button button--primary followup__send"
-          disabled={!terminal || sending || !question.trim()}
-        >
-          {sending ? t("回答中…") : t("提问")}
-        </button>
+        <div className="followup__actions">
+          <button
+            type="submit"
+            className="button button--primary followup__send"
+            disabled={!terminal || sending || !question.trim()}
+          >
+            {sending ? t("回答中…") : t("提问")}
+          </button>
+          <button
+            type="button"
+            className="button followup__export"
+            disabled={exchanges.length === 0}
+            onClick={() => exportThread("md")}
+          >
+            {t("导出 Markdown")}
+          </button>
+          <button
+            type="button"
+            className="button followup__export"
+            disabled={exchanges.length === 0}
+            onClick={() => exportThread("docx")}
+          >
+            {t("导出 Word")}
+          </button>
+          <button
+            type="button"
+            className="button followup__export"
+            disabled={!taskId}
+            onClick={() => {
+              void downloadMarkdown(
+                () => fetchPaperMarkdown(taskId),
+                "poliscope-paper",
+              );
+            }}
+          >
+            {t("下载论文 Markdown")}
+          </button>
+        </div>
       </form>
     </div>
   );

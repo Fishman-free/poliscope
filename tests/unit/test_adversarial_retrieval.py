@@ -17,39 +17,61 @@ from packages.evidence.adversarial_retrieval import adversarial_retrieval_querie
 def test_generates_exactly_six_queries_per_claim() -> None:
     claim_id = uuid4()
 
-    queries = adversarial_retrieval_queries(claim_id)
+    queries = adversarial_retrieval_queries(
+        claim_id, statement="Love is a human necessity"
+    )
 
     assert len(queries) == 6
     assert len(set(queries)) == 6  # all six intents are distinct strings
 
 
-def test_every_query_names_the_claim_id() -> None:
+def test_queries_use_the_claim_statement_not_the_uuid() -> None:
     claim_id = uuid4()
 
-    queries = adversarial_retrieval_queries(claim_id)
+    queries = adversarial_retrieval_queries(
+        claim_id, statement="Love is a human necessity"
+    )
 
-    assert all(str(claim_id) in query for query in queries)
+    assert all("Love is a human necessity" in query for query in queries)
+    assert all(str(claim_id) not in query for query in queries)
 
 
 def test_covers_all_six_intents_from_design_spec_7_9() -> None:
     claim_id = uuid4()
 
-    queries = adversarial_retrieval_queries(claim_id)
+    queries = adversarial_retrieval_queries(
+        claim_id, statement="screen time and wellbeing"
+    )
     joined = " ".join(queries)
 
     for intent in (
-        "反驳",
-        "零结果",
-        "替代理论",
-        "测量批评",
-        "复现失败",
-        "边界反转",
+        "contradictory",
+        "null result",
+        "alternative theory",
+        "construct validity",
+        "failed replication",
+        "boundary condition",
     ):
         assert intent in joined
 
 
-def test_different_claims_produce_different_queries() -> None:
-    first = adversarial_retrieval_queries(uuid4())
-    second = adversarial_retrieval_queries(uuid4())
+def test_different_statements_produce_different_queries() -> None:
+    first = adversarial_retrieval_queries(uuid4(), statement="claim A")
+    second = adversarial_retrieval_queries(uuid4(), statement="claim B")
 
     assert first != second
+
+
+def test_falls_back_to_the_research_question() -> None:
+    queries = adversarial_retrieval_queries(
+        uuid4(), statement="", question="Is love a human necessity?"
+    )
+
+    assert all("Is love a human necessity?" in query for query in queries)
+
+
+def test_empty_topic_still_emits_six_english_intents() -> None:
+    queries = adversarial_retrieval_queries(uuid4())
+
+    assert len(queries) == 6
+    assert all("claim " not in query for query in queries)

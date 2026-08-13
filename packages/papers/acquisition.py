@@ -35,6 +35,7 @@ from packages.evidence.process_stream import ProcessCallback
 from packages.papers.candidate_pool import CandidatePool
 from packages.papers.models import SourceModel
 from packages.papers.query_planner import QueryPlanner
+from packages.papers.query_sanitize import sanitize_search_query
 from packages.tools.adapters import SEARCH_ADAPTER_NAMES, adapter, search_adapter
 from packages.tools.adapters.normalization import NormalizedSource, normalize_doi
 from packages.tools.contracts import ToolGateway
@@ -688,10 +689,13 @@ class SourceAcquisition:
         Only when every provider has missed or errored does the caller record
         the query as unresolvable.
         """
+        cleaned = sanitize_search_query(query)
+        if cleaned is None:
+            return None
         for name in SEARCH_ADAPTER_NAMES:
             provider = search_adapter(name, self._gateway, self._task_id)
             try:
-                hit = await provider.search(query)
+                hit = await provider.search(cleaned)
             except Exception:
                 continue
             if hit is not None:

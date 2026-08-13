@@ -304,9 +304,9 @@ async def test_openalex_search_returns_doi_and_flattened_fields() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert "works" in str(request.url)
         assert request.url.params["search"] == "digital wellbeing screen time"
-        # Round-4 authority: free-text search sorts by citation count so the
-        # most-cited work surfaces first.
-        assert request.url.params["sort"] == "cited_by_count:desc"
+        # Relevance first: citation-count sort retrieved famous off-topic papers.
+        assert "sort" not in request.url.params
+        assert request.url.params["per-page"] == "5"
         return httpx.Response(
             200,
             json={
@@ -411,8 +411,9 @@ async def test_semantic_scholar_search_returns_doi_from_external_ids() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert "paper/search" in str(request.url)
         assert request.url.params["query"] == "reverse causation screen time"
-        # Round-4 authority: sort by citation count, same as OpenAlex.
-        assert request.url.params["sort"] == "citationCount:desc"
+        # Relevance first: do not rank by citation count.
+        assert "sort" not in request.url.params
+        assert request.url.params["limit"] == "5"
         return httpx.Response(
             200,
             json={

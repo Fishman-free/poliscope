@@ -266,6 +266,7 @@ class CouncilOrchestrator:
         task_id: UUID,
         question: str,
         confirmed_claims: tuple[UUID, ...] = (),
+        claim_statements: Mapping[UUID, str] | None = None,
         quarantined: tuple[QuarantinedNode, ...] = (),
         pdf_object_ids: tuple[UUID, ...] = (),
         user_dois: tuple[str, ...] = (),
@@ -300,6 +301,7 @@ class CouncilOrchestrator:
         phase's prompt and cannot affect Evidence Gate, Claim adoption, or
         DissentCertificate/DebateCapsule construction.
         """
+        statements = dict(claim_statements or {})
         machine = TaskStateMachine()
         state = _Accumulator()
         report = TaskRunReport(task_id=task_id)
@@ -474,6 +476,7 @@ class CouncilOrchestrator:
                     phase,
                     question,
                     confirmed_claims,
+                    statements,
                     quarantined,
                     pdf_object_ids,
                     user_dois,
@@ -583,6 +586,7 @@ class CouncilOrchestrator:
         phase: TaskPhase,
         question: str,
         confirmed_claims: tuple[UUID, ...],
+        claim_statements: Mapping[UUID, str],
         quarantined: tuple[QuarantinedNode, ...],
         pdf_object_ids: tuple[UUID, ...],
         user_dois: tuple[str, ...],
@@ -609,6 +613,7 @@ class CouncilOrchestrator:
             seats=self._seats,
             question=question,
             confirmed_claims=confirmed_claims,
+            claim_statements=claim_statements,
             deliberator=self._deliberator,
             carried=dict(state.carried),
             recall=await self._recall(),

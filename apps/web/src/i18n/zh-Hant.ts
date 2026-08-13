@@ -5,6 +5,10 @@
 export const zhHant: Record<string, string> = {
   // App navigation & header
   "实时进展": "實時進展",
+  "Live Progress": "實時進展",
+  "Final Paper": "最終論文",
+  "Knowledge Base": "知識庫",
+  "Follow-up": "補充提問",
   "Research Brief": "研究簡報",
   "Controversy Map": "爭議地圖",
   "Council": "議會",
@@ -531,6 +535,9 @@ export const zhHant: Record<string, string> = {
   "追问研究结论、证据或局限…": "追問研究結論、證據或侷限…",
   "提问": "提問",
   "回答中…": "回答中…",
+  "本轮启用的技能": "本輪啟用的技能",
+  "同时检索外部文献（非正式证据）": "同時檢索外部文獻（非正式證據）",
+  "导出 Word": "匯出 Word",
 
   // 工作台重设计：生命周期状态标签（operational，非 evidence 色调）、
   // 重新/继续研究入口、席位运行状态。

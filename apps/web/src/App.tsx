@@ -64,16 +64,16 @@ type HomeView = "newtask" | "knowledge";
  * not react to a language switch). Labels that are already English pass
  * through unchanged; hints are translated. */
 const TABS: { id: Tab; label: string; hint: string }[] = [
-  { id: "live", label: "实时进展", hint: "思考链路与检索" },
+  { id: "live", label: "Live Progress", hint: "思考链路与检索" },
   { id: "brief", label: "Research Brief", hint: "结论与局限并排" },
   { id: "map", label: "Controversy Map", hint: "证据图与争议结构" },
   { id: "council", label: "Council", hint: "7 人议会状态" },
   { id: "radar", label: "Blindspot Radar", hint: "影响 x 可调查性" },
   { id: "evolution", label: "Evolution View", hint: "主张分叉与异议时间线" },
   { id: "audit", label: "Audit Trail", hint: "事件账本与拒绝记录" },
-  { id: "paper", label: "最终论文", hint: "整合结论与参考文献" },
-  { id: "knowledge", label: "知识库", hint: "长期记忆与检索" },
-  { id: "followup", label: "补充提问", hint: "完成后追问模型" },
+  { id: "paper", label: "Final Paper", hint: "整合结论与参考文献" },
+  { id: "knowledge", label: "Knowledge Base", hint: "长期记忆与检索" },
+  { id: "followup", label: "Follow-up", hint: "完成后追问模型" },
 ];
 
 /** While the task sits at this checkpoint, poll for the status change that
@@ -181,7 +181,11 @@ const INSURANCE_POLL_STATUSES = new Set([
 
 /** Insurance poll schedule: 15s normally, backing off to 30s then 60s on
  * consecutive failures (never harder than 60s), resetting on success. */
+/** Visible-tab cadence. Hidden-tab cadence is slower so a background
+ * workspace still refreshes (the worker never depends on the tab, but the
+ * researcher coming back must not stare at a frozen RUNNING state). */
 const INSURANCE_BACKOFF = [15_000, 30_000, 60_000] as const;
+const INSURANCE_HIDDEN_MS = 45_000;
 
 function computeQueue(
   tasks: TaskSummary[],
@@ -386,17 +390,19 @@ export function App() {
     let failStreak = 0;
     const schedule = () => {
       if (cancelled) return;
-      const delay = INSURANCE_BACKOFF[Math.min(failStreak, INSURANCE_BACKOFF.length - 1)];
+      const delay =
+        document.visibilityState === "hidden"
+          ? INSURANCE_HIDDEN_MS
+          : INSURANCE_BACKOFF[Math.min(failStreak, INSURANCE_BACKOFF.length - 1)];
       timer = window.setTimeout(run, delay);
     };
     const run = async () => {
       if (cancelled) return;
-      // 只轮询可见页：后台标签不打扰服务器，恢复可见时由 visibility 处理器
-      // 立即刷新一次（见下），不浪费一个周期的空转。
-      if (document.visibilityState === "visible") {
-        const ok = await refresh();
-        failStreak = ok ? 0 : failStreak + 1;
-      }
+      // Hidden tabs still refresh, just slower: the worker never depends on
+      // this connection, but a researcher who tabbed away must not come back
+      // to a frozen RUNNING state (browsers throttle timers; we still fire).
+      const ok = await refresh();
+      failStreak = ok ? 0 : failStreak + 1;
       schedule();
     };
     const onVisibility = () => {

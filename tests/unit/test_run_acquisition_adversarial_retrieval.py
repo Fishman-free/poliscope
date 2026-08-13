@@ -133,7 +133,12 @@ async def test_confirmed_claim_yields_six_adversarial_requests() -> None:
         if seat is Seat.ADVERSARY_FALSIFIER
     ]
     assert len(adversarial) == 6
-    assert all(str(claim_id) in query for _, query in adversarial)
+    # Queries name the science (the research question, when no statement map
+    # is supplied), never the opaque claim UUID.
+    assert all(
+        "Does screen time affect wellbeing?" in query for _, query in adversarial
+    )
+    assert all(str(claim_id) not in query for _, query in adversarial)
 
 
 async def test_two_confirmed_claims_yield_twelve_adversarial_requests() -> None:

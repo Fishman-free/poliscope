@@ -264,23 +264,32 @@ class HttpToolGateway:
         return payload, retries
 
     async def _search_openalex(self, query: str) -> tuple[dict[str, object], int]:
-        # Round-4 authority: sort free-text hits by citation count so the
-        # first hit is the most-cited (most authoritative) work matching the
-        # query, not merely the most textually relevant one.
+        # Relevance first: citation-count sort was retrieving famous but
+        # off-topic papers (nuclear-plant instrumentation for a question about
+        # love). Default OpenAlex ranking is topical relevance; take the top
+        # hit of a slightly wider page so a retracted / empty-title result can
+        # be skipped without a second round-trip.
         data, retries = await self._get_json(
             f"{OPENALEX_BASE_URL}/works",
             params={
                 "search": query,
-                "per-page": "1",
-                "sort": "cited_by_count:desc",
+                "per-page": "5",
             },
         )
         results = data.get("results") or []
-        if not results:
+        work = next(
+            (
+                item
+                for item in results
+                if not bool(item.get("is_retracted", False))
+                and (item.get("title") or item.get("display_name"))
+            ),
+            None,
+        )
+        if work is None:
             # Honest miss: this provider found no candidate for this query.
             # SourceAcquisition tries the next provider before giving up.
             return {"doi": None}, retries
-        work = results[0]
         authorships = work.get("authorships") or []
         authors = tuple(
             str(a["author"]["display_name"])
@@ -305,12 +314,12 @@ class HttpToolGateway:
     async def _search_crossref(self, query: str) -> tuple[dict[str, object], int]:
         data, retries = await self._get_json(
             f"{CROSSREF_BASE_URL}/works",
-            params={"query": query, "rows": "1"},
+            params={"query": query, "rows": "5"},
         )
         items = (data.get("message") or {}).get("items") or []
-        if not items:
+        item = next((row for row in items if (row.get("title") or [None])[0]), None)
+        if item is None:
             return {"doi": None}, retries
-        item = items[0]
         titles = item.get("title") or []
 
         def _full_name(author: Mapping[str, Any]) -> str:
@@ -338,22 +347,21 @@ class HttpToolGateway:
             if self._config.semantic_scholar_api_key
             else None
         )
-        # Round-4 authority: sort by citation count, same rationale as the
-        # OpenAlex sort above.
+        # Relevance first (same rationale as OpenAlex): do not rank by
+        # citation count, which prefers famous off-topic papers.
         data, retries = await self._get_json(
             f"{SEMANTIC_SCHOLAR_BASE_URL}/paper/search",
             params={
                 "query": query,
                 "fields": SEMANTIC_SCHOLAR_SEARCH_FIELDS,
-                "limit": "1",
-                "sort": "citationCount:desc",
+                "limit": "5",
             },
             headers=headers,
         )
         papers = data.get("data") or []
-        if not papers:
+        paper = next((row for row in papers if row.get("title")), None)
+        if paper is None:
             return {"doi": None}, retries
-        paper = papers[0]
         authors = tuple(
             str(a["name"]) for a in paper.get("authors") or [] if a.get("name")
         )

@@ -357,6 +357,13 @@
   background: var(--app-accent-focus);
 }
 
+.app__action-primary:active,
+.app__new:active,
+.app__stop:active,
+.app__home-tab:active {
+  transform: scale(0.97);
+}
+
 .app__stop {
   min-height: 44px;
   padding: var(--space-2) var(--space-4);

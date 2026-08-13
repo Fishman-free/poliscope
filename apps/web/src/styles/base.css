@@ -51,6 +51,23 @@ h3 {
 
 p {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.app__main,
+.app__panel,
+.panel__body {
+  min-width: 0;
+}
+
+.panel__body,
+.paper__section p,
+.paper__standpoint,
+.live__action-body,
+.followup__a p,
+.followup__q p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 a {
