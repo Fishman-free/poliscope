@@ -74,6 +74,11 @@
   flex-shrink: 0;
 }
 
+.map__legend-edge--cite {
+  border-top-color: var(--accent);
+  border-top-style: dotted;
+}
+
 .map__toggle {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -177,7 +182,13 @@
 
 .react-flow__edge.map-edge .react-flow__edge-path {
   stroke: var(--line-strong);
-  stroke-width: 1.5;
+  stroke-width: 2;
+}
+
+.react-flow__edge.map-edge--cite .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-dasharray: 2 4;
 }
 
 .react-flow__edge.map-edge--opposing .react-flow__edge-path {

@@ -501,7 +501,11 @@ export async function followUpStream(
   question: string,
   onDelta: (text: string) => void,
   signal?: AbortSignal,
-  options?: { skillIds?: string[]; searchLiterature?: boolean },
+  options?: {
+    skillIds?: string[];
+    searchLiterature?: boolean;
+    history?: { role: "user" | "assistant"; content: string }[];
+  },
 ): Promise<void> {
   let response: Response;
   try {
@@ -512,6 +516,7 @@ export async function followUpStream(
         question,
         skill_ids: options?.skillIds ?? [],
         search_literature: options?.searchLiterature ?? false,
+        history: options?.history ?? [],
       }),
       signal,
     });

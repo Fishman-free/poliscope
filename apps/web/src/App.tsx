@@ -162,10 +162,16 @@ const STOPPABLE_STATUSES = new Set([
   "REPORTING",
 ]);
 
-/** Statuses that can move again without a new task: FAILED and CANCELLED are
- * requeued via 「重新研究」(re_research), PAUSED via 「继续研究」(resume). These
- * mirror the backend state matrix in ResearchService -- do not extend them. */
-const RESUMEABLE_STATUSES = new Set(["FAILED", "CANCELLED", "PAUSED"]);
+/** Statuses that can move again without a new task: FAILED / CANCELLED /
+ * COMPLETED / COMPLETED_WITH_GAPS via 「重新研究」, PAUSED via 「继续研究」.
+ * Mirror ResearchService._RERUNNABLE_STATUSES plus PAUSED. */
+const RESUMEABLE_STATUSES = new Set([
+  "FAILED",
+  "CANCELLED",
+  "PAUSED",
+  "COMPLETED",
+  "COMPLETED_WITH_GAPS",
+]);
 
 /** A task in one of these lifecycle states may still change status server-side
  * without a ledger event (watchdog/EventConflict flip the column but not a
@@ -812,7 +818,7 @@ export function App() {
                           className="app__rerun app__action-primary"
                           onClick={() => void handleReResearch(taskId!)}
                           disabled={busyTask === taskId}
-                          title={t("重新研究：从失败/停止节点交回队列，Worker 续跑")}
+                          title={t("重新研究：从头克隆同题任务，或从第一个未完成阶段续跑")}
                         >
                           {busyTask === taskId ? t("请稍候…") : t("重新研究")}
                         </button>

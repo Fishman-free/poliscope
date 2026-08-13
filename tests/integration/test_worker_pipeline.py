@@ -471,10 +471,9 @@ async def test_replaying_a_requeued_task_duplicates_nothing(
         )
         await session.commit()
 
-    # The completed run's checkpoint column was cleared (jobs.py::deliberate),
-    # so this requeue is indistinguishable from a brand-new first pass -- it
-    # halts at AWAITING_COUNCIL_INPUT again before every idempotency key can
-    # be re-checked against the ledger, hence the same two-pass helper here.
+    # The completed run keeps its rewind snapshot. Requeueing without
+    # restart_from resumes from the end of that snapshot — already-run
+    # phases are no-ops via ledger idempotency keys.
     await _run_to_completion(
         app_sessions, projector_sessions, task_id, deliberator=deliberator
     )

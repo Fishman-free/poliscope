@@ -156,7 +156,9 @@ async def test_followup_answers_from_the_tasks_own_endpoint(
     assert isinstance(messages, list)
     assert request_body["model"] == "qwen3.8-max"
     assert messages[0]["role"] == "system"
-    assert "社交媒体使用" in messages[1]["content"]
+    assert "本次研究指出" in messages[0]["content"]
+    assert "社交媒体使用" in messages[-1]["content"]
+    assert request_body["max_tokens"] == 4096
 
 
 async def test_followup_rejects_empty_question(
@@ -240,6 +242,38 @@ async def test_followup_stream_returns_sse_deltas(
     _path, request_body = fake.posts[0]
     assert request_body["stream"] is True
     assert request_body["model"] == "qwen3.8-max"
+    assert request_body["max_tokens"] == 4096
+    assert "本次研究指出" in request_body["messages"][0]["content"]
+
+
+async def test_followup_forwards_prior_thread_history(
+    api_client: Any,
+    app_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_id = await _seed_completed_task(app_sessions, UUID(account["id"]))
+    fake = _FakeAsyncClient("第二段补充。")
+    monkeypatch.setattr(
+        "apps.api.routers.tasks.httpx.AsyncClient", lambda **kwargs: fake
+    )
+
+    response = await api_client.post(
+        FOLLOWUP_PATH.format(task_id=task_id),
+        json={
+            "question": "再展开一点",
+            "history": [
+                {"role": "user", "content": "结论是什么？"},
+                {"role": "assistant", "content": "证据指向弱正相关。"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    _path, request_body = fake.posts[0]
+    roles = [item["role"] for item in request_body["messages"]]
+    assert roles == ["system", "user", "assistant", "user"]
+    assert request_body["messages"][1]["content"] == "结论是什么？"
+    assert "再展开一点" in request_body["messages"][-1]["content"]
 
 
 async def test_followup_stream_rejects_unfinished_task(

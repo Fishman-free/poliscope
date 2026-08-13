@@ -93,6 +93,19 @@
   color: var(--ink-3);
 }
 
+.followup__caret {
+  display: inline-block;
+  margin-left: 1px;
+  color: var(--accent);
+  animation: followup-caret 0.9s steps(1) infinite;
+}
+
+@keyframes followup-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
 .followup__failed {
   color: var(--refuted);
 }

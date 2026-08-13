@@ -460,6 +460,17 @@ class CouncilOrchestrator:
                 report.seat_runs = tuple(state.seat_runs)
                 report.stop_reason = StopReason.CANCELLED
                 report.final_status = TaskStatus.CANCELLED
+                report.checkpoint = CouncilCheckpoint(
+                    run_phases=tuple(run_phases),
+                    carried=state.carried,
+                    unfilled=tuple(state.unfilled),
+                    absent_seats=tuple(
+                        sorted(state.absent, key=lambda seat: seat.value)
+                    ),
+                    failures=tuple(state.failures),
+                    events_appended=state.events,
+                    phase_snapshots=tuple(snapshots),
+                )
                 machine.transition_to(TaskStatus.CANCELLED)
                 return report
             if stop is StopReason.CONTINUE:
@@ -504,6 +515,17 @@ class CouncilOrchestrator:
                 report.seat_runs = tuple(state.seat_runs)
                 report.stop_reason = StopReason.CANCELLED
                 report.final_status = TaskStatus.CANCELLED
+                report.checkpoint = CouncilCheckpoint(
+                    run_phases=tuple(run_phases),
+                    carried=state.carried,
+                    unfilled=tuple(state.unfilled),
+                    absent_seats=tuple(
+                        sorted(state.absent, key=lambda seat: seat.value)
+                    ),
+                    failures=tuple(state.failures),
+                    events_appended=state.events,
+                    phase_snapshots=tuple(snapshots),
+                )
                 machine.transition_to(TaskStatus.CANCELLED)
                 return report
             run_phases.append(phase)
@@ -536,6 +558,15 @@ class CouncilOrchestrator:
         report.stop_reason = stop
         report.final_status = (
             TaskStatus.COMPLETED_WITH_GAPS if report.has_gaps else TaskStatus.COMPLETED
+        )
+        report.checkpoint = CouncilCheckpoint(
+            run_phases=tuple(run_phases),
+            carried=state.carried,
+            unfilled=tuple(state.unfilled),
+            absent_seats=tuple(sorted(state.absent, key=lambda seat: seat.value)),
+            failures=tuple(state.failures),
+            events_appended=state.events,
+            phase_snapshots=tuple(snapshots),
         )
         machine.transition_to(report.final_status)
         for slot in report.unfilled_slots:

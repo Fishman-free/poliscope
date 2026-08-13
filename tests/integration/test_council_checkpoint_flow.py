@@ -261,9 +261,12 @@ async def test_guidance_including_empty_resumes_to_completion(
         TaskStatus.COMPLETED,
         TaskStatus.COMPLETED_WITH_GAPS,
     )
-    # The checkpoint column must not survive into a terminal task -- a later
-    # reader must never mistake stale JSON for a still-pending checkpoint.
-    assert await _checkpoint(app_sessions, task_id) is None
+    # Terminal tasks keep the rewind snapshot so 「从断点处研究」 can see
+    # which protocol phases actually ran. A later reader must not treat it
+    # as AWAITING_COUNCIL_INPUT — that is the status column, not the JSON.
+    stored = await _checkpoint(app_sessions, task_id)
+    assert stored is not None
+    assert stored["run_phases"] == [phase.value for phase in PHASE_SEQUENCE]
 
 
 async def test_resuming_does_not_replay_the_five_phases_before_the_checkpoint(

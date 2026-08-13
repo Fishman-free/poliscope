@@ -110,7 +110,8 @@ async def test_default_run_is_unchanged_and_carries_no_checkpoint() -> None:
 
     assert report.phases_run == PHASE_SEQUENCE
     assert report.phases_skipped == ()
-    assert report.checkpoint is None
+    assert report.checkpoint is not None
+    assert report.checkpoint.run_phases == PHASE_SEQUENCE
     assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
     assert report.stop_reason.value == "CONTINUE"
 
@@ -286,7 +287,8 @@ async def test_budget_exhaustion_takes_priority_over_checkpoint_halt() -> None:
     )
 
     assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
-    assert report.checkpoint is None
+    assert report.checkpoint is not None
+    assert report.checkpoint.run_phases == ()
     assert report.phases_run == ()
     assert report.phases_skipped == PHASE_SEQUENCE
     assert report.stop_reason.value == "BUDGET_EXHAUSTED"
@@ -323,12 +325,48 @@ async def test_cancel_check_halts_run_with_cancelled_status() -> None:
     assert report.final_status == TaskStatus.CANCELLED
     assert report.stop_reason.value == "CANCELLED"
     assert report.phases_run == (TaskPhase.PRECOMMITMENT,)
+    assert report.checkpoint is not None
+    assert report.checkpoint.run_phases == (TaskPhase.PRECOMMITMENT,)
+    from packages.epistemo.contracts import first_unfinished_phase
+
+    assert first_unfinished_phase(report.checkpoint) == TaskPhase.ACQUISITION
     # ACQUISITION and everything after it never ran: no PHASE_STARTED event
     # carries any phase after PRECOMMITMENT.
     started_keys = [key for key in sink.recorded_keys() if key.endswith(":started")]
     assert started_keys == ["PRECOMMITMENT:started"]
     # PRECOMMITMENT's own events were appended exactly once.
     assert sink.recorded_keys().count("PRECOMMITMENT:started") == 1
+
+
+async def test_first_unfinished_phase_is_the_first_never_run_step() -> None:
+    """A cancelled run that finished 专业取证 must resume at 证据交换."""
+    from packages.epistemo.contracts import first_unfinished_phase
+
+    checkpoint = CouncilCheckpoint(
+        run_phases=(TaskPhase.PRECOMMITMENT, TaskPhase.ACQUISITION),
+        phase_snapshots=(
+            CouncilPhaseSnapshot(phase=TaskPhase.PRECOMMITMENT),
+            CouncilPhaseSnapshot(phase=TaskPhase.ACQUISITION),
+        ),
+    )
+    assert first_unfinished_phase(checkpoint) == TaskPhase.EVIDENCE_EXCHANGE
+
+
+async def test_first_unfinished_phase_prefers_a_failed_phase_over_a_later_gap() -> (
+    None
+):
+    from packages.epistemo.contracts import first_unfinished_phase
+
+    checkpoint = CouncilCheckpoint(
+        run_phases=(
+            TaskPhase.PRECOMMITMENT,
+            TaskPhase.ACQUISITION,
+            TaskPhase.EVIDENCE_EXCHANGE,
+        ),
+        unfilled=("ACQUISITION:round_failed",),
+        failures=("ACQUISITION: ValueError('boom')",),
+    )
+    assert first_unfinished_phase(checkpoint) == TaskPhase.ACQUISITION
 
 
 async def test_cancel_check_never_fires_returns_normal_completion() -> None:

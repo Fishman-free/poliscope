@@ -657,8 +657,11 @@ async def _deliberate_impl(
     await _persist_council_runs(session, task_id, report)
 
     repository = ResearchRepository(session)
-    if report.final_status == TaskStatus.AWAITING_COUNCIL_INPUT:
-        assert report.checkpoint is not None
+    if report.checkpoint is not None:
+        # Keep rewind material for 「从断点处研究」: first unfinished protocol
+        # phase (failed, skipped, or never reached). A fully-complete run
+        # still stores the snapshot so first_unfinished_phase can see that
+        # every phase ran; it then returns None and the service clones.
         await repository.set_checkpoint(
             task_id, report.checkpoint.model_dump(mode="json")
         )

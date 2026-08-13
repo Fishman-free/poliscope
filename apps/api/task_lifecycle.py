@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.council.models import (
@@ -167,4 +167,21 @@ async def delete_task_cascade(session: AsyncSession, task_id: UUID) -> None:
     # 3) The task row itself.
     await session.execute(
         delete(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
+    )
+
+
+async def rehome_uploaded_objects(
+    session: AsyncSession, source_task_id: UUID, dest_task_id: UUID
+) -> None:
+    """Move uploaded files from a cloned-away task onto its replacement.
+
+    ``rerun_fresh`` copies ``user_evidence.pdf_object_ids`` onto the new
+    task; those ids still point at ``objects`` rows owned by the source.
+    Deleting the source without this step would cascade-delete the
+    files the clone still names.
+    """
+    await session.execute(
+        update(ObjectModel)
+        .where(ObjectModel.task_id == source_task_id)
+        .values(task_id=dest_task_id)
     )

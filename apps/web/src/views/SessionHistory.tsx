@@ -320,13 +320,16 @@ export function SessionHistory({
                       </span>
                     ) : (
                       <>
-                        {task.status === "FAILED" || task.status === "CANCELLED" ? (
+                        {task.status === "FAILED" ||
+                        task.status === "CANCELLED" ||
+                        task.status === "COMPLETED" ||
+                        task.status === "COMPLETED_WITH_GAPS" ? (
                           <button
                             type="button"
                             className="session__rerun"
                             onClick={() => setRerunTarget(task.task_id)}
                             disabled={busyTaskId !== null}
-                            title={t("从失败/停止节点重新研究")}
+                            title={t("重新研究：从头克隆同题任务，或从第一个未完成阶段续跑")}
                           >
                             {busyTaskId === task.task_id ? t("请稍候…") : t("重新研究")}
                           </button>

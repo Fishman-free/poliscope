@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from packages.epistemo.contracts import (
     CouncilCheckpoint,
+    TaskPhase,
     TaskStatus,
     first_unfinished_phase,
 )
@@ -50,6 +51,20 @@ class InvalidPauseState(Exception):
 
 class InvalidCouncilGuidanceState(Exception):
     """Raised when guidance is submitted outside AWAITING_COUNCIL_INPUT."""
+
+
+# A finished, failed, or researcher-stopped task may start again. A still-
+# running or draft task cannot: that would race the worker or skip claim
+# confirmation. COMPLETED / COMPLETED_WITH_GAPS are included so a researcher
+# can restart after reading the paper (the UI's 「重新研究」 next to 「新建研究」).
+_RERUNNABLE_STATUSES: frozenset[str] = frozenset(
+    {
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+        TaskStatus.COMPLETED,
+        TaskStatus.COMPLETED_WITH_GAPS,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,11 +196,11 @@ class ResearchService:
         - ``full``: always creates a fresh task (see above) and returns its id.
         """
         task = await self._repository.get_task(task_id)
-        if task.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+        if task.status not in _RERUNNABLE_STATUSES:
             raise InvalidPauseState(
-                f"task {task_id} is {task.status}, not {TaskStatus.FAILED} or "
-                f"{TaskStatus.CANCELLED}; only a failed or cancelled task can "
-                "be re-researched"
+                f"task {task_id} is {task.status}, not one of "
+                f"{sorted(s.value for s in _RERUNNABLE_STATUSES)}; "
+                "only a finished, failed, or cancelled task can be re-researched"
             )
         if mode != "full" and task.council_checkpoint is not None:
             # first_gap: rewind to the first unfinished phase when one is
@@ -194,7 +209,15 @@ class ResearchService:
                 task.council_checkpoint
             )
             first = first_unfinished_phase(checkpoint)
-            if first is not None:
+            # Rewind only when the unfinished phase actually started on this
+            # ledger. A never-started PRECOMMITMENT cannot be redone in place
+            # (its idempotency keys would collide or the ledger is empty —
+            # either way a clone is the honest "from zero" path).
+            can_rewind = first is not None and (
+                first in checkpoint.run_phases
+                or first is not TaskPhase.PRECOMMITMENT
+            )
+            if can_rewind:
                 # The contract is immutable; rebuild the checkpoint with
                 # the restart marker so the worker rewinds to that phase.
                 checkpoint = CouncilCheckpoint(
@@ -247,11 +270,11 @@ class ResearchService:
         without a decision.
         """
         task = await self._repository.get_task(task_id, user_id=user_id)
-        if task.status not in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+        if task.status not in _RERUNNABLE_STATUSES:
             raise InvalidPauseState(
-                f"task {task_id} is {task.status}, not {TaskStatus.FAILED} or "
-                f"{TaskStatus.CANCELLED}; a fresh rerun starts from a task "
-                "that ended in failure or was stopped"
+                f"task {task_id} is {task.status}, not one of "
+                f"{sorted(s.value for s in _RERUNNABLE_STATUSES)}; "
+                "a fresh rerun starts from a finished, failed, or stopped task"
             )
         scope = await self._repository.get_scope(task_id)
         if scope is None:

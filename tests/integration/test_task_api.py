@@ -242,9 +242,9 @@ async def test_re_research_moves_a_failed_task_back_to_queued(
     fresh_id = body["task_id"]
     assert fresh_id != task_id
 
-    # 原任务保持 FAILED；新任务是继承同一问题的全新任务。
+    # 从头克隆后删除当前任务：原 id 不再可读。
     readback = await api_client.get(f"/api/tasks/{task_id}")
-    assert readback.json()["status"] == TaskStatus.FAILED
+    assert readback.status_code == 404
     fresh = await api_client.get(f"/api/tasks/{fresh_id}")
     assert fresh.status_code == 200, fresh.text
     assert fresh.json()["question"] == _contract_payload()["question"]
@@ -304,9 +304,9 @@ async def test_rerun_fresh_creates_a_brand_new_queued_task(
     assert readback.json()["question"] == _contract_payload()["question"]
     assert readback.json()["status"] == TaskStatus.QUEUED
 
-    # 原任务仍是 FAILED —— 从头研究保留审计历史，不动旧任务。
+    # 从头克隆后删除当前任务：原 id 不再可读。
     original = await api_client.get(f"/api/tasks/{task_id}")
-    assert original.json()["status"] == TaskStatus.FAILED
+    assert original.status_code == 404
 
 
 async def test_rerun_fresh_refused_for_non_failed_task(

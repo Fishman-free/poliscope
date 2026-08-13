@@ -143,6 +143,11 @@ class FollowUpRequest(ContractModel):
     # When true, one OpenAlex relevance search is appended as labelled
     # process context -- not a new Source, never Evidence Graph input.
     search_literature: bool = False
+    # Prior turns of this follow-up thread (oldest first). Each item is
+    # {"role": "user"|"assistant", "content": "..."}. Used so a second
+    # question can refer to the previous answer without the model
+    # forgetting mid-thread. Capped server-side.
+    history: tuple[FrozenDict[str, str], ...] = ()
 
 
 class ReResearchRequest(ContractModel):

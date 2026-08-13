@@ -340,13 +340,10 @@ async def test_re_research_full_mode_creates_a_fresh_task(
     await app_session.rollback()
 
 
-async def test_re_research_first_gap_without_gap_creates_a_fresh_task(
+async def test_re_research_first_gap_without_failure_resumes_next_phase(
     app_session: AsyncSession,
 ) -> None:
-    """Round-12/13: first_gap with no recorded gap cannot rewind this task
-    (nothing failed to re-run, and re-running completed phases would collide
-    with their committed events), so a fresh task is created -- "no gap ->
-    start from scratch" now means a genuinely new run."""
+    """Stopped after 专业取证、无失败记录：从断点处应从 证据交换 续跑。"""
     service = _service(app_session)
     created = await service.create(make_research_contract())
     chosen = created.suggested_claims[0].claim_id
@@ -367,13 +364,14 @@ async def test_re_research_first_gap_without_gap_creates_a_fresh_task(
         created.task_id, mode="first_gap"
     )
     assert status == TaskStatus.QUEUED
-    assert effective_id != str(created.task_id)
+    assert effective_id == str(created.task_id)
 
     task = await service.get_task(created.task_id)
-    assert task.status == TaskStatus.FAILED
-    fresh = await service.get_task(UUID(effective_id))
-    assert fresh.status == TaskStatus.QUEUED
-    assert fresh.council_checkpoint is None
+    assert task.status == TaskStatus.QUEUED
+    from packages.epistemo.contracts import CouncilCheckpoint
+
+    restored = CouncilCheckpoint.model_validate(task.council_checkpoint)
+    assert restored.restart_from == "EVIDENCE_EXCHANGE"
     await app_session.rollback()
 
 
@@ -418,6 +416,41 @@ async def test_re_research_first_gap_with_gap_marks_restart_from(
     restored = CouncilCheckpoint.model_validate(task.council_checkpoint)
     assert restored.restart_from == "EVIDENCE_EXCHANGE"
     assert restored.failures == ("EVIDENCE_EXCHANGE: ValueError('boom')",)
+    await app_session.rollback()
+
+
+async def test_re_research_first_gap_from_cancelled_resumes_next_phase(
+    app_session: AsyncSession,
+) -> None:
+    """Stopped after 独立预承诺：从断点处应从 专业取证 续跑，而不是克隆。"""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_checkpoint(
+        created.task_id,
+        {
+            "run_phases": ["PRECOMMITMENT"],
+            "carried": {},
+            "unfilled": [],
+            "failures": [],
+            "phase_snapshots": [{"phase": "PRECOMMITMENT", "events_appended": 2}],
+        },
+    )
+    await service._repository.set_status(created.task_id, TaskStatus.CANCELLED)
+
+    status, effective_id = await service.re_research(
+        created.task_id, mode="first_gap"
+    )
+    assert status == TaskStatus.QUEUED
+    assert effective_id == str(created.task_id)
+    from packages.epistemo.contracts import CouncilCheckpoint
+
+    restored = CouncilCheckpoint.model_validate(
+        (await service.get_task(created.task_id)).council_checkpoint
+    )
+    assert restored.restart_from == "ACQUISITION"
     await app_session.rollback()
 
 
@@ -469,7 +502,7 @@ async def test_rerun_fresh_creates_a_brand_new_queued_task(
 async def test_rerun_fresh_refused_for_a_non_terminal_task(
     app_session: AsyncSession,
 ) -> None:
-    """非 FAILED/CANCELLED 的任务不能被从头研究（409 的领域层对应）。"""
+    """非终态任务不能被从头研究（409 的领域层对应）。"""
     service = _service(app_session)
     created = await service.create(make_research_contract())
     with pytest.raises(InvalidPauseState):
@@ -486,4 +519,24 @@ async def test_rerun_fresh_without_confirmed_claims_is_refused(
     await service._repository.set_status(created.task_id, TaskStatus.FAILED)
     with pytest.raises(UnconfirmedClaims):
         await service.rerun_fresh(created.task_id, created_by="api")
+    await app_session.rollback()
+
+
+async def test_re_research_accepts_a_completed_task(
+    app_session: AsyncSession,
+) -> None:
+    """完成后也可重新研究：无断点时克隆新任务，从独立预承诺再跑。"""
+    service = _service(app_session)
+    created = await service.create(make_research_contract())
+    chosen = created.suggested_claims[0].claim_id
+    await service.confirm_claims(created.task_id, (chosen,))
+    await service.queue(created.task_id)
+    await service._repository.set_status(created.task_id, TaskStatus.COMPLETED)
+
+    status, effective_id = await service.re_research(created.task_id, mode="full")
+    assert status == TaskStatus.QUEUED
+    assert effective_id != str(created.task_id)
+    fresh = await service.get_task(UUID(effective_id))
+    assert fresh.status == TaskStatus.QUEUED
+    assert fresh.question == (await service.get_task(created.task_id)).question
     await app_session.rollback()

@@ -53,8 +53,8 @@ const COLUMNS: Record<string, number> = {
   DiscriminatingStudy: 3,
 };
 
-const COLUMN_WIDTH = 260;
-const ROW_HEIGHT = 96;
+const COLUMN_WIDTH = 340;
+const ROW_HEIGHT = 148;
 
 function labelOf(node: GraphNode): string {
   for (const key of ["statement", "question", "title", "summary"]) {
@@ -85,7 +85,10 @@ function layout(graph: EvidenceGraph): Node[] {
 }
 
 function toEdges(graph: EvidenceGraph): Edge[] {
-  return graph.edges.map((edge) => {
+  const drawn = new Set(
+    graph.edges.map((edge) => `${edge.source}->${edge.target}:${edge.edge_type}`),
+  );
+  const edges: Edge[] = graph.edges.map((edge) => {
     const opposing = OPPOSING.has(edge.edge_type);
     return {
       id: edge.id,
@@ -95,9 +98,41 @@ function toEdges(graph: EvidenceGraph): Edge[] {
       animated: false,
       className: opposing ? "map-edge map-edge--opposing" : "map-edge",
       style: opposing ? { strokeDasharray: "6 4" } : undefined,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
     } satisfies Edge;
   });
+  // Claim / Blindspot → Source via an intermediate finding, so a
+  // conclusion and its paper are one hop on the canvas.
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  for (const hop of graph.edges) {
+    const mid = byId.get(hop.target);
+    if (!mid || mid.node_type !== "StudyFinding") continue;
+    const origin = byId.get(hop.source);
+    if (
+      !origin ||
+      (origin.node_type !== "Claim" && origin.node_type !== "Blindspot")
+    ) {
+      continue;
+    }
+    for (const leaf of graph.edges) {
+      if (leaf.source !== hop.target || leaf.edge_type !== "DERIVED_FROM") {
+        continue;
+      }
+      const key = `${hop.source}->${leaf.target}:CITES`;
+      if (drawn.has(key)) continue;
+      drawn.add(key);
+      edges.push({
+        id: `cite-${hop.source}-${leaf.target}`,
+        source: hop.source,
+        target: leaf.target,
+        label: t("对应文献"),
+        animated: false,
+        className: "map-edge map-edge--cite",
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+      });
+    }
+  }
+  return edges;
 }
 
 export function MapView({ graph }: { graph: EvidenceGraph }) {
@@ -160,8 +195,8 @@ export function MapView({ graph }: { graph: EvidenceGraph }) {
               <Badge tone="refuted">{t("已反驳/隔离")}</Badge> {t("保留可审计，不删除")}
             </li>
             <li>
-              <span className="map__legend-edge map__legend-edge--opposing" />
-              {t("虚线红边 = 反驳、冲突、混杂")}
+              <span className="map__legend-edge map__legend-edge--cite" />
+              {t("点线蓝边 = 结论/争议对应的文献")}
             </li>
           </ul>
           <label className="map__toggle">

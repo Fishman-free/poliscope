@@ -185,9 +185,16 @@ def checkpoint_failed_phases(
 def first_unfinished_phase(
     checkpoint: CouncilCheckpoint,
 ) -> TaskPhase | None:
-    """The earliest phase recorded as failed/skipped, in protocol order."""
+    """The earliest phase that did not complete, in protocol order.
+
+    A phase is unfinished when it failed/skipped (``checkpoint_failed_phases``)
+    **or** never ran. The latter is how a researcher-stopped run (CANCELLED
+    after, say, 专业取证) resumes at the next protocol step instead of
+    pretending the remaining six phases already happened.
+    """
     failed = checkpoint_failed_phases(checkpoint)
+    ran = frozenset(checkpoint.run_phases)
     for phase in PHASE_SEQUENCE:
-        if phase in failed:
+        if phase in failed or phase not in ran:
             return phase
     return None

@@ -37,6 +37,7 @@ from apps.api.schemas import (
 )
 from packages.accounts.repository import StoredUser
 from packages.epistemo.contracts import TaskStatus
+from packages.kernel.contracts import FrozenDict
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
 from packages.models.endpoint_config import normalize_base_url
 from packages.models.free_trial import (
@@ -510,7 +511,7 @@ async def _prepare_followup(
     session: SessionDep,
     current_user: StoredUser,
     object_store: PrivateObjectStore,
-) -> tuple[str, str, str, str, str] | None:
+) -> tuple[str, str, str, str, str, tuple[FrozenDict[str, str], ...]] | None:
     """Validate a follow-up and build its prompt; ``None`` when no model gateway.
 
     Shared by the plain and streaming follow-up endpoints so the two cannot
@@ -570,11 +571,18 @@ async def _prepare_followup(
     language = detect_output_language(task.question)
 
     system_prompt = (
-        "你是七人议会研究成果的讲解员。研究者针对已完成的议会研究向你追问，"
-        "你必须基于下方提供的议会产出（已确认主张、已采纳发现、盲点、异议、局限）回答，"
-        "不得编造研究中不存在的来源、数字或结论。若研究本身有缺口（缺席、未执行阶段），"
-        "如实说明，不要假装完整。"
+        "你是七人议会研究成果的讲解员，同时可以继续独立研究。"
+        "研究者针对已完成的议会研究向你追问。"
+        "回答必须分成两个一级标题，缺一不可：\n"
+        "## 本次研究指出\n"
+        "只写议会产出（已确认主张、已采纳发现、盲点、异议、局限）里能直接支撑的内容。"
+        "不得编造研究中不存在的来源、数字或结论。若研究本身有缺口，如实说明。\n"
+        "## 我继续研究得到的结果\n"
+        "你自己的推理、外部检索、技能指令或与本次议会无关的补充。"
+        "凡是不是本次议会产出的内容，必须在本段明确告诉用户："
+        "「以下内容不是本次议会的正式结论，是我继续研究/自行发挥」。"
         "技能指令与外部文献检索结果是过程上下文，不是正式证据，不得当作议会已采纳发现。"
+        "引用外部检索时标明「外部检索、非正式证据」。"
         "回答用"
         + ("中文。" if language.startswith("zh") else "English.")
     )
@@ -585,10 +593,9 @@ async def _prepare_followup(
         f"{skills_context}\n\n"
         f"{literature_context}\n\n"
         f"研究者的追问：{question}\n\n"
-        "请给出清晰、准确、有条理的回答；引用议会产出时点明主张/发现，"
-        "引用外部检索时标明「外部检索、非正式证据」。"
+        "按两个一级标题作答：先「本次研究指出」，再「我继续研究得到的结果」。"
     )
-    return base_url, api_key, model_name, system_prompt, user_prompt
+    return base_url, api_key, model_name, system_prompt, user_prompt, request.history
 
 
 @router.post("/{task_id}/followup")
@@ -619,15 +626,12 @@ async def follow_up(
             ),
             "available": False,
         }
-    base_url, api_key, model_name, system_prompt, user_prompt = prepared
+    base_url, api_key, model_name, system_prompt, user_prompt, history = prepared
 
     request_body = {
         "model": model_name,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "max_tokens": 1500,
+        "messages": _followup_messages(system_prompt, user_prompt, history),
+        "max_tokens": FOLLOWUP_MAX_TOKENS,
     }
     try:
         async with httpx.AsyncClient(
@@ -688,16 +692,13 @@ async def follow_up_stream(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
-    base_url, api_key, model_name, system_prompt, user_prompt = prepared
+    base_url, api_key, model_name, system_prompt, user_prompt, history = prepared
 
     async def _event_stream() -> AsyncIterator[str]:
         request_body = {
             "model": model_name,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "max_tokens": 1500,
+            "messages": _followup_messages(system_prompt, user_prompt, history),
+            "max_tokens": FOLLOWUP_MAX_TOKENS,
             "stream": True,
         }
         try:
@@ -760,6 +761,44 @@ async def follow_up_stream(
 # the whole text was seen (CLAUDE.md 7).
 MAX_PAPER_FOLLOWUP_CHARS = 40_000
 MAX_FOLLOWUP_SKILL_CHARS = 4_000
+# Follow-up answers are long (two labelled sections + citations). 1500
+# tokens cut mid-sentence on a second turn; 4096 is enough for a
+# complete reply without pretending the model has unlimited budget.
+FOLLOWUP_MAX_TOKENS = 4096
+MAX_FOLLOWUP_HISTORY_TURNS = 8
+MAX_FOLLOWUP_HISTORY_CHARS = 12_000
+
+
+def _followup_messages(
+    system_prompt: str,
+    user_prompt: str,
+    history: tuple[FrozenDict[str, str], ...],
+) -> list[dict[str, str]]:
+    """System + prior thread + current question.
+
+    History is oldest-first. Only ``user`` / ``assistant`` roles are
+    forwarded; anything else is dropped so a client cannot inject a
+    second system prompt. The window is capped so a long thread cannot
+    push the research brief out of context (the truncation that made a
+    follow-up appear to "freeze halfway").
+    """
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    used = 0
+    kept: list[dict[str, str]] = []
+    # Newest first so a long thread drops the oldest turns, not the last reply.
+    for item in reversed(history[-MAX_FOLLOWUP_HISTORY_TURNS:]):
+        role = (item.get("role") or "").strip()
+        content = (item.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        if used + len(content) > MAX_FOLLOWUP_HISTORY_CHARS:
+            continue
+        kept.append({"role": role, "content": content})
+        used += len(content)
+    kept.reverse()
+    messages.extend(kept)
+    messages.append({"role": "user", "content": user_prompt})
+    return messages
 
 
 async def _followup_skills_context(
@@ -907,6 +946,13 @@ async def re_research_task(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         ) from error
+    # 「从头研究」克隆出新任务后删除当前任务：研究者要的是同一问题从 0
+    # 再跑，不是多一份审计副本占会话历史。断点续跑走原 task_id，不删。
+    if effective_id != str(task_id):
+        await task_lifecycle.rehome_uploaded_objects(
+            session, task_id, UUID(effective_id)
+        )
+        await task_lifecycle.delete_task_cascade(session, task_id)
     return {"task_id": effective_id, "status": new_status}
 
 
@@ -943,6 +989,8 @@ async def rerun_fresh_task(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         ) from error
+    await task_lifecycle.rehome_uploaded_objects(session, task_id, fresh_id)
+    await task_lifecycle.delete_task_cascade(session, task_id)
     return {
         "task_id": str(fresh_id),
         "status": TaskStatus.QUEUED,

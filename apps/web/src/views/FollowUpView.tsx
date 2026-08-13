@@ -66,7 +66,7 @@ export function FollowUpView({
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [exchanges.length, sending]);
+  }, [exchanges, sending]);
 
   useEffect(() => {
     if (terminal) inputRef.current?.focus();
@@ -106,24 +106,36 @@ export function FollowUpView({
       );
       return;
     }
-    // Minimal WordprocessingML document — no extra dependency.
-    const escaped = markdown
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    const paragraphs = escaped.split("\n").map(
-      (line) =>
-        `<w:p><w:r><w:t xml:space="preserve">${line || " "}</w:t></w:r></w:p>`,
-    );
-    const documentXml =
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
-      `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
-      `<w:body>${paragraphs.join("")}</w:body></w:document>`;
+    // Word opens an HTML .doc as a real document. A raw WordprocessingML
+    // blob with a .docx extension is not a ZIP package — Word shows the XML.
+    const escape = (value: string) =>
+      value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    const blocks = markdown.split("\n").map((line) => {
+      if (line.startsWith("# ")) {
+        return `<h1>${escape(line.slice(2))}</h1>`;
+      }
+      if (line.startsWith("## ")) {
+        return `<h2>${escape(line.slice(3))}</h2>`;
+      }
+      if (line.startsWith("### ")) {
+        return `<h3>${escape(line.slice(4))}</h3>`;
+      }
+      if (!line.trim()) return "<p>&nbsp;</p>";
+      return `<p>${escape(line)}</p>`;
+    });
+    const html =
+      `<html xmlns:o="urn:schemas-microsoft-com:office:office" ` +
+      `xmlns:w="urn:schemas-microsoft-com:office:word">` +
+      `<head><meta charset="utf-8"><title>${escape(t("补充提问"))}</title>` +
+      `<style>body{font-family:Calibri,sans-serif;font-size:12pt;line-height:1.6}` +
+      `h1{font-size:18pt}h2{font-size:14pt}p{margin:0 0 8pt}</style></head>` +
+      `<body>${blocks.join("")}</body></html>`;
     downloadBlob(
-      new Blob([documentXml], {
-        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      }),
-      `poliscope-followup-${taskId.slice(0, 8)}.docx`,
+      new Blob(["﻿", html], { type: "application/msword;charset=utf-8" }),
+      `poliscope-followup-${taskId.slice(0, 8)}.doc`,
     );
   }
 
@@ -140,6 +152,12 @@ export function FollowUpView({
       { question: text, answer: "", ok: true, pending: true },
     ]);
     setQuestion("");
+    const history = exchanges
+      .filter((item) => item.ok && item.answer)
+      .flatMap((item) => [
+        { role: "user" as const, content: item.question },
+        { role: "assistant" as const, content: item.answer },
+      ]);
     try {
       await followUpStream(
         taskId,
@@ -161,6 +179,7 @@ export function FollowUpView({
         {
           skillIds: [...selectedSkills],
           searchLiterature,
+          history,
         },
       );
       setExchanges((prev) => {
@@ -198,7 +217,9 @@ export function FollowUpView({
         <h3>{t("补充提问")}</h3>
         <p className="followup__hint">
           {terminal
-            ? t("研究已完成。你可以就研究结论、证据或局限继续追问，回答基于本次研究的议会产出。")
+            ? t(
+                "研究已完成。回答分两段：「本次研究指出」只写议会产出；「我继续研究得到的结果」是模型继续研究或自行发挥，且必须标明。",
+              )
             : t("任务尚未完成，完成后才能补充提问。")}
         </p>
       </div>
@@ -218,7 +239,16 @@ export function FollowUpView({
               <div className="followup__a">
                 <span className="followup__role">{t("模型")}</span>
                 {exchange.pending ? (
-                  <p className="followup__pending">{t("思考中…")}</p>
+                  exchange.answer ? (
+                    <p>
+                      {exchange.answer}
+                      <span className="followup__caret" aria-hidden="true">
+                        ▍
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="followup__pending">{t("思考中…")}</p>
+                  )
                 ) : exchange.ok ? (
                   <p>{exchange.answer}</p>
                 ) : (
