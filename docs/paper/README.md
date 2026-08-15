@@ -6,7 +6,10 @@ https://aclanthology.org/2026.findings-acl.127/ ）的章节结构与文风撰�
 
 ## 文件
 
-- `epistemobrain.tex` — 完整 LaTeX 稿件（标题、作者、摘要、正文、参考文献、附录都在此文件内；编译时接入官方 ACL 模板的 `.sty` 即可）
+- `epistemobrain.tex` — 论文正文（标题、作者、摘要、正文、参考文献、附录都在此文件内），是 self-contained body：不含 `\documentclass`，编译时接入官方 ACL 模板的 `.sty`
+- `epistemobrain_main.tex` — 编译驱动（wrapper）：提供 ACL 模板 preamble 与 `\begin{document}`，`\input{epistemobrain}` 引入正文
+- `acl.sty` — 官方 ACL 模板（来自 https://github.com/acl-org/acl-style-files ，仓库根目录），编译依赖
+- `epistemobrain.pdf` — 已编译的 PDF（ACL Findings 2026 版式，10 页）
 - `README.md` — 本文件
 
 ## 作者信息（按要求填写）
@@ -23,18 +26,22 @@ submission`）：
 
 ## 编译
 
-需要官方 ACLPUB 2026 模板（`acl.sty` / `acl_natbib.sty` 等）。拿到模板后：
+仓库已自带官方 `acl.sty`（来自 https://github.com/acl-org/acl-style-files ，
+与正文同目录）。编译 wrapper（两遍，因 `\maketitle` 在正文内、交叉引用需重排）：
 
 ```bash
-# 把官方模板的 .sty 与本文件放在同一目录，然后：
-pdflatex epistemobrain
-bibtex  epistemobrain      # 本稿使用 thebibliography 环境，可跳过
-pdflatex epistemobrain
-pdflatex epistemobrain
+# 在本目录下：
+pdflatex -interaction=nonstopmode epistemobrain_main
+pdflatex -interaction=nonstopmode epistemobrain_main
 ```
 
-本稿不使用 `.bib` 文件（参考文献以 `thebibliography` 内联），因此
-`bibtex` 步骤可省略。
+生成 `epistemobrain_main.pdf`。本稿不使用 `.bib` 文件（参考文献以
+`thebibliography` 内联），因此 `bibtex` 步骤可省略。
+
+正文（`epistemobrain.tex`）的 `\title` / `\author` 之后必须紧跟 `\maketitle`——
+ACL 模板的 `\maketitle` 会建立跨双栏的标题区并切入双栏模式，abstract 环境依赖它。
+作者行中的 `\dagger` 必须写作 `$\dagger$`（`\dagger` 是数学模式命令，裸用在文本
+模式会触发连锁 Missing \$ 错误）。
 
 ## 结构与设计要点（对照 MemoBrain 论文格式）
 

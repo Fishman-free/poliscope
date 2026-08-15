@@ -1,0 +1,86 @@
+% =============================================================================
+% Poliscope 技术白皮书 -- 完整中文版
+% 编译：xelatex tech.tex（两遍）
+% =============================================================================
+\documentclass[11pt]{ctexart}
+
+% --- 页面与字体 ---
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.8cm, right=2.8cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue]{hyperref}
+\usepackage{fancyhdr}
+
+% --- 代码风格 ---
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{red},
+  breaklines=true,
+  frame=single,
+  columns=flexible,
+  xleftmargin=1em,
+  aboveskip=0.8em,
+  belowskip=0.8em,
+}
+
+% --- 页眉页脚 ---
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Poliscope 技术白皮书}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- 小节标题格式 ---
+\titleformat{\section}{\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{1em}{}
+
+\setcounter{tocdepth}{2}
+
+\begin{document}
+
+% ===== 封面 =====
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries Poliscope\par}
+\vspace{1cm}
+{\LARGE\bfseries 技术白皮书\par}
+\vspace{1.5cm}
+{\Large\bfseries EpistemoBrain：七人科学议会、双图证据治理与\par 计算社会科学盲点发现智能体\par}
+\vspace{2cm}
+{\large 版本 1.0 \quad 2026 年 8 月\par}
+\vspace{3cm}
+{\large 对应系统论文：\par
+《EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence
+Governance for Auditable Scientific Blindspot Discovery》\par
+（见 \texttt{docs/paper/epistemobrain.pdf}）\par}
+\vfill
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ===== 正文分章 =====
+\input{ch01_intro}
+\input{ch02_architecture}
+\input{ch03_council}
+\input{ch04_memory}
+\input{ch05_dualgraph}
+\input{ch06_evidence}
+\input{ch07_tokens}
+\input{ch08_reliability}
+\input{ch09_evaluation}
+\input{ch10_engineering}
+
+\end{document}

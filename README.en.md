@@ -5,6 +5,8 @@
 > Seven AI scientists walk into a review. Nobody gets to paper over the disagreements.
 >
 > **Try it live:** [http://39.96.197.238/](http://39.96.197.238/) — the author's public deployment; open it and start, no install needed
+>
+> **Paper:** [*EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery*](docs/paper/epistemobrain.pdf) (ACL Findings 2026 format; [PDF](docs/paper/epistemobrain.pdf)) · [技术白皮书](docs/tech/tech.pdf)
 
 Imagine you are reviewing a study claiming that "social media causes adolescent depression." The conclusion is polished, the citations are plentiful — but nobody tells you that this paper and five others all rely on the same dataset; nobody tells you that the causal claim is really just a correlation; nobody tells you that the authors themselves admit they could not rule out reverse causation.
 
@@ -213,6 +215,8 @@ Ask whoever runs the site for the **correct address and port** (commonly `http:/
 
 - Self-hosting (Docker Compose one-command startup, domain setup), full CLI/API reference, system architecture and the seven-scientist council protocol in detail, capability overview and design philosophy — all in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 - Formal design specification: [`docs/superpowers/specs/2026-07-31-poliscope-design.md`](docs/superpowers/specs/2026-07-31-poliscope-design.md).
+- System paper: [*EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery*](docs/paper/epistemobrain.pdf) (ACL Findings 2026 format; sources in `docs/paper/`)
+- Technical white paper (Chinese): [*Poliscope 技术白皮书*](docs/tech/tech.pdf) (LaTeX sources + compiled PDF in `docs/tech/`; architecture, council, memory, dual-graph, evidence gate, token optimization, reliability, evaluation)
 
 ---
 

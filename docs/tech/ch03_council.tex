@@ -1,0 +1,88 @@
+% ===== 第 3 章：七人科学议会 =====
+\section{七人科学议会}
+
+\subsection{七个席位}
+
+每个正式研究任务，7 名科学家全程参与。它们在 \texttt{packages/council/contracts.py:9-17} 的 \texttt{Seat} 枚举中定义：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{席位} & \textbf{中文名} & \textbf{核心职责} \\
+\midrule
+\texttt{theory\_builder} & 理论建构者 & 机制与风险预测、竞争理论 \\
+\texttt{causal\_scientist} & 因果推断专家 & 混杂、反向因果、选择偏差、识别策略 \\
+\texttt{measurement\_scientist} & 测量与构念专家 & 构念与操作化的距离、自报告偏差 \\
+\texttt{replication\_scientist} & 统计与复现专家 & 功效、精度、复现史 \\
+\texttt{boundary\_scientist} & 边界与情境专家 & 适用与不适用的范围、异质性 \\
+\texttt{adversarial\_falsifier} & 对抗性证伪者 & 攻击最强版本、找反例 \\
+\texttt{evidence\_auditor} & 证据与溯源审计员 & 锚点、独立性、引用蕴含 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\texttt{EpistemoBrain} 是\emph{无投票权的组织脑}——不是第 8 名科学家，也不代表任何学术立场。
+
+\textbf{7 个席位共享运行框架和工具缓存，但必须拥有独立的东西}：独立角色规格（\texttt{packages/council/roles.py} 的 \texttt{ROLE\_SPECS} 定义每席 expertise）、独立私有记忆（agent id 为 \texttt{\{task\_id\}:\{seat\}}，硬约束无人读他人 id）、不同证据投影权重（\texttt{packages/memory/projection.py}）。这三样都有测试断言它们确实不同——曾有五个席位共用一个空权重表，在唯一用于区分它们的维度上其实是同一个 Agent 的五份拷贝。
+
+\textbf{单一运行框架}：\texttt{packages/council/deliberation.py} 用\emph{一个} \texttt{GatewayDeliberator} 类 + 7 套席位指令服务 7 席，满足「不复制 7 套业务代码、不部署 7 个服务」的约束。
+
+\subsection{八个阶段（PHASE\_SEQUENCE）}
+
+任务按 \texttt{packages/epistemo/contracts.py:75-84} 的 \texttt{PHASE\_SEQUENCE} 顺序执行：
+
+\begin{lstlisting}
+PRECOMMITMENT -> ACQUISITION -> EVIDENCE_EXCHANGE -> CROSS_EXAMINATION
+  -> BLINDSPOT_BOUNTY -> JOINT_MODELING -> FINAL_REJUDGMENT -> REPORTING
+\end{lstlisting}
+
+\begin{enumerate}
+\item \textbf{独立预承诺（Independent Precommitment）}：7 席分别提交初始判断、置信度、三个最可能的盲点、需要补充的证据、什么证据会改变判断。封存之后才能读取，读取之后不能提交——这是「后续一致不是锚定」的唯一保证。
+\item \textbf{专业取证（Professional Acquisition）}：7 席从各自维度发出证据请求，由查询规划器合并去重，执行批量检索。证据需求矩阵（Evidence Demand Matrix）驱动搜索行为，而不是泛泛的关键词。
+\item \textbf{证据交换（Evidence Exchange）}：交换的是结构化证据（主张、证据原文、来源、研究设计、证据质量、适用边界、置信度），不是完整思维链。
+\item \textbf{交叉质询（Cross-Examination）}：目标不是争胜而是暴露隐藏假设。被质询者只能选择 \texttt{DEFEND}/\texttt{REVISE}/\texttt{NARROW}/\texttt{WITHDRAW}/\texttt{DISSENT}。
+\item \textbf{盲点悬赏（Blindspot Bounty）}：证据图暴露的缺口生成盲点候选，按影响 $\times$ 不确定性 $\times$ 可调查性 $\times$ 新颖度 $-$ 成本评分，广播给 7 席认领。
+\item \textbf{联合建模（Joint Modeling）}：把各席调查结果组合成条件化共识。\emph{禁止多数投票裁决科研真理}——在「最强反对」或「证伪条件」缺失时拒绝出具共识（\texttt{registry.py:1823-1852}）。
+\item \textbf{最终复判（Final Rejudgment）}：7 席再次独立判断，记录信念更新与具名异议（\texttt{DissentCertificate}）。
+\item \textbf{报告生成（Reporting）}：从图、账本组装 Research Brief 与最终论文。
+\end{enumerate}
+
+\textbf{一个席位失败不终止任务}。失败被记为该轮的 \texttt{PHASE\_FAILED} 事件和一个未填槽位，下一轮照常执行，任务以 \texttt{COMPLETED\_WITH\_GAPS} 收尾。
+
+\subsection{结构化科研动作}
+
+科学家只允许提交结构化动作（\texttt{packages/council/contracts.py:22-38}）：
+
+\begin{lstlisting}
+PROPOSE  SUPPORT  CHALLENGE  QUALIFY  FORK  REQUEST  REVISE  DISSENT
+DEFEND   REVISE   NARROW    WITHDRAW DISSENT   (收到质询后)
+\end{lstlisting}
+
+每个动作必须包含 actor、target、statement、evidence\_refs、confidence、falsification\_condition、novelty。以下内容被账本拒绝：没有目标节点的泛泛评论、没有来源的事实性主张、与已有内容高度重复的观点、只有「我同意」但没有新增信息的发言、无法说明如何被推翻的绝对断言。动作校验在 \texttt{packages/council/actions.py}。
+
+\subsection{禁止多数投票：条件化共识}
+
+\texttt{evaluate\_consensus} 中，即使多数席位 \texttt{SUPPORT}，只要 \texttt{has\_unresolved\_fatal\_challenge} 为真或 \texttt{evidence\_refs} 为空，共识即被 \texttt{BLOCKED}。联合建模阶段的 \texttt{JointModelingHandler} 在「最强反对」或「证伪条件」缺失时拒绝产出共识——注释直接声明这是多数投票禁令的机制。
+
+最终输出不是「6:1 通过」，而是：
+
+\begin{quote}
+多数判断：存在小幅、条件性的影响。\\
+少数异议：现有研究仍不足以排除反向因果。\\
+真正分歧：是否将纵向时间顺序视为足够的因果证据。\\
+解决分歧所需证据：具有平台日志和基线心理健康控制的预注册纵向研究。
+\end{quote}
+
+这就是\emph{条件化共识}，而不是多数统治。
+
+\subsection{人类方向性引导检查点（AWAITING\_COUNCIL\_INPUT）}
+
+盲点悬赏（第 5 轮）结束、联合建模（第 6 轮）开始之前，存在一个\emph{可选的}人类方向性引导检查点：任务状态进入 \texttt{AWAITING\_COUNCIL\_INPUT}，研究者可以查看 7 席在盲点悬赏结束时的立场（预承诺、置信度、已提出质询），并提交一段方向性备注，或明确留空直接继续。
+
+这个检查点\emph{不构成}对「禁止多数投票」的违反：它是单一研究者的方向性输入，不是投票计数；只影响联合建模阶段「接下来重点讨论哪些悬而未决的冲突」这类调度性内容；不改变任何 Evidence Gate 判定逻辑，不作为任何 \texttt{Claim} 的 \texttt{SUPPORTS}/\texttt{REFUTES} 证据来源，不进入 \texttt{DebateCapsule} 或 \texttt{DissentCertificate} 的构造字段。联合建模的 prompt 会把它作为一段独立、明确标注来源的文本注入（例如 ``[研究者方向性备注，非科学判断]: ...''），供模型参考，不得被模型当成第 8 名科学家的科研判断。
+
+宽限期（默认 120 秒，\texttt{POLISCOPE\_COUNCIL\_INPUT\_GRACE\_SECONDS} 配置，最小 30 秒）届满仍未操作时，服务端自动把任务置回排队，以「无方向性干预」继续——研究不会被研究者走开而卡死。
+
+实现：\texttt{TaskStatus.AWAITING\_COUNCIL\_INPUT}（\texttt{epistemo/contracts.py:28}）、\texttt{CouncilCheckpoint.guidance}、HTTP 端点 \texttt{GET/POST /api/tasks/\{id\}/council-preview} 与 \texttt{/council-guidance}、CLI 子命令、前端 \texttt{CheckpointGate.tsx}。

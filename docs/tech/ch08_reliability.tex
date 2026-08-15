@@ -1,0 +1,62 @@
+% ===== 第 8 章：可靠性、状态机与快照 =====
+\section{可靠性、状态机与快照}
+
+\subsection{显式状态机}
+
+\texttt{packages/epistemo/state\_machine.py} 的 \texttt{TaskStateMachine} 管理任务状态。\texttt{\_transition\_to\_phase} 只允许 \texttt{current\_index+1} 的跳转，跳转抛 \texttt{InvalidTransition}。任务状态包括：
+
+\begin{lstlisting}
+AWAITING_CLAIM_CONFIRMATION -> QUEUED -> RUNNING
+  -> AWAITING_COUNCIL_INPUT -> QUEUED（检查点后） -> RUNNING
+  -> COMPLETED / COMPLETED_WITH_GAPS / FAILED / CANCELLED
+\end{lstlisting}
+
+\subsection{快照 / 暂停 / 恢复 = 「暂停认领」}
+
+\texttt{deliberate()}（\texttt{apps/worker/jobs.py}）把一个任务的完整 8 阶段议会跑在一次未提交事务里——这是「要么完整、要么不跑」的原子性设计，保证账本与证据图在任何时刻一致（没有可截断的中间持久状态可供半途快照）。
+
+因此 `pause`/`resume` 的语义是\textbf{队列层面}的：把任务从 \texttt{QUEUED} 挪到 \texttt{PAUSED}，恢复之前永远不会被 worker 认领（端到端测试 \texttt{test\_a\_paused\_task\_is\_never\_claimed\_until\_resumed}）。议会层面的固定暂停点是 JOINT\_MODELING 前的检查点（第 3 章）。一个任务两种暂停：还没轮到你的，用 \texttt{pause}/\texttt{resume} 挡在队列外；轮到你了想给议会方向，用检查点。
+
+\subsection{检查点与断点续跑}
+
+\texttt{CouncilCheckpoint}（JSONB 列）保存运行状态：\texttt{run\_phases}、\texttt{carried}、\texttt{unfilled}、\texttt{failures}、\texttt{phase\_snapshots}、\texttt{restart\_from}、\texttt{guidance}。\texttt{first\_unfinished\_phase()} 决定从断点续跑的位置——它把「从未跑到」的阶段也算作未完成，使 CANCELLED 停在哪就从下一阶段续跑。
+
+终态任务现在也保留 checkpoint（含 8 阶段 phase\_snapshots），使「从断点处研究」能看到哪些协议阶段实际跑过。\textbf{重新研究**两种模式}：
+
+\begin{itemize}
+\item \textbf{从头研究}（mode=full / rerun\_fresh）：克隆新任务（全新 id、全新账本），从独立预承诺真正重新开始；仅继承已确认的主张；原任务保留终态作为审计历史。
+\item \textbf{从断点研究}（mode=first\_gap）：从第一个未完成（失败、跳过或尚未跑到）的阶段原位续跑。
+\end{itemize}
+
+从头模式必须克隆新任务而非原位重跑：同一任务从头重跑会与已提交账本事件的幂等键冲突（EventConflict）。上传的 PDF 对象通过 \texttt{rehome\_uploaded\_objects} 迁移到新任务，避免级联删除。
+
+\subsection{单席失败降级}
+
+一个席位调用失败被 \texttt{UnavailableDeliverator} 转为 \texttt{SEAT\_UNAVAILABLE} 事件，带原因与重试次数。\texttt{MAX\_SEAT\_ATTEMPTS = 2} 限制重试，整轮 \texttt{\_COLLECT\_DEADLINE\_SECONDS}（15 分钟）限制收集。单个科学家失败不终止任务，任务以 \texttt{COMPLETED\_WITH\_GAPS} 收尾，缺席席位在报告的局限一节被逐条点名。对应测试 \texttt{test\_single\_seat\_degradation.py}、\texttt{test\_seat\_retry.py}。
+
+\subsection{停止即时生效}
+
+研究者点「停止」时，如果任务在跑（\texttt{RUNNING}），请求写入侧信道表；worker 在阶段间轮询该表，发现后抛 \texttt{CouncilCancelled}，任务转 \texttt{CANCELLED} 并保留 checkpoint（含 phase\_snapshots）作为回退素材。\texttt{\_await\_or\_cancel} 用 1s 轮询让停止即时生效（round-13 修复）。
+
+\subsection{重试与超时策略}
+
+\begin{lstlisting}
+模型调用：流式 240s -> 非流式 300s 回退；schema 修复至多 1 次
+席位收集：整轮 deadline 15 分钟；单席至多重试 2 次
+结构化输出：修复失败后隔离，绝不写正式图
+\end{lstlisting}
+
+\subsection{会话删除：研究者可以销毁自己的会话}
+
+\texttt{DELETE /api/tasks/\{id\}} 物理删除任务及全部子记录（账本、过程流、证据图、审计行）。迁移 0019 为此授予应用角色 DELETE——这是唯一的权限模型例外（见 DEVELOPMENT.md「设计上的五个硬约束」第 2 条）。会话历史面板支持行内两段式删除与「清空全部」。
+
+\subsection{测试：三层测试纪律}
+
+\begin{itemize}
+\item \textbf{单元测试}（\texttt{tests/unit}）：无外部依赖，约 1 秒跑完。
+\item \textbf{集成测试}（\texttt{tests/integration}）：需要 Docker，跨真实数据库与真实角色。每个文件都必须真的连数据库（目录级 conftest 强制）。
+\item \textbf{Golden 测试}（\texttt{tests/golden}）：因果蕴含黄金用例。
+\item \textbf{E2E 门禁}（\texttt{tests/e2e}）：发布门禁。
+\end{itemize}
+
+\textbf{没有 Docker 时集成测试会跳过并说明原因，不会静默通过}——一份在没有数据库的机器上依然全绿的测试报告，等于在撒谎。测试纪律：业务规则/状态机/图约束先写测试；修 Bug 必须加回归测试；关键修复用变异测试自证（把修复回退、确认测试失败、再恢复）。

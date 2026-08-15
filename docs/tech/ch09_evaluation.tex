@@ -1,0 +1,59 @@
+% ===== 第 9 章：评测体系 =====
+\section{ForesightBlindspot 评测体系}
+
+\subsection{为什么需要专门的时间切片基准}
+
+盲点发现的价值在于\textbf{提前看见未来才被证实的缺口}。一个普通的检索质量基准无法度量「系统能否预判哪个方向未来会有高价值发现」。因此 Poliscope 设计了 ForesightBlindspot：一个时间切片评测协议。
+
+每个 case 是一个存在争议的问题 + 一个截止日：系统只能读截止日前封闭语料，gold blindspots 是「后来被高质量研究证实、截止日前有合理的先兆证据、且不依赖完全不可预见的平台/事件/方法」的缺口。泄漏控制内建于协议：封闭截止前语料、禁止未来引用、可匿名化变量、明确披露基础模型参数可能包含未来知识这一无法消除的风险。
+
+\subsection{评测目标与五条基线}
+
+核心对比保留五条基线（CLAUDE.md 第 13 节），它们是\emph{真实 council 的配置}而非另写的实现，因此每一条相对上一条恰好增加一个能力：
+
+\begin{enumerate}
+\item \textbf{Single-Agent Deep Research}：一个研究者（理论建构者），无协议、无记忆、无门。
+\item \textbf{Fixed Multi-Agent Debate}：7 席 + 无差别的 deliberator，无每席记忆、无门。
+\item \textbf{Council + Linear Context}：7 席共享一份无差别的转录。
+\item \textbf{Council + MemoBrain without Evidence Engine}：7 席有每席记忆但移除证据门。
+\item \textbf{Full Poliscope}：完整系统。
+\end{enumerate}
+
+优先消融（每项删除一个机制）：无独立预承诺、无对抗性证伪者、无证据审计员、普通 Fold、无证据谱系、无 MemoBrain。
+
+\subsection{核心指标族}
+
+\begin{lstlisting}
+盲点：recall, precision, high-impact recall, specificity, actionability, foresight distance
+证据：citation existence, citation entailment, evidence independence, causal overclaim rate, full-text coverage
+记忆：compression ratio, scientific backbone retention, contradiction retention, long-horizon drift, recovery quality
+协作：role diversity, debate utility, belief-update quality, dissent preservation, false consensus rate
+成本：cost per valid blindspot, tokens per admitted finding
+\end{lstlisting}
+
+\subsection{评测管道与生产系统同构}
+
+\texttt{packages/evaluation/harness.py} 从\emph{同一套} \texttt{CouncilOrchestrator} + \texttt{GatewayDeliverator} + \texttt{CouncilMemory} 接线出五条基线和六项消融，而不是另写一套评测实现——这使消融结论能真实反映生产行为。打分函数复用生产审计规则（因果越级策略、引用蕴含验证器、谱系检测与证据聚类），而不是重新推导平行近似。对应测试 \texttt{test\_evaluation\_harness.py}、\texttt{test\_evaluation\_ablations.py}。
+
+\subsection{基线构造正确性：评测管道发现的修复}
+
+评测管道第一次运行就暴露了两个构造缺陷并触发修复：
+
+\begin{enumerate}
+\item \textbf{单 Agent 选错席位}：基线原来按有序枚举取字母序第一个席位，恰好是证伪者——而证伪者在脚本化素材里盲点答案最强，导致「单研究者」得分与完整议会一样高（F1 0.8）。修复：单 Agent 基线显式用理论建构者。
+\item \textbf{复判全席遍历}：最终复判 handler 无条件遍历全部 7 席，为从未参与的席位铸造占位判断。修复：复判尊重参与席位集合。
+\end{enumerate}
+
+回归防护：断言单席盲点覆盖严格低于多席覆盖——未来若基线阶梯坍塌立即失败。论文如实报告了这一修正过程，因为「测量仪器的构造是测量的一部分」。
+
+\subsection{当前评测的诚实边界}
+
+\textbf{没有编造任何数字}。论文与文档如实标注为未来工作：
+
+\begin{itemize}
+\item 时间切片语料（截止日前封闭语料）尚未采集 $\rightarrow$ 无独立 B\_test。
+\item 真实模型 + 真实语料的五基线受控对照实验尚未运行（需模型凭证与语料采集）。
+\item 人工标注（金标准盲点的 Kappa/Alpha 一致性）尚未产生标注数据——但协议骨架（双人标注 + 仲裁者 + 统计）已实现于 \texttt{packages/evaluation/agreement.py}。
+\end{itemize}
+
+当前可复现的数字来自 \texttt{scripts/arbor\_eval.py} 在脚本化 demo case（无模型调用、无网络、无数据库）上的确定性测量，属于 B\_dev。脚本化 gateway 的固有边界被如实报告：协议/记忆/证据门对盲点\emph{整合}的贡献在盲点指标上不可观测（两个消融在脚本化素材上是零效应），它们体现在辅助分数（异议保留、引用蕴含、证据独立性）并要求真实模型运行才能观测。

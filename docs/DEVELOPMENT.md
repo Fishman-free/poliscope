@@ -62,6 +62,29 @@ Poliscope 把这三件事当成要用架构解决的问题，而不是补一行�
 - **每个缺口都被点名，不只是一个计数。** 任务头常驻的「N 处未完成」徽标旁就是明细行：哪个席位缺席、哪个轮次未执行或失败，全部用科学家与阶段的中文名写出。
 - **四个入口，一套后端契约。** CLI、HTTP API、Web 证据工作台（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View / 最终论文 / 知识库）与 Claude Code / Codex Agent Skill，全部走同一条 CLI/API 契约，没有第二条能绕过证据门的路径。
 
+### 设计落地到什么程度：逐项核对
+
+上面列的能力不是文档里的一句话，而是可以从代码和测试逐项点回去的。以下按 CLAUDE.md 第 3–7 节逐项核对实现位置与程度：
+
+| 设计主张 | 实现位置 | 程度 |
+|---|---|---|
+| 7 个科学家席位 | `packages/council/contracts.py:9-17`（`Seat` 枚举）、`roles.py`（角色规格）、`deliberation.py`（单一 `GatewayDeliberator` + 7 套席位指令，不复制 7 套业务代码） | 完整 |
+| 独立私人状态 / 证据投影 | `packages/memory/council_memory.py:16-27`；`agent_id = {task_id}:{seat}`，硬约束无人读他人 id；`memory/projection.py` 按席投影 | 完整 |
+| 议会协议 8 阶段 + 结构化动作 | `packages/epistemo/contracts.py:75-84`（`PHASE_SEQUENCE`）、`council/contracts.py:22-38`（8 动作 + 5 回应）、`rounds/registry.py:2073-2082`（8 个 runner） | 完整 |
+| 禁止多数投票 | `council/consensus.py`；`registry.py:1823-1852` 联合建模在「最强反对」或「证伪条件」缺失时拒绝出共识 | 完整 |
+| 双图隔离 | `evidence/contracts.py`（10 节点 / 12 边）、`sql_ledger.py`（事件账本）、`sql_projector.py`（唯一写入者） | 完整 |
+| 双图隔离由数据库权限硬编码 | `packages/kernel/privileges.py` + 迁移；`tests/integration/test_graph_write_isolation.py`（10 用例）逐条断言 app 角色写图被拒 | 完整 |
+| 账本幂等可重放 | `sql_ledger.py` 的 `uq_event_idempotency` + `pg_advisory_xact_lock`；同 key 不同 payload 抛 `EventConflict`（审计防线） | 完整 |
+| Evidence Gate 六阶段 + A–D 分级 | `evidence/gate.py`；B 级只 `SOURCE_ONLY`、C/D 仅线索、未过审 `QUARANTINE`；`CausalUpgradePolicy` 拦截横截面+因果 | 完整 |
+| 证据独立性 | `evidence/independence.py`、`lineage.py`（8 种依赖类型）；报告同时显示论文数与独立证据簇数 | 完整 |
+| 异议保留 / 辩证折叠 | `evidence/dialectical_fold.py:22-34`（正反双方字段非空才折叠）、`DissentCertificate` 挂事件本体；`test_dissent_preservation.py` | 完整 |
+| Model / Tool Gateway | `packages/models/gateway.py`（真实 OpenAI 兼容端点）、`packages/tools/http_gateway.py`（OpenAlex/Crossref/Unpaywall/Semantic Scholar）；调用全走网关、费用/延迟/重试落库 | 完整 |
+| 人类方向性检查点 | `AWAITING_COUNCIL_INPUT` + `CouncilCheckpoint.guidance` + 端点/CLI/前端 `CheckpointGate.tsx` | 完整 |
+| MemoBrain 适配接口 | `packages/memory/contracts.py` 五方法与 CLAUDE.md 6 逐字一致；**但当前返回 `InMemoryMemoryAdapter` 内存替身，上游 `github.com/qhjqhj00/MemoBrain` 未真实接入**（Process Graph 的 Fold/Recall 为简化占位） | 部分 |
+| 盲证据评审 / 独立双抽取 | 规格 §7.9 自注 MVP 验收范围外；盲评审仅有结构性测试锁定不透传声誉字段，无双抽取实现 | 部分 |
+
+结论：九项核心主张八项完整落地、一项（MemoBrain 上游接入）为接口完整 + 内存替身；两项规格自注 MVP 范围外的机制未实现。完整的技术底层细节（架构、议会、记忆、双图、证据门、token 优化、可靠性、评测）见[《Poliscope 技术白皮书》](tech/tech.pdf)（`docs/tech/`，LaTeX 源 + 编译好的 PDF）。
+
 ## 适合谁 · 不适合做什么
 
 **适合：** 需要审查一个存在争议的计算社会科学实证问题（首版聚焦数字行为、社交媒体与心理健康），并且在意「结论建立在多强的证据上、哪些地方还有真正的分歧」，而不只是想要一段读起来通顺的文献综述。

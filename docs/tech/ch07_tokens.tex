@@ -1,0 +1,65 @@
+% ===== 第 7 章：token 与成本控制 =====
+\section{token 与成本控制：七人全程如何不烧钱}
+
+七人全程参与确实比动态激活昂贵。Poliscope 用六层工程机制控制成本，而不是靠减人——「任何一次省略某个角色的调度，都在赌这个角色这次用不上」是被否决的方案。以下逐层拆解。
+
+\subsection{发言预算：每轮每席有上限}
+
+每一轮、每一席最多一个主动作 + 一个质询 + 一个回应；没有新增信息就 \texttt{PASS}。这直接限制了一轮议会内模型调用次数的上界。实现上由各轮 handler 的收集逻辑（\texttt{registry.py} 的 \texttt{\_collect}）约束，一个席位一次 phase 至多触发有限次模型调用，超出即记缺席。
+
+\subsection{新颖性门控：先去重再推理}
+
+提交动作前先与现有证据图进行语义去重：与已有节点相似度超过阈值且没有新增证据/边界/攻击，就不调用高成本推理、不写入集体图。\texttt{packages/evidence/gate.py} 的 DEDUPLICATION 阶段就是这道闸门。一个来源去重命中已持久化行时，不会重复花费工具/模型预算（\texttt{registry.py:927-929} 注释）。
+
+\subsection{分层模型调用：复杂判断用强模型，机械操作用轻量模型}
+
+\texttt{packages/council/deliberation.py:125-132} 的 \texttt{PHASE\_MODEL\_CLASSES} 按阶段分配模型档位：
+
+\begin{lstlisting}
+PRECOMMITMENT   -> STRONG_REASONING    # 独立判断，质量关键
+ACQUISITION     -> MEDIUM              # 检索意图生成
+EVIDENCE_EXCHANGE -> MEDIUM
+CROSS_EXAMINATION -> STRONG_REASONING  # 质询，质量关键
+BLINDSPOT_BOUNTY -> STRONG_REASONING   # 盲点评分，质量关键
+JOINT_MODELING  -> MEDIUM
+FINAL_REJUDGMENT -> STRONG_REASONING   # 最终复判，质量关键
+\end{lstlisting}
+
+强推理阶段（预承诺、交叉质询、盲点悬赏、最终复判）用强模型，机械阶段（取证、交换、联合建模）用轻量模型。部署时通过 \texttt{POLISCOPE\_MODEL\_NAME\_STRONG\_REASONING} / \texttt{\_MEDIUM} / \texttt{\_LIGHTWEIGHT} 分别配置，模型名留空时按序回退到任务自带配置 $\rightarrow$ 部署默认 $\rightarrow$ \texttt{deepseek-v4-flash}。
+
+\subsection{共享检索缓存：七人合查一个池}
+
+七名科学家不各搜一遍相同关键词。他们提出证据需求，\texttt{Query Planner} 合并去重检索意图，\texttt{Retriever} 执行批量检索，所有结果进入\emph{统一候选池}（Shared Discovery Pool）。同一论文：PDF 只下载一次、文本只解析一次、DOI 只验证一次、元数据统一缓存；不同角色读取同一篇论文的不同字段和片段。共享缓存的同时，每个角色仍基于自己的视角筛选和阅读——去重的是检索成本，不是认知多样性。
+
+\subsection{共享缓存与模型调用的可观测成本}
+
+所有模型调用走 \texttt{packages/models/gateway.py} 的 \texttt{AuditedModelGateway}（装饰器），\texttt{models/audit.py} 的 \texttt{record\_model\_call} 把每次调用落库：
+
+\begin{verbatim}
+input_tokens  output_tokens  cost_usd  latency_ms  retries  schema_status
+\end{verbatim}
+
+工具调用同理走 \texttt{AuditedToolGateway}。费用/延迟/重试/错误全部可审计。这既满足 CLAUDE.md 第 10 节「模型与工具调用必须记录延迟、费用、重试和错误」，也让研究者能看见钱花在了哪里。
+
+\subsection{四维预算：不是只卡一个数}
+
+\texttt{packages/epistemo/budget.py} 的 \texttt{BudgetTracker} 同时追踪四个维度：
+
+\begin{lstlisting}
+wall_clock_minutes（总时长）  model_cost_usd（模型费用）
+tool_call_limit（工具调用数）  source_limit（来源数）
+\end{lstlisting}
+
+每个消费者\emph{在花钱之前}检查预算（\texttt{consume\_*} 在扣减前判断剩余）。预算耗尽抛 \texttt{BudgetExhausted}，运行以 \texttt{COMPLETED\_WITH\_GAPS} 收尾，未完成证据槽位被列出——预算不足被显式报告，不伪造完整结果（CLAUDE.md 第 10 节）。
+
+\subsection{阶段级 deadline：防止单个席位拖死全体}
+
+\texttt{registry.py:493-520}：\texttt{\_COLLECT\_DEADLINE\_SECONDS}（默认 15 分钟）限制整个收集轮；\texttt{MAX\_SEAT\_ATTEMPTS = 2} 限制单席重试次数。一个席位调用超时被记缺席（\texttt{SEAT\_UNAVAILABLE} 事件带原因与重试次数），下一轮照常执行——不会因为一个席位的模型调用挂起而让整个议会陪跑。模型网关自身还有 240s 流式 + 300s 非流式回退的超时。
+
+\subsection{800 字符的 Recall 预算：上下文竞争管理}
+
+\emph{每席 recall 预算 = 800 字符}（\texttt{council\_memory.py::DEFAULT\_RECALL\_BUDGET}）。recall 与证据投影竞争同一份上下文，刻意设小是为了保留科研骨架（当前任务 + 最近几个阶段摘要）而不是重放完整转录。随着阶段推进，后面席位的 prompt 不会因为前面所有轮次的完整历史而无限膨胀。
+
+\subsection{Free Trial 与 BYOK：成本在研究者手里}
+
+模型费用可以由部署方配置（\texttt{POLISCOPE\_MODEL\_\*}），也可以由研究者自带（BYOK，任务级 \texttt{model\_config}）。免费试用额度 \texttt{FREE\_TRIAL\_LIMIT = 2}（\texttt{packages/models/free\_trial.py}）在 confirm-claims 时原子扣减。API key 只存服务器/任务行，\textbf{任何读端点都不回显}，绝不进仓库、日志或前端。

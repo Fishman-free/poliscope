@@ -1,0 +1,48 @@
+% =============================================================================
+% EpistemoBrain / Poliscope -- ACL Findings 2026 format manuscript (MAIN)
+%
+% This is the compile driver. epistemobrain.tex is the self-contained body
+% (title, authors, abstract, sections, thebibliography); it has no
+% \documentclass because the ACL preamble lives here. To compile:
+%
+%   pdflatex epistemobrain_main
+%   pdflatex epistemobrain_main
+%
+% The official ACL template (acl.sty) must sit in the same directory.
+% =============================================================================
+\documentclass[11pt]{article}
+
+% Final (camera-ready) copy. Change to [review] for the anonymized review
+% version, or [preprint] for a non-anonymous version with page numbers.
+\usepackage{acl}
+
+% Standard package includes
+\usepackage{times}
+\usepackage{latexsym}
+
+% For proper rendering and hyphenation of words containing Latin characters
+\usepackage[T1]{fontenc}
+% This assumes your files are encoded as UTF8
+\usepackage[utf8]{inputenc}
+
+% Improves layout and saves some space
+\usepackage{microtype}
+
+% Including images in your LaTeX document requires adding additional package(s)
+\usepackage{graphicx}
+
+% Booktabs for publication-quality tables
+\usepackage{booktabs}
+
+% amsmath for \text{...} in math mode (math in epistemobrain.tex)
+\usepackage{amsmath}
+
+\begin{document}
+
+% \title / \author / \maketitle / abstract / sections / bibliography all live
+% in the body file so the source stays a single self-contained manuscript.
+% The body calls \maketitle itself after declaring \title/\author (see the
+% note there); this file only provides the preamble and the document frame.
+\input{epistemobrain}
+
+\end{document}

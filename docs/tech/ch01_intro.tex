@@ -1,0 +1,46 @@
+% ===== 第 1 章：引言与设计哲学 =====
+\section{引言：为什么需要一场没有和稀泥的科研审查}
+
+\subsection{问题：流畅的摘要掩盖了证据的裂缝}
+
+大型语言模型（LLM）智能体让深度研究变得触手可及：研究者输入一个问题，智能体检索、阅读、综合出一篇读起来通顺的综述。但对于存在争议的科研问题，标准的深度研究管线继承了三个单靠优化文风无法修复的失效模式。
+
+\textbf{第一，单一视角。}一个智能体读一篇论文，倾向于只看到自己那一路的解释。测量科学家对自报告偏差的担忧，在一个根本没有测量科学家的管线上是不可见的。
+
+\textbf{第二，一致不是证据。}如果七个智能体读到的是同一份错误的摘要、同一篇被撤稿的论文、同一条张冠李戴的引用，系统可以把一个\emph{共享的错误}包装成一个看起来被反复验证过的共识——因为\emph{被重复}而被当成\emph{被证实}。
+
+\textbf{第三，总结器拍平异议。}总结器的最后一步「大家基本同意」，恰好抹掉了争议综述最该保留的信息：持异议的科学家在反对什么、什么样的证据会改变他们的立场。这些不是 Prompt 调优能解决的问题，而是关于「一场科研审查应该怎么组织」的结构性问题。
+
+计算社会科学让这些风险变得具体。复现危机显示大量已发表发现无法复现\footnote{Open Science Collaboration, \emph{Estimating the reproducibility of psychological science}, Science, 2015.}；发表偏差夸大表观效应量\footnote{D. Fanelli, ``Positive'' results increase down the hierarchy of the sciences, PLoS ONE, 2010.}；研究者自由度成倍放大假阳性\footnote{A. Gelman \& E. Loken, \emph{The garden of forking paths}, 2013; B. Nosek et al., \emph{The preregistration revolution}, PNAS, 2018.}。在本项目聚焦的领域——数字行为、社交媒体与心理健康——横截面设计被例行地报告为因果、自报告测量占据主导、少量数据集支撑着大量文献\footnote{A. Orben \& A. Przybylski, \emph{The association between adolescent well-being and digital technology use}, Nature Human Behaviour, 2019; P. Valkenburg et al., \emph{Social media use and its impact on adolescent mental health}, Current Opinion in Psychology, 2022.}。
+
+\subsection{对策：不是更快的综述机器，而是一面照出证据裂缝的透镜}
+
+Poliscope 是这个问题的回答。它是一款面向计算社会科学争议问题的深度研究智能体：输入一个存疑的问题，它组织 \textbf{7 名各有专长的 AI 科学家}独立取证、互相质询、专门找反例和漏洞，最终产出一张\emph{结论与局限并排、证据可溯源、异议不删除}的争议证据地图。
+
+Poliscope 的核心方法叫 \textbf{EpistemoBrain}。它不是「7 个聊天机器人加 1 个总结机器人」——那是本项目的设计者们反复强调的误区。本项目的立场是：
+
+\begin{quote}
+「让 7 个 Agent 轮流各说一段话、再让第 8 个 Agent 写摘要，做出来的东西看起来热闹，但解决不了任何一个真实的科研盲点问题——分歧会在总结那一步被拍平，没人的判断真正被别人的证据挑战过。」
+\end{quote}
+
+因此 EpistemoBrain 的架构起点是反过来的：先决定「一个可靠的争议审查该有的组织结构和记忆机制是什么样」，再把 7 个角色放进这套结构里。整个设计的核心论点可以压缩为一句话：
+
+\begin{center}
+\fbox{\parbox{0.9\textwidth}{\centering
+\textbf{可靠的盲点发现是一个组织与治理问题，不是一个 Prompt 问题。\\
+异议必须靠构造保留，证据必须靠构造审计，过程必须靠构造不能变成证据。}}}
+\end{center}
+
+\subsection{三点贡献}
+
+\begin{enumerate}
+\item \textbf{七人科学议会（Council Protocol）}：7 名专业化科学家通过结构化科研动作（提出、支持、质询、限定、分叉、请求、修正、异议）交互，在明确禁止多数投票的前提下，产出保留少数意见的条件化共识。
+\item \textbf{双图证据治理（Dual-Graph Governance）}：过程记忆图与正式证据图物理分离，由一本追加写、幂等、可重放的科学事件账本连接；唯一的图投影器写入权限在数据库层强制。
+\item \textbf{可验证的实现与评测}：开源实现（MIT），配合 ForesightBlindspot 时间切片评测协议、五条基线与六项消融，为计算社会科学的盲点发现建立测量基础。
+\end{enumerate}
+
+\subsection{本白皮书的组织}
+
+本白皮书面向想彻底理解 Poliscope 底层机制的技术读者。第 2 章给出系统架构总览；第 3 章详述七人议会协议；第 4 章讲三层记忆与 MemoBrain 适配；第 5 章讲双图架构与事件账本；第 6 章讲证据门、三层审计与证据谱系；第 7 章专题讨论\emph{token 与成本控制}——七人全程参与的系统如何做到不烧钱；第 8 章讲状态机、快照与可靠性；第 9 章讲 ForesightBlindspot 评测；第 10 章讲工程实现细节。
+
+文档中所有事实均来自仓库当前代码（`packages/` 与 `apps/`），并标注关键文件与符号，便于读者对照源码核验。诚实起见：文档会明确区分「已完整落地」与「规格中自注 MVP 范围外的保留项」。

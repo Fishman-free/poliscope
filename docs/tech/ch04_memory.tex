@@ -1,0 +1,69 @@
+% ===== 第 4 章：三层记忆与 MemoBrain 适配 =====
+\section{三层记忆与 MemoBrain 适配}
+
+\subsection{记忆不是私有缓存，而是公共认知层}
+
+Poliscope 的架构源自一个判断：\textbf{记忆不是每个智能体的私有缓存，而是科研共同体的公共认知层}。它由三层组成，各回答一个问题：
+
+\begin{enumerate}
+\item \textbf{私人记忆（Private Memory）}——每位科学家自己的探索轨迹、工具记录、未验证的猜想，只服务自己、不被他人直接读取。回答「这位科学家是怎么走到这一步的」。
+\item \textbf{集体执行记忆（Collective MemoBrain）}——整个共同体发生的\emph{结构化认知事件}：谁提出过什么主张、谁攻击过谁、哪些争议还悬着、哪些盲点没有人碰过。回答「我们研究到哪一步了、下一步该查什么」。它不是只存档的笔记本，而是主动调度下一轮调查的执行控制层。
+\item \textbf{争议证据地图（Evidence Map）}——面对用户的正式知识：只存放经过审计的原子主张、研究发现、构念、情境和盲点。回答「我们现在对这个问题知道什么」。
+\end{enumerate}
+
+三层之间不是堆叠，而是闭环：\textbf{过程产生证据，证据暴露盲点，盲点驱动下一轮调查}。
+
+\subsection{MemoBrain 集成规则}
+
+MemoBrain 是外部方法基座，代码仓库为 \texttt{github.com/qhjqhj00/MemoBrain}。集成前核验了其许可证，并通过 \texttt{MemoBrainAdapter} 适配，避免修改上游源代码。首版适配接口保持小而清楚（与 CLAUDE.md 第 6 节的 5 个方法逐字一致）：
+
+\begin{lstlisting}[language=Python]
+init_private_memory(agent_id, task)
+memorize_episode(agent_id, episode)
+recall_private(agent_id, token_budget)
+save_snapshot(agent_id)
+load_snapshot(agent_id)
+\end{lstlisting}
+
+接口定义在 \texttt{packages/memory/contracts.py}。\textbf{诚实说明}：当前 \texttt{packages/memory/adapter.py} 的 \texttt{create\_memory\_adapter()} 返回的是 \texttt{InMemoryMemoryAdapter}（内存字典替身），尚未真实导入上游 MemoBrain 代码；Process Graph 的 Flush/Fold/Recall 为简化占位实现。这是规格自注的保留项，不是已完成的集成。
+
+\subsection{席位私有记忆：一个规则保证隔离}
+
+\texttt{packages/memory/council\_memory.py} 用一个规则满足「独立私有记忆」：agent id 是 \texttt{\{task\_id\}:\{seat\}}，\emph{没有任何代码读另一个席位的 id}。同一任务的两个席位互相看不到对方的 recall；同一席位在两个任务之间也不携带一个任务的记忆进入另一个。
+
+\textbf{Recall 预算}：\texttt{DEFAULT\_RECALL\_BUDGET = 800} 字符。这刻意设得很小——recall 与证据投影竞争同一份上下文（CLAUDE.md 第 6 节要保留科研骨架而不是重放完整转录）。800 字符能保住当前任务 + 最近几个阶段的摘要，而不会把一份不断增长的转录灌进后面每个席位的 prompt。
+
+\texttt{CouncilMemory} 负责：\texttt{open}（给每席播种任务）、\texttt{remember}（记住一个 episode）、\texttt{recall}（读回各自 recall）、\texttt{snapshot}/\texttt{restore}（暂停任务的记忆恢复）。
+
+\subsection{过程记忆的 Fold：保骨架不保字数}
+
+\texttt{packages/memory/fold.py} 的 \texttt{fold\_process} 只接受 Process Graph 快照，任何尝试折叠证据图节点的行为抛 \texttt{GraphBoundaryViolation}。它按 \texttt{Task/ToolCall/Decision} 三类节点压缩，但压缩前必须通过 \texttt{BackboneRetention} 的六项骨架保留校验：
+
+\begin{lstlisting}
+当前任务、已确认 Finding、活跃 Blindspot、未解决质询、
+少数异议、下一步证据需求
+\end{lstlisting}
+
+只有六项全部保留，折叠才算成功（\texttt{FoldResult.rejected} 否则为 True）。这直接落实了 CLAUDE.md 第 6 节「Fold 后必须验证以下内容仍被保留」。
+
+\subsection{Perspective Recall：角色化召回}
+
+\texttt{packages/memory/recall.py} 的 \texttt{perspective\_recall} 让不同席位看到同一证据快照的\emph{不同排序}：按该席位的 \texttt{evidence\_sort\_weights} 排序。因果专家看到的是混杂变量和反向因果攻击优先，测量专家看到的是构念冲突和测量不变性问题优先。形式上：
+
+\[
+\text{Context}_i = \text{ProcessRecall}_i + \text{EvidenceProjection}_i
+\]
+
+其中 $\text{ProcessRecall}_i$ 来自该席自己的私有记忆（已完成什么、失败过什么、当前任务、下一步计划），$\text{EvidenceProjection}_i$ 是从证据图生成的角色化视图。这避免多智能体两个常见问题：每个 Agent 重复阅读所有内容；所有 Agent 最后产生相同观点。
+
+\subsection{认识论路由：让记忆图主动调度科学家}
+
+MemoBrain 原本主要负责「记什么、忘什么」。Poliscope 进一步让它决定「下一轮应该派哪个科学家调查什么」。证据图发现缺口后生成盲点悬赏，按影响、不确定性、可调查性、新颖度、成本打分排序，广播给 7 席认领——\textbf{是证据状态驱动下一步调查方向，而不是主持人按预定台本点名}。
+
+\begin{lstlisting}
+证据图发现缺口 -> 生成盲点悬赏 -> 选择最匹配的科学家
+  -> 分配角色化上下文 -> 执行检索/验证 -> 结果写回集体记忆
+  -> 重新计算认知前沿
+\end{lstlisting}
+
+这不是「挑出一个最优秀的科学家由它独自解决」，而是 7 席全程在场、从不同视角共同调查同一个盲点（分工表在 \texttt{registry.py} 的盲点悬赏轮中生成）。

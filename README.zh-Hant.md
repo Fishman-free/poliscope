@@ -5,6 +5,8 @@
 > 七位 AI 科學家，一場沒有和稀泥的科研審查。歡迎來到現場。
 >
 > **線上體驗：** [http://39.96.197.238/](http://39.96.197.238/) — 作者部署的公開實例，打開即用，無需安裝
+>
+> **學術論文：** [《EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery》](docs/paper/epistemobrain.pdf)（ACL Findings 2026 格式，[PDF 直下](docs/paper/epistemobrain.pdf)）
 
 想像一下這個場景：你正在審閱一篇「社群媒體導致青少年憂鬱」的研究。結論很漂亮，引用很齊全——但沒有人告訴你，這篇論文和另外五篇用的是同一份資料；沒有人告訴你，關鍵的因果表述其實只是相關；也沒有人告訴你，作者自己都承認沒排除反向因果。
 
@@ -236,6 +238,8 @@ token 儲存在 `~/.poliscope/credentials.json`（一個 base URL 一個 token�
 
 - 自建部署（Docker Compose 一鍵起、接網域）、完整命令列/API 用法、系統架構與七人議會協議細節、功能全景與設計理念——都寫在 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 - 正式設計規格：[`docs/superpowers/specs/2026-07-31-poliscope-design.md`](docs/superpowers/specs/2026-07-31-poliscope-design.md)。
+- 系統論文：[《EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery》](docs/paper/epistemobrain.pdf)（ACL Findings 2026 格式，`docs/paper/` 含 LaTeX 源、編譯 wrapper、官方 ACL 模板）。
+- 技術白皮書：[《Poliscope 技術白皮書》](docs/tech/tech.pdf)（`docs/tech/`，中文 LaTeX 源 + 編譯好的 PDF，覆蓋架構、議會、記憶、雙圖、證據門、token 優化、可靠性、評測等全部底層細節）。
 
 ---
 

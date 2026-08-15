@@ -1,0 +1,84 @@
+% ===== 第 10 章：工程实现细节 =====
+\section{工程实现细节}
+
+\subsection{技术栈}
+
+Python 3.12、FastAPI、Pydantic v2、SQLAlchemy 2.0 (async)、Alembic、PostgreSQL 16+、pgvector、Redis（首版不用，见第 2 章）、React + TypeScript + React Flow、Server-Sent Events、pytest。数据库是事实来源——即使任务状态也不只存在于内存或工作流框架内部。
+
+\subsection{模型网关}
+
+\texttt{packages/models/openai\_compatible.py} 的 \texttt{OpenAICompatibleModelGateway} 对接任意 OpenAI-Chat-Completions 兼容端点（DeepSeek / LongCat / 国内中转站）。特性：
+
+\begin{itemize}
+\item \textbf{流式 + 非流式回退}：\texttt{stream\_invoke} 解析 SSE 块，失败回退到非流式 \texttt{invoke}，任务不因流断而失败。
+\item \textbf{thinking 模式}：DeepSeek 的 \texttt{reasoning\_content} 与 \texttt{content} 分开成 \texttt{StreamEvent\{kind, text\}}，思维链原样捕获但标注为过程材料（CLAUDE.md 第 11 节：不展示私有思维链为证据）。
+\item \textbf{Schema 修复}：\texttt{MAX\_SCHEMA\_REPAIR\_ATTEMPTS=1}。
+\item \textbf{总时限}：\texttt{INVOKE\_TOTAL\_TIMEOUT\_SECONDS=300}。
+\item \textbf{降级}：DeepSeek 400 tool\_choice 冲突自动降级。
+\item \textbf{成本审计}：token/费用/延迟/重试/schema 状态全部落库（\texttt{models/audit.py}）。
+\end{itemize}
+
+角色实现内\emph{没有}散落厂商 SDK 调用——\texttt{deliberation.py} 只通过 \texttt{ModelGateway} 协议发 \texttt{ModelRequest}。
+
+\textbf{端点规范化与连通性探测}（\texttt{models/endpoint\_config.py}）：一次真实事故设定了这条规则——研究者把 DeepSeek 控制台门户（\texttt{platform.deepseek.com}）当 API 端点填，所有模型调用立即失败。因此用户输入从不原样存储：\texttt{normalize\_base\_url} 去掉空白和尾部斜杠、缺 scheme 补 \texttt{https://}、把已知控制台门户改写到对应 API 主机，并以 hint 告知研究者。设置 API 拒绝保存未通过 \texttt{probe\_endpoint}（单次、10s 超时的 chat-completions 连通测试）的配置。\textbf{API key 从不回显}，错误消息绝不引用它。
+
+\subsection{工具网关}
+
+\texttt{packages/tools/http\_gateway.py} 的 \texttt{HttpToolGateway} 对接四家公开 REST API：OpenAlex、Crossref、Unpaywall、Semantic Scholar。OpenAlex/Crossref/Semantic Scholar 免凭证即可工作；Unpaywall 要求每次请求带联系邮箱（\texttt{POLISCOPE\_TOOLS\_CONTACT\_EMAIL}），未设置时只有该供应商报错。工具调用同样经 \texttt{AuditedToolGateway} 落库（延迟/费用/重试/错误）。
+
+\subsection{检索与取证管线}
+
+\begin{lstlisting}
+研究问题 -> 证据需求规划 -> 多源候选论文发现 -> 元数据归一化去重
+  -> 全文获取与结构化解析 -> 研究级/结果级证据抽取 -> 原文定位与引用绑定
+  -> 设计质量与适用边界审查 -> 证据独立性审计 -> 证据-主张蕴含验证
+  -> 写入 Scientific Event Ledger -> 通过 Evidence Gate -> 进入证据图
+\end{lstlisting}
+
+每一步留下事件记录，因此可以回答：为什么检索到这篇论文？谁读取了它？从哪一页提取了结论？原文到底说了什么？哪名科学家把它解释成支持某项主张？审计员是否同意？它与其他研究是否使用同一批数据？
+
+\textbf{PDF 解析}用 \texttt{pymupdf}；\textbf{规范化作品}（Canonical Work）用 DOI $\rightarrow$ PubMed/arXiv ID $\rightarrow$ 标题+第一作者+年份 $\rightarrow$ 文本与作者模糊匹配的优先级识别预印本/正式版/扩展版为同一作品族，防止「三个版本被当作三项独立研究」。
+
+\subsection{报告组装}
+
+\texttt{packages/reports/service.py} 的 \texttt{ReportService} 从图、账本、任务行组装 \texttt{ResearchBrief}，两个格式（Markdown / JSON）来自同一次 build，不可能对议会结论产生分歧。REPORTING 阶段本身为空——报告由证据图驱动，而不是又一轮模型输出。
+
+\textbf{最终论文}：\texttt{packages/reports/synthesis.py} 只使用账本已记录的材料（终审、条件化共识、被采纳来源与发现、局限）。模型失败时 \texttt{\_fallback\_integrated\_paper} 从 brief + 终审判断确定性组装，绝不输出「尚未生成」空壳。论文是表达层，任务终态不因论文成功或失败而改变（失败记 \texttt{FINAL\_PAPER\_FAILED} 事件）。论文带 \texttt{standpoints / overall\_conclusion / conclusion\_evidence}（round-12 「整合结论详细化」）。
+
+\textbf{导出脱敏}：所有导出过 \texttt{sanitize\_export}，签名 URL 与本地路径被脱敏，避免上传材料通过报告泄露（CLAUDE.md 第 16 条）。
+
+\subsection{SSE 实时流：两条流一份契约}
+
+\begin{enumerate}
+\item \textbf{账本流}（\texttt{GET /api/stream/\{task\_id\}}）：\texttt{PHASE\_STARTED} 等正式事件，驱动八阶段时间线。支持 \texttt{Last-Event-ID} 续传。
+\item \textbf{过程流}（\texttt{GET /api/stream/\{task\_id\}/process}）：worker 实时写入的易逝过程数据（席位开始思考、模型推理片段、输出 token、DOI 解析与文献检索命中）。重连客户端重读全量并按 \texttt{seq} 去重。
+\end{enumerate}
+
+\textbf{SSE 帧只有 \texttt{id:} 和 \texttt{data:}，没有 \texttt{event:} 行}。原因是类型化帧只会送达注册了同名类型的监听器，客户端必须穷举事件词汇表并静默丢弃未知类型——审计轨迹曾因此只显示 53 个事件中的 37 个。事件类型放在 body 的 \texttt{kind} 字段里，客户端不可能收不到。
+
+\textbf{过程流数据层}：\texttt{process\_stream.py} 的 \texttt{ProcessStreamWriter} 缓冲批写（\texttt{flush\_at=40}），flush 失败只降级为 warning、绝不破坏正在跑的 run。\texttt{process\_stream} 表无外键（迁移 0016）——worker 认领任务时对任务行持有 \texttt{SELECT ... FOR UPDATE} 直到整轮议会事务提交，而 Postgres 外键检查会对父行取 KEY SHARE 锁，两边互相等待就是死锁（曾把整个 worker 冻结）。过程流是 best-effort 的，孤儿行无害。
+
+\subsection{权限即设计}
+
+PostgreSQL grants 实现写隔离：
+
+\begin{lstlisting}
+应用角色（poliscope_app）      ：可追加账本、可读证据图，不能 INSERT/UPDATE/TRUNCATE 图
+投影器角色（poliscope_projector）：可写图、可推进事件状态，不能重写事件 payload
+两者都不能 TRUNCATE
+例外：应用角色拥有任务生命周期 DELETE（会话删除，迁移 0019）
+\end{lstlisting}
+
+\textbf{这不是代码自律，是数据库事实}——集成测试直接断言应用身份写图会被数据库拒绝。
+
+\subsection{部署}
+
+\texttt{docker-compose.yml} 六个服务：postgres、migrate（一次性跑 alembic + 建角色）、api、worker、web（nginx 静态 + 反代）、caddy（唯一对外端口）。Caddy 默认 \texttt{:80} 纯 HTTP；域名可用时改一行即自动签发 HTTPS 证书。GitHub Actions 部署：push main $\rightarrow$ SSH 登录 $\rightarrow$ \texttt{git pull --ff-only} + \texttt{docker compose up -d --build} + 落地页健康检查。服务器的 \texttt{.env} 不在 git 里、由部署者维护，模型 key 只进服务器 \texttt{.env}（CLAUDE.md 第 16 条）。
+
+\subsection{前端设计取向}
+
+界面像科研仪器与证据审查工具，不像驾驶舱：结论与局限并排、颜色只表示证据状态、被反驳节点淡化永不消失、缺口计数常驻页头且每个缺口被点名、无卡通 Agent 无霓虹无脉冲指示灯、完整支持 \texttt{prefers-reduced-motion}。产品中心是证据地图（React Flow），不是聊天框。
+
+\subsection{安全与伦理}
+
+系统输出不是临床诊断或医疗建议；涉及心理健康的问题自动附加科研辅助定位声明（\texttt{looks\_like\_mental\_health} 匹配抑郁/焦虑/心理等词，只在相关领域附加）。不抓取或存储未授权的个人数据，不绕过付费墙。上传 PDF 的存储、日志和导出避免泄露用户材料。报告声明 AI 辅助、证据覆盖与系统局限。\textbf{不以模型置信度替代统计不确定性或专家判断}——这句话出现在每一份报告的局限一节，不是免责套话。

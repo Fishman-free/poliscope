@@ -1,0 +1,75 @@
+% ===== 第 6 章：证据门、三层审计与证据谱系 =====
+\section{证据门、三层审计与证据谱系}
+
+\subsection{六阶段证据门}
+
+每个候选事件在 \texttt{packages/evidence/gate.py} 的 \texttt{FullEvidenceGate} 中依次通过六个阶段：
+
+\begin{lstlisting}
+SCHEMA -> DEDUPLICATION -> SOURCE -> CITATION_ENTAILMENT
+  -> METHOD_QUALITY -> GRAPH_CONSISTENCY
+\end{lstlisting}
+
+\begin{enumerate}
+\item \textbf{Schema 校验}：字段是否完整、类型是否正确。
+\item \textbf{语义去重}：与已有对象是否重复。
+\item \textbf{来源验证}：DOI 是否解析、标题/作者/年份是否一致、是否撤稿。
+\item \textbf{引用蕴含}：原文是否真的支持主张。
+\item \textbf{方法质量}：直接性、设计强度、测量效度、统计精度、可复现性、外部效度。
+\item \textbf{图一致性}：是否破坏图约束（矛盾节点、重复分叉谱系）。
+\end{enumerate}
+
+关键实现细节：\texttt{GRAPH\_CONSISTENCY} 阶段真正调用 \texttt{consistency.py::check\_graph\_consistency()}（\texttt{gate.py:378-395}），判定所需布尔值来自 \texttt{SqlGraphConsistencyQuery} 对数据库会话的真实查询——不是恒真的空检查。第 3 和第 5 阶段读取候选事件自己带的元数据，撤稿会被拒。审计发现逐条写入 \texttt{EventAuditModel}。
+
+\subsection{证据分层 A–D}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{等级} & \textbf{含义} & \textbf{处置} \\
+\midrule
+A & 全文与精确原文可得 & \texttt{ADMIT} $\rightarrow$ 节点 \texttt{active} \\
+B & 只有摘要和可靠元数据 & \texttt{SOURCE\_ONLY} $\rightarrow$ 节点 \texttt{provisional} \\
+C & 综述中的二手描述 & \texttt{DISCOVERY\_ONLY} $\rightarrow$ 留在账本，不入图 \\
+D & 网页或新闻线索 & \texttt{TOOL\_LEAD\_ONLY} $\rightarrow$ 留在账本，不入图 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Level B 不得单独支撑高置信因果结论；Level C 和 D 不得替代原始研究。目前的取证管线只能拿到元数据，所以只产 Level B——\textbf{这不是配置问题，是实事求是}：把元数据标成 Level A，就等于允许一个高置信因果结论建立在摘要之上。
+
+\subsection{三层审计}
+
+正式 Finding 必须经过三层审计（\texttt{source\_verifier.py}、\texttt{citation\_verifier.py}、\texttt{method\_auditor.py}）：
+
+\begin{enumerate}
+\item \textbf{来源真实性}：DOI、标题、作者、版本、撤稿状态、PDF 身份。
+\item \textbf{引用蕴含}：引言假设不得报告为实测结果；讨论段的推测不得写成实证发现；「不显著」不得写成「没有效应」；相关不得升级为因果；子群结果不得外推为总体结论。
+\item \textbf{方法质量}：直接性、设计强度、测量效度、统计精度、可复现性、外部效度。
+\end{enumerate}
+
+\subsection{因果越级拦截}
+
+\texttt{packages/evidence/causal\_policy.CausalUpgradePolicy} 在证据门第六阶段专门拦截「横截面设计 + 因果主张」的组合，事件被隔离并留下审计记录——相关不自动升级为因果（CLAUDE.md 第 2 条）。这是把「相关不等于因果」从一句提醒变成机制的落实。
+
+\subsection{证据谱系与独立性}
+
+\texttt{packages/evidence/lineage.py} 的 \texttt{LINEAGE\_DEPENDENCY\_TYPES} 定义 8 种依赖类型：
+
+\begin{verbatim}
+SAME_DATASET  OVERLAPPING_SAMPLE  SAME_RESEARCH_TEAM  PREPRINT_VERSION_OF
+EXTENSION_OF  REANALYSIS_OF       CITES_WITHOUT_NEW_DATA  META_ANALYSIS_INCLUDES
+\end{verbatim}
+
+\texttt{packages/evidence/independence.py} 的 \texttt{cluster\_evidence} 用并查集聚合独立证据簇。\textbf{共享研究团队不合并}——同一个实验室的两个数据集仍然是两份证据。报告同时显示论文数与独立证据簇数：六篇论文如果共享同一份数据集，只算一份独立证据。
+
+\subsection{防止共享证据错误的四种机制}
+
+\begin{enumerate}
+\item \textbf{盲证据评审（Blind Evidence Review）}：第一轮判断中剥离作者、期刊、被引量等声誉信号，只给方法、样本和结果。当前仅有结构性测试（\texttt{test\_deliberation\_blind\_review.py}）锁定 \texttt{GatewayDeliberator} 不透传声誉字段；规格自注 MVP 范围外，无 round handler 主动剥离。
+\item \textbf{独立双抽取（Independent Extraction）}：对高影响论文由两个不同模型/角色独立抽取并比较。当前无实现，规格自注 MVP 范围外。
+\item \textbf{来源多样性约束（Source Diversity Constraint）}：\texttt{packages/evidence/source\_diversity.py} 当一项 Claim 的所有支持证据来自同一数据集/团队/国家/测量方式/设计时，自动生成 Blindspot，不给高置信结论。
+\item \textbf{对抗式检索（Adversarial Retrieval）}：\texttt{packages/evidence/adversarial\_retrieval.py} 为每个 confirmed claim 生成 6 类反向检索意图（反驳、零结果、替代理论、测量批评、复现失败、边界翻转），经工具网关发起真实查询。查不到的诚实记录在 \texttt{ADVERSARIAL\_RETRIEVAL\_ATTEMPTED} 事件的未解析计数里——不伪造命中。
+\end{enumerate}

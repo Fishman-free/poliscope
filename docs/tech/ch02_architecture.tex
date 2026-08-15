@@ -1,0 +1,61 @@
+% ===== 第 2 章：系统架构总览 =====
+\section{系统架构总览}
+
+\subsection{模块化单体}
+
+Poliscope 采用模块化单体（modular monolith）+ 异步 Worker，首版刻意不做微服务拆分（见 CLAUDE.md 第 14 条 YAGNI 约束）。仓库按职责划分模块：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{模块} & \textbf{职责} \\
+\midrule
+\texttt{packages/kernel} & 冻结契约（\texttt{ContractModel}/\texttt{FrozenDict}）、数据库、配置、权限常量；被所有模块依赖，不依赖任何业务模块 \\
+\texttt{packages/council} & 7 个席位、结构化动作、8 个轮次、轮次注册表、席位--网关桥 \\
+\texttt{packages/epistemo} & 编排器、状态机、预算、停止条件、恢复 \\
+\texttt{packages/memory} & MemoBrain 适配器、席位私有记忆、Process Graph、证据投影 \\
+\texttt{packages/evidence} & 事件账本、证据门、图投影器、谱系、独立性、辩证折叠 \\
+\texttt{packages/papers} & 取证服务、候选池、查询规划、解析、Paper Packet \\
+\texttt{packages/models} & 模型网关（审计装饰器 + 录制回放） \\
+\texttt{packages/tools} & 工具网关、四个学术数据源适配器 \\
+\texttt{packages/reports} & Research Brief 组装、Markdown / JSON 渲染、导出脱敏 \\
+\texttt{packages/research} & 研究契约、主张原子化、任务仓储与应用服务 \\
+\texttt{packages/evaluation} & ForesightBlindspot 基准语料与验收矩阵 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+应用层四个入口共享同一套后端契约：\texttt{apps/api}（FastAPI）、\texttt{apps/worker}（任务认领与议会执行）、\texttt{apps/cli}（纯 HTTP 客户端，不 import \texttt{packages}）、\texttt{apps/web}（React 证据工作台）。CLI 是纯 HTTP 客户端是一条硬约束——任何第二条直接进入研究服务的代码路径都会绕过证据门。
+
+\subsection{一次研究的生命周期}
+
+一次研究从研究者提交 \texttt{Research Contract} 开始：
+
+\begin{enumerate}
+\item \textbf{建任务}：研究者提交问题、范围、预算、可选知识库与 PDF。系统原子化出建议的原子主张（\texttt{suggested\_claims}），任务停在 \texttt{AWAITING\_CLAIM\_CONFIRMATION}——研究者控制方向，系统不自作主张开跑。
+\item \textbf{确认主张}：研究者勾选要调查的主张，任务入队（\texttt{QUEUED}）。被放弃的主张标记为 \texttt{DISCARDED} 而非删除（审计）。
+\item \textbf{Worker 认领}：\texttt{SELECT ... FOR UPDATE SKIP LOCKED} 从队列认领，多开安全。
+\item \textbf{议会执行}：7 席 $\times$ 8 阶段跑完一次未提交事务。每一轮每一席通过 \texttt{GatewayDeliberator} 与模型网关交互，输出结构化科研动作，追加到科学事件账本。
+\item \textbf{图投影}：投影器以第二身份、第二事务消费账本事件，过证据门，写入证据图。
+\item \textbf{报告}：任务终态从图、账本、任务行组装 Research Brief 与最终论文。
+\end{enumerate}
+
+\subsection{为什么拆两个事务、两个身份}
+
+「投影器是证据图唯一写入者」如果只写在文档里，就只是一句愿望。Poliscope 用数据库权限把它变成事实：应用身份（\texttt{poliscope\_app}）在数据库层没有写证据图表的权限；投影器身份（\texttt{poliscope\_projector}）在数据库层没有写账本的权限。两边都无法伪造对方的数据。这个隔离由迁移与 \texttt{packages/kernel/privileges.py} 实现，并有 10 个集成测试用例逐条验证（\texttt{test\_graph\_write\_isolation.py}）。
+
+\begin{figure}[h]
+\centering
+\fbox{\parbox{0.9\columnwidth}{\centering\vspace{1.5em}
+研究者 $\rightarrow$ Council (7 seats $\times$ 8 phases)
+$\rightarrow$ Event Ledger $\rightarrow$ Evidence Gate
+$\rightarrow$ Graph Projector $\rightarrow$ Evidence Graph
+$\rightarrow$ Blindspot bounties $\rightarrow$ Council (loop)\vspace{1.5em}}}
+\caption{EpistemoBrain 架构：议会、账本、证据门、投影器与认识论路由形成闭环。过程记忆（左，每席 MemoBrain）与正式证据图（右）物理分离。}
+\end{figure}
+
+\subsection{为什么队列在 PostgreSQL 而不是 Redis}
+
+认领任务和更新状态在同一个事务里，Worker 崩溃时锁自动释放。用 Redis 会多出一个可能与数据库不一致的「谁在跑」的真相来源。Poliscope 首版没有任何组件依赖 Redis 做缓存或广播——加一个没人用的服务违反 YAGNI 约束。这个偏离已按 CLAUDE.md 第 17 条记录在 \texttt{apps/worker/main.py} 的模块文档中。
