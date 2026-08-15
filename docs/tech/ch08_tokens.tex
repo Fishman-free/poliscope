@@ -1,4 +1,4 @@
-% ===== 第 7 章：token 与成本控制 =====
+% ===== 第 8 章：token 与成本控制 =====
 \section{token 与成本控制：七人全程如何不烧钱}
 
 七人全程参与确实比动态激活昂贵。Poliscope 用六层工程机制控制成本，而不是靠减人——「任何一次省略某个角色的调度，都在赌这个角色这次用不上」是被否决的方案。以下逐层拆解。
@@ -39,7 +39,7 @@ FINAL_REJUDGMENT -> STRONG_REASONING   # 最终复判，质量关键
 input_tokens  output_tokens  cost_usd  latency_ms  retries  schema_status
 \end{verbatim}
 
-工具调用同理走 \texttt{AuditedToolGateway}。费用/延迟/重试/错误全部可审计。这既满足 CLAUDE.md 第 10 节「模型与工具调用必须记录延迟、费用、重试和错误」，也让研究者能看见钱花在了哪里。
+工具调用同理走 \texttt{AuditedToolGateway}。费用/延迟/重试/错误全部可审计——模型与工具调用的每一笔成本都必须可解释，也让研究者能看见钱花在了哪里。
 
 \subsection{四维预算：不是只卡一个数}
 
@@ -50,7 +50,7 @@ wall_clock_minutes（总时长）  model_cost_usd（模型费用）
 tool_call_limit（工具调用数）  source_limit（来源数）
 \end{lstlisting}
 
-每个消费者\emph{在花钱之前}检查预算（\texttt{consume\_*} 在扣减前判断剩余）。预算耗尽抛 \texttt{BudgetExhausted}，运行以 \texttt{COMPLETED\_WITH\_GAPS} 收尾，未完成证据槽位被列出——预算不足被显式报告，不伪造完整结果（CLAUDE.md 第 10 节）。
+每个消费者\emph{在花钱之前}检查预算（\texttt{consume\_*} 在扣减前判断剩余）。预算耗尽抛 \texttt{BudgetExhausted}，运行以 \texttt{COMPLETED\_WITH\_GAPS} 收尾，未完成证据槽位被列出——预算不足被显式报告，不伪造完整结果。
 
 \subsection{阶段级 deadline：防止单个席位拖死全体}
 

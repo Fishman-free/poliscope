@@ -282,7 +282,11 @@ export function App() {
     getToken() ? "checking" : "anon",
   );
   const [username, setUsername] = useState("");
-  const [taskId, setTaskId] = useState<string | null>(taskIdFromLocation);
+  // taskId 初始化为 null 而不是直接从 URL 读：auth 尚未确定为 authed 时
+  // 不携带任务状态（未登录打开 ?task=xxx 会触发无 token 的 401 workspace
+  // 拉取）。登录/免登录验证成功后再从 URL 补读 taskId——见 onAuthed 与
+  // fetchMe 成功分支。
+  const [taskId, setTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("brief");
   const [homeView, setHomeView] = useState<HomeView>("newtask");
   // Auto-follow: while it is on, each new phase event moves the active tab to
@@ -348,6 +352,9 @@ export function App() {
       .then((me) => {
         if (!cancelled) {
           setUsername(me.username);
+          // 免登录进入时补读 URL 上的 ?task=（可能是收藏夹/分享链接直接
+          // 指向某个任务工作台），登录已有效所以可以安全加载。
+          setTaskId(taskIdFromLocation());
           setAuth("authed");
         }
       })
@@ -663,6 +670,14 @@ export function App() {
           <AuthView
             onAuthed={(name) => {
               setUsername(name);
+              // 登录/注册成功后：补读 URL 上的 task=（可能是分享链接指向
+              // 某个任务），并清除 mode 参数——落地页的注册便捷入口在
+              // 登录后没有意义，残留会让后续访问一直顶到注册页。
+              const url = new URL(window.location.href);
+              const pendingTask = url.searchParams.get("task");
+              url.searchParams.delete("mode");
+              window.history.replaceState({}, "", url);
+              setTaskId(pendingTask ?? null);
               setAuth("authed");
             }}
             initialMode={

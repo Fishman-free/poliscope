@@ -351,7 +351,10 @@ export function PaperView({
       ) : null}
 
       <div className="paper__grid">
-        <Panel title={t("结论与局限")} subtitle={t("局限与结论并排呈现。")}>
+        <Panel
+          title={t("结论与局限")}
+          subtitle={t("局限与结论并排呈现——未达成共识时每一方观点、证据与局限均在此列出。")}
+        >
           {paper.limitations.length === 0 ? (
             <Empty>{t("未记录局限。")}</Empty>
           ) : (

@@ -23,7 +23,7 @@
 .paper__section p {
   margin-bottom: var(--space-4);
   line-height: 1.7;
-  max-width: 68ch;
+  max-width: 100%;
 }
 
 .paper__section h3 {
@@ -32,7 +32,7 @@
 
 .paper__grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 3fr 2fr;
   gap: var(--space-5);
 }
 

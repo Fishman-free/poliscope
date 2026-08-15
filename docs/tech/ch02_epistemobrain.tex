@@ -1,0 +1,77 @@
+% ===== 第 2 章：EpistemoBrain 核心方法 =====
+\section{EpistemoBrain：核心方法体系}
+
+\subsection{方法定位：一个组织，不是一个聊天机器人群}
+
+EpistemoBrain 是 Poliscope 的核心方法。第 1 章指出了三个失效模式（单一视角、一致不是证据、总结器拍平异议），EpistemoBrain 就是对这三个失效模式的系统回答。它的立场先于实现：
+
+\begin{center}
+\fbox{\parbox{0.9\textwidth}{\centering
+\textbf{可靠的盲点发现是一个组织与治理问题，不是一个 Prompt 问题。}}}
+\end{center}
+
+因此 EpistemoBrain 不是「7 个 Agent 轮流发言 + 1 个 Agent 写总结」。那样的结构把分歧留在总结这一步被拍平，没人的判断真正被别人的证据挑战过。EpistemoBrain 从「一场可靠科研审查应有的组织结构」出发，把 7 个角色放进一个强制质询、强制记忆、强制审计的框架里。
+
+\subsection{三根支柱}
+
+整个方法由三根支柱构成，分别回答「谁在研究」「靠什么记得」「什么算证据」：
+
+\begin{enumerate}
+\item \textbf{七人科学议会（Council Protocol）}——回答「谁在研究」。7 名各有专长的 AI 科学家通过\emph{结构化科研动作}交互（提出、支持、质询、限定、分叉、请求、修正、异议），在明确禁止多数投票的前提下，产出保留少数意见的条件化共识。这是对「单一视角」和「一致不是证据」两个失效模式的直接对抗：多视角不是靠人多，而是靠每个视角被制度化地互相挑战。机制细节见第 4 章。
+\item \textbf{三层记忆（Three-Layer Memory）}——回答「靠什么记得」。私人记忆、集体执行记忆、争议证据地图三层闭环：过程产生证据，证据暴露盲点，盲点驱动下一轮调查。集体执行记忆（MemoBrain）不是只存档的笔记本，而是\emph{主动调度下一轮调查}的执行控制层。机制细节见第 5 章。
+\item \textbf{双图证据治理（Dual-Graph Governance）}——回答「什么算证据」。过程记忆图与正式证据图物理分离，由一本追加写、幂等、可重放的科学事件账本连接；唯一图投影器写入权限在数据库层强制。\emph{过程不自动成为证据}是这条支柱的核心约束。机制细节见第 6、7 章。
+\end{enumerate}
+
+\subsection{一个研究任务的认识论循环}
+
+把三根支柱放进一次真实研究，得到一条完整的认识论循环：
+
+\begin{lstlisting}
+研究者确认原子主张
+  -> 7 席独立预承诺（先行封存判断，避免后续一致是锚定）
+  -> 专业取证（每席从各自维度发证据请求，合并去重后检索）
+  -> 证据交换（交换结构化证据，不是完整思维链）
+  -> 交叉质询（暴露隐藏假设；被质询者只能 DEFEND/REVISE/NARROW/WITHDRAW/DISSENT）
+  -> 盲点悬赏（证据图暴露的缺口生成盲点候选，按影响 x 不确定性
+               x 可调查性 x 新颖度 - 成本排序，7 席共同认领）
+  -> 联合建模（组合为条件化共识；最强反对或证伪条件缺失时拒绝出共识）
+  -> 最终复判（7 席再次独立判断，记录信念更新与具名异议）
+  -> 争议证据地图（结论与局限并排、证据可溯源、异议不删除）
+\end{lstlisting}
+
+这个循环的每一环都对应一个\emph{防止特定失败}的结构：预承诺防止锚定，取证防止空谈，证据交换防止重复阅读，交叉质询防止隐藏假设被放过，盲点悬赏把「没人碰过的缺口」显式化，联合建模防止多数票冒充共识，最终复判防止信念在压力下漂移后无人记账。
+
+\subsection{认识论立场：三个「不」}
+
+EpistemoBrain 的认识论立场可以用三个「不」概括，它们是方法层的硬约束，不是装饰：
+
+\begin{enumerate}
+\item \textbf{不投票}：禁止多数投票直接裁决科研真理。最终结果必须是条件化共识，并保留少数意见、真正分歧和解决分歧所需证据（见第 4 章）。
+\item \textbf{不匿名删除异议}：被反驳、隔离或压缩的观点必须保持可追溯。\texttt{DebateCapsule} 与 \texttt{DissentCertificate} 让「被反驳过什么、谁持异议、为什么」永远留在正式证据图里（见第 7 章）。
+\item \textbf{不把过程当证据}：7 名科学家不得直接写证据图；所有正式修改必须先写入事件账本，再由唯一的图投影器投影。思维链、工具记录、失败路线都属于过程材料，永不自动升级为正式证据（见第 6 章）。
+\end{enumerate}
+
+\subsection{与普通 Deep Research / Multi-Agent Debate 的本质区别}
+
+方法层最后值得明确与既有路线划清界限。下表对比 EpistemoBrain 与两种常见实现：
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}p{0.22\textwidth}p{0.24\textwidth}p{0.24\textwidth}p{0.22\textwidth}@{}}
+\toprule
+ & \textbf{Deep Research} & \textbf{Multi-Agent Debate} & \textbf{EpistemoBrain} \\
+\midrule
+多视角来源 & 单 Agent 换 Prompt & 多 Agent 自由发言 & 7 席按角色规格、用结构化动作质询 \\
+异议去向 & 被总结器合并 & 多数胜出 & 具名保留（\texttt{DissentCertificate}） \\
+记忆 & 窗口内上下文 & 独立、无共享 & 三层记忆，集体记忆主动调度下一轮 \\
+证据标准 & 引用存在即算 & 引用存在即算 & 证据门三层审计 + 因果升级策略 \\
+写证据图的权限 & 无概念 & 无概念 & 数据库层唯一投影器 \\
+输出 & 流畅综述 & 辩论记录 & 结论与局限并排的可审计证据地图 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{一句话}：Deep Research 优化「读得全」，Multi-Agent Debate 优化「吵得热」，EpistemoBrain 优化「被质疑过的结论还能被追溯」——后者正是盲点发现所需要的。
+
+后续章节将逐一展开三根支柱的机制细节：第 3 章给系统架构总览，第 4 章讲七人议会，第 5 章讲三层记忆与 MemoBrain 适配，第 6 章讲双图与事件账本，第 7 章讲证据门与三层审计，第 8 章专题讨论 token 与成本控制，第 9 章讲可靠性，第 10 章讲 ForesightBlindspot 评测，第 11 章讲工程实现。

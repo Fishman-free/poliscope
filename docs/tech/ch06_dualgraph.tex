@@ -1,4 +1,4 @@
-% ===== 第 5 章：双图架构与事件账本 =====
+% ===== 第 6 章：双图架构与事件账本 =====
 \section{双图架构与事件账本}
 
 \subsection{为什么是两张图}
@@ -19,7 +19,7 @@ ResearchQuestion  Claim  Source  StudyFinding  Construct
 Context  Blindspot  DebateCapsule  DiscriminatingStudy  DissentCertificate
 \end{verbatim}
 
-在 \texttt{packages/evidence/contracts.py:10-35} 定义。\texttt{DebateCapsule} 由联合建模阶段的 Dialectical Fold 产出，\texttt{DissentCertificate} 由最终复判阶段为持异议的席位产出——两者都是 CLAUDE.md 第 4 条「异议不得被静默删除」的直接实现。
+在 \texttt{packages/evidence/contracts.py:10-35} 定义。\texttt{DebateCapsule} 由联合建模阶段的 Dialectical Fold 产出，\texttt{DissentCertificate} 由最终复判阶段为持异议的席位产出——两者都是「异议不得被静默删除」原则的直接实现：被反驳、隔离或折叠的观点必须保持可追溯。
 
 \subsection{证据图：首版正式边}
 

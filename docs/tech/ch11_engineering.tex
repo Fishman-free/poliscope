@@ -1,9 +1,9 @@
-% ===== 第 10 章：工程实现细节 =====
+% ===== 第 11 章：工程实现细节 =====
 \section{工程实现细节}
 
 \subsection{技术栈}
 
-Python 3.12、FastAPI、Pydantic v2、SQLAlchemy 2.0 (async)、Alembic、PostgreSQL 16+、pgvector、Redis（首版不用，见第 2 章）、React + TypeScript + React Flow、Server-Sent Events、pytest。数据库是事实来源——即使任务状态也不只存在于内存或工作流框架内部。
+Python 3.12、FastAPI、Pydantic v2、SQLAlchemy 2.0 (async)、Alembic、PostgreSQL 16+、pgvector、Redis（首版不用，见第 3 章）、React + TypeScript + React Flow、Server-Sent Events、pytest。数据库是事实来源——即使任务状态也不只存在于内存或工作流框架内部。
 
 \subsection{模型网关}
 
@@ -11,7 +11,7 @@ Python 3.12、FastAPI、Pydantic v2、SQLAlchemy 2.0 (async)、Alembic、Postgre
 
 \begin{itemize}
 \item \textbf{流式 + 非流式回退}：\texttt{stream\_invoke} 解析 SSE 块，失败回退到非流式 \texttt{invoke}，任务不因流断而失败。
-\item \textbf{thinking 模式}：DeepSeek 的 \texttt{reasoning\_content} 与 \texttt{content} 分开成 \texttt{StreamEvent\{kind, text\}}，思维链原样捕获但标注为过程材料（CLAUDE.md 第 11 节：不展示私有思维链为证据）。
+\item \textbf{thinking 模式}：DeepSeek 的 \texttt{reasoning\_content} 与 \texttt{content} 分开成 \texttt{StreamEvent\{kind, text\}}，思维链原样捕获但标注为过程材料——只用于过程流展示，不作为正式证据。
 \item \textbf{Schema 修复}：\texttt{MAX\_SCHEMA\_REPAIR\_ATTEMPTS=1}。
 \item \textbf{总时限}：\texttt{INVOKE\_TOTAL\_TIMEOUT\_SECONDS=300}。
 \item \textbf{降级}：DeepSeek 400 tool\_choice 冲突自动降级。
@@ -45,7 +45,7 @@ Python 3.12、FastAPI、Pydantic v2、SQLAlchemy 2.0 (async)、Alembic、Postgre
 
 \textbf{最终论文}：\texttt{packages/reports/synthesis.py} 只使用账本已记录的材料（终审、条件化共识、被采纳来源与发现、局限）。模型失败时 \texttt{\_fallback\_integrated\_paper} 从 brief + 终审判断确定性组装，绝不输出「尚未生成」空壳。论文是表达层，任务终态不因论文成功或失败而改变（失败记 \texttt{FINAL\_PAPER\_FAILED} 事件）。论文带 \texttt{standpoints / overall\_conclusion / conclusion\_evidence}（round-12 「整合结论详细化」）。
 
-\textbf{导出脱敏}：所有导出过 \texttt{sanitize\_export}，签名 URL 与本地路径被脱敏，避免上传材料通过报告泄露（CLAUDE.md 第 16 条）。
+\textbf{导出脱敏}：所有导出过 \texttt{sanitize\_export}，签名 URL 与本地路径被脱敏，避免上传材料通过报告泄露。
 
 \subsection{SSE 实时流：两条流一份契约}
 
@@ -73,7 +73,7 @@ PostgreSQL grants 实现写隔离：
 
 \subsection{部署}
 
-\texttt{docker-compose.yml} 六个服务：postgres、migrate（一次性跑 alembic + 建角色）、api、worker、web（nginx 静态 + 反代）、caddy（唯一对外端口）。Caddy 默认 \texttt{:80} 纯 HTTP；域名可用时改一行即自动签发 HTTPS 证书。GitHub Actions 部署：push main $\rightarrow$ SSH 登录 $\rightarrow$ \texttt{git pull --ff-only} + \texttt{docker compose up -d --build} + 落地页健康检查。服务器的 \texttt{.env} 不在 git 里、由部署者维护，模型 key 只进服务器 \texttt{.env}（CLAUDE.md 第 16 条）。
+\texttt{docker-compose.yml} 六个服务：postgres、migrate（一次性跑 alembic + 建角色）、api、worker、web（nginx 静态 + 反代）、caddy（唯一对外端口）。Caddy 默认 \texttt{:80} 纯 HTTP；域名可用时改一行即自动签发 HTTPS 证书。GitHub Actions 部署：push main $\rightarrow$ SSH 登录 $\rightarrow$ \texttt{git pull --ff-only} + \texttt{docker compose up -d --build} + 落地页健康检查。服务器的 \texttt{.env} 不在 git 里、由部署者维护，模型 key 只进服务器 \texttt{.env}。
 
 \subsection{前端设计取向}
 

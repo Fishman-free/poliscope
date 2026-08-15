@@ -1,4 +1,4 @@
-% ===== 第 4 章：三层记忆与 MemoBrain 适配 =====
+% ===== 第 5 章：三层记忆与 MemoBrain 适配 =====
 \section{三层记忆与 MemoBrain 适配}
 
 \subsection{记忆不是私有缓存，而是公共认知层}
@@ -15,7 +15,7 @@ Poliscope 的架构源自一个判断：\textbf{记忆不是每个智能体的�
 
 \subsection{MemoBrain 集成规则}
 
-MemoBrain 是外部方法基座，代码仓库为 \texttt{github.com/qhjqhj00/MemoBrain}。集成前核验了其许可证，并通过 \texttt{MemoBrainAdapter} 适配，避免修改上游源代码。首版适配接口保持小而清楚（与 CLAUDE.md 第 6 节的 5 个方法逐字一致）：
+MemoBrain 是外部方法基座，代码仓库为 \texttt{github.com/qhjqhj00/MemoBrain}。集成前核验了其许可证，并通过 \texttt{MemoBrainAdapter} 适配，避免修改上游源代码。首版适配接口保持小而清楚，仅五个方法：
 
 \begin{lstlisting}[language=Python]
 init_private_memory(agent_id, task)
@@ -31,7 +31,7 @@ load_snapshot(agent_id)
 
 \texttt{packages/memory/council\_memory.py} 用一个规则满足「独立私有记忆」：agent id 是 \texttt{\{task\_id\}:\{seat\}}，\emph{没有任何代码读另一个席位的 id}。同一任务的两个席位互相看不到对方的 recall；同一席位在两个任务之间也不携带一个任务的记忆进入另一个。
 
-\textbf{Recall 预算}：\texttt{DEFAULT\_RECALL\_BUDGET = 800} 字符。这刻意设得很小——recall 与证据投影竞争同一份上下文（CLAUDE.md 第 6 节要保留科研骨架而不是重放完整转录）。800 字符能保住当前任务 + 最近几个阶段的摘要，而不会把一份不断增长的转录灌进后面每个席位的 prompt。
+\textbf{Recall 预算}：\texttt{DEFAULT\_RECALL\_BUDGET = 800} 字符。这刻意设得很小——recall 与证据投影竞争同一份上下文，它的设计目标是\emph{保留科研骨架而不是重放完整转录}：当前任务、已确认 Finding、活跃 Blindspot、未解决质询、少数异议、下一步证据需求。800 字符能保住这些，而不会把一份不断增长的转录灌进后面每个席位的 prompt。
 
 \texttt{CouncilMemory} 负责：\texttt{open}（给每席播种任务）、\texttt{remember}（记住一个 episode）、\texttt{recall}（读回各自 recall）、\texttt{snapshot}/\texttt{restore}（暂停任务的记忆恢复）。
 
@@ -44,7 +44,7 @@ load_snapshot(agent_id)
 少数异议、下一步证据需求
 \end{lstlisting}
 
-只有六项全部保留，折叠才算成功（\texttt{FoldResult.rejected} 否则为 True）。这直接落实了 CLAUDE.md 第 6 节「Fold 后必须验证以下内容仍被保留」。
+只有六项全部保留，折叠才算成功（\texttt{FoldResult.rejected} 否则为 True）。这是过程记忆折叠的硬性约束：压缩任何过程节点都不得丢失科研骨架。
 
 \subsection{Perspective Recall：角色化召回}
 

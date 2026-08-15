@@ -1,9 +1,9 @@
-% ===== 第 2 章：系统架构总览 =====
+% ===== 第 3 章：系统架构总览 =====
 \section{系统架构总览}
 
 \subsection{模块化单体}
 
-Poliscope 采用模块化单体（modular monolith）+ 异步 Worker，首版刻意不做微服务拆分（见 CLAUDE.md 第 14 条 YAGNI 约束）。仓库按职责划分模块：
+Poliscope 采用模块化单体（modular monolith）+ 异步 Worker，首版刻意不做微服务拆分——这是 YAGNI 约束的直接结果：MVP 只实现能证明「EpistemoBrain 比普通研究智能体更可靠地发现高价值科研盲点」这一主张的功能，微服务拆分不在其中。仓库按职责划分模块：
 
 \begin{table}[h]
 \centering
@@ -58,4 +58,4 @@ $\rightarrow$ Blindspot bounties $\rightarrow$ Council (loop)\vspace{1.5em}}}
 
 \subsection{为什么队列在 PostgreSQL 而不是 Redis}
 
-认领任务和更新状态在同一个事务里，Worker 崩溃时锁自动释放。用 Redis 会多出一个可能与数据库不一致的「谁在跑」的真相来源。Poliscope 首版没有任何组件依赖 Redis 做缓存或广播——加一个没人用的服务违反 YAGNI 约束。这个偏离已按 CLAUDE.md 第 17 条记录在 \texttt{apps/worker/main.py} 的模块文档中。
+认领任务和更新状态在同一个事务里，Worker 崩溃时锁自动释放。用 Redis 会多出一个可能与数据库不一致的「谁在跑」的真相来源。Poliscope 首版没有任何组件依赖 Redis 做缓存或广播——加一个没人用的服务违反 YAGNI 约束。这一取舍记录在 \texttt{apps/worker/main.py} 的模块文档中。

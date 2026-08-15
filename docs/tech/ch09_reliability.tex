@@ -1,4 +1,4 @@
-% ===== 第 8 章：可靠性、状态机与快照 =====
+% ===== 第 9 章：可靠性、状态机与快照 =====
 \section{可靠性、状态机与快照}
 
 \subsection{显式状态机}
@@ -15,7 +15,7 @@ AWAITING_CLAIM_CONFIRMATION -> QUEUED -> RUNNING
 
 \texttt{deliberate()}（\texttt{apps/worker/jobs.py}）把一个任务的完整 8 阶段议会跑在一次未提交事务里——这是「要么完整、要么不跑」的原子性设计，保证账本与证据图在任何时刻一致（没有可截断的中间持久状态可供半途快照）。
 
-因此 `pause`/`resume` 的语义是\textbf{队列层面}的：把任务从 \texttt{QUEUED} 挪到 \texttt{PAUSED}，恢复之前永远不会被 worker 认领（端到端测试 \texttt{test\_a\_paused\_task\_is\_never\_claimed\_until\_resumed}）。议会层面的固定暂停点是 JOINT\_MODELING 前的检查点（第 3 章）。一个任务两种暂停：还没轮到你的，用 \texttt{pause}/\texttt{resume} 挡在队列外；轮到你了想给议会方向，用检查点。
+因此 `pause`/`resume` 的语义是\textbf{队列层面}的：把任务从 \texttt{QUEUED} 挪到 \texttt{PAUSED}，恢复之前永远不会被 worker 认领（端到端测试 \texttt{test\_a\_paused\_task\_is\_never\_claimed\_until\_resumed}）。议会层面的固定暂停点是 JOINT\_MODELING 前的检查点（第 4 章）。一个任务两种暂停：还没轮到你的，用 \texttt{pause}/\texttt{resume} 挡在队列外；轮到你了想给议会方向，用检查点。
 
 \subsection{检查点与断点续跑}
 

@@ -117,6 +117,42 @@ def test_fallback_paper_consensus_lines_are_included() -> None:
     assert "证据指向弱正相关" in all_text
 
 
+def test_fallback_without_consensus_lists_each_position() -> None:
+    """未达成共识时，总体结论与结论与局限板块必须逐观点展开，而不是
+    一句「未记录到形成中的条件化共识」了事；每个立场带其局限。"""
+    judgments = (
+        ("causal_scientist", "相关可解释为反向因果 (confidence: 0.6)"),
+        ("theory_builder", "机制上可能存在正向效应 (confidence: 0.5)"),
+    )
+    paper = _fallback_integrated_paper(_brief(), {}, "Q", judgments=judgments)
+    all_text = "\n".join(
+        "\n".join(section.paragraphs) for section in paper.sections
+    )
+    # 逐观点列出：观点 + 局限
+    assert "未形成统一结论" in all_text
+    assert "相关可解释为反向因果" in all_text
+    assert "机制上可能存在正向效应" in all_text
+    assert "局限：" in all_text
+    # 不再有「整合结论如上；局限如下」式的占位废话
+    assert "整合结论如上" not in all_text
+    # 不再用议会流程措辞描述结论
+    assert "各席位在联合建模中形成了" not in all_text
+
+
+def test_fallback_with_consensus_keeps_consensus_wording() -> None:
+    """达成共识时总体结论用共识文本，且措辞面向读者而非流程。"""
+    consensus: dict[str, object] = {
+        "conditional_consensus": "证据指向弱正相关，但因果方向未决。",
+        "boundary_conditions": ["仅适用于社交媒体重度用户"],
+    }
+    paper = _fallback_integrated_paper(_brief(), consensus, "Q")
+    all_text = "\n".join(
+        "\n".join(section.paragraphs) for section in paper.sections
+    )
+    assert "证据指向弱正相关" in all_text
+    assert "交叉核验" in all_text
+
+
 def test_phase_coverage_summary() -> None:
     gapped = _brief()
     gapped.failed_phases = ("JOINT_MODELING",)
