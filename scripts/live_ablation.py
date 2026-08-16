@@ -43,8 +43,8 @@ from packages.evaluation.scoring import (
     score_dissent_preservation,
     score_evidence_independence,
 )
-from packages.models.openai_compatible import OpenAICompatibleModelGateway
 from packages.models.contracts import ModelClass
+from packages.models.openai_compatible import OpenAICompatibleModelGateway
 
 VARIANTS = {variant.value: variant for variant in BaselineVariant}
 
@@ -151,6 +151,47 @@ def _table(rows: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
+def _progress_path(out: str) -> str:
+    """The JSONL progress file next to ``--out`` (or a default when unset)."""
+    base = out or "live_ablation"
+    if base.endswith(".md"):
+        base = base[:-3]
+    return base + ".progress.jsonl"
+
+
+def _load_completed(path: str) -> dict[str, dict[str, object]]:
+    """Read already-finished variants from the progress file, if any."""
+    if not os.path.exists(path):
+        return {}
+    completed: dict[str, dict[str, object]] = {}
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            variant = row.get("variant")
+            if variant:
+                completed[str(variant)] = row
+    return completed
+
+
+def _save_progress(path: str, completed: dict[str, dict[str, object]]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        for row in completed.values():
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _write_table(rows: list[dict[str, object]], out: str) -> None:
+    if not out:
+        return
+    with open(out, "w", encoding="utf-8") as handle:
+        handle.write(_table(rows) + "\n")
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -159,20 +200,36 @@ async def main() -> None:
         choices=sorted(VARIANTS),
     )
     parser.add_argument("--all", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="skip variants already recorded in the progress file",
+    )
     parser.add_argument("--out", default="")
     args = parser.parse_args()
 
     gateway = _gateway()
     if args.all:
-        rows = []
+        progress_path = _progress_path(args.out)
+        completed = _load_completed(progress_path) if args.resume else {}
+        rows = list(completed.values())
         for variant in sorted(BaselineVariant, key=lambda item: item.value):
-            print(f"running {variant.value} ...", flush=True)
-            rows.append(await _run(variant, gateway))
-        table = _table(rows)
-        print(table)
-        if args.out:
-            with open(args.out, "w", encoding="utf-8") as handle:
-                handle.write(table + "\n")
+            key = variant.value
+            if args.resume and key in completed:
+                print(f"skip {key} (already done)", flush=True)
+                continue
+            print(f"running {key} ...", flush=True)
+            scores = await _run(variant, gateway)
+            completed[key] = scores
+            rows.append(scores)
+            # Persist immediately so an interruption never loses a finished
+            # variant; the next run resumes with --resume.
+            _save_progress(progress_path, completed)
+            _write_table(rows, args.out)
+        rows.sort(key=lambda row: str(row["variant"]))
+        _save_progress(progress_path, completed)
+        _write_table(rows, args.out)
+        print(_table(rows))
         print(json.dumps(rows, ensure_ascii=False, indent=1))
         return
 
