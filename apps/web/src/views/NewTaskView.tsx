@@ -261,12 +261,18 @@ export function NewTaskView({
   /** claims 阶段：任务已存在，逐个真正上传到该任务。 */
   async function handleFiles(files: FileList | null) {
     if (!taskId || !files || uploading) return;
-    await uploadStaged(Array.from(files));
+    await uploadStaged(Array.from(files), taskId);
   }
 
-  /** 上传一批文件到已创建的任务（taskId 必须已存在）。 */
-  async function uploadStaged(files: File[]) {
-    if (!taskId || uploading) return;
+  /** 上传一批文件到指定任务（``targetTaskId`` 必须已存在）。
+   *
+   * ``targetTaskId`` 作为显式参数传入，而不是读闭包里的 ``taskId`` 状态：
+   * ``submitQuestion`` 在 ``setTaskId(created.task_id)`` 之后立即上传，
+   * 那一刻 React 还没重渲染，闭包里的 ``taskId`` 仍是旧值（首次为 null，
+   * 返回修改后重试则是上一个任务的 id）——读它会把论文传到一个不存在或
+   * 已废弃的任务上，导致 ``confirmClaims`` 在新任务上读不到论文。 */
+  async function uploadStaged(files: File[], targetTaskId: string) {
+    if (!targetTaskId || uploading) return;
     setUploading(true);
     setUploadError(null);
     const fresh: { name: string; size: number }[] = [];
@@ -274,7 +280,7 @@ export function NewTaskView({
       // 格式校验交给服务端（magic bytes + 试提取，422 带原因），前端不再
       // 按扩展名自行判断——伪装扩展名的文件必须由字节级校验拒绝。
       try {
-        const result = await uploadPaper(taskId, file);
+        const result = await uploadPaper(targetTaskId, file);
         fresh.push({ name: file.name, size: result.size_bytes });
       } catch (cause) {
         setUploadError(
@@ -362,16 +368,33 @@ export function NewTaskView({
       setPhase("claims");
       // 任务已存在，现在把 question 阶段暂存的文件真正上传到该任务。
       // 先清空暂存，避免 uploadStaged 内读取旧 taskId 前 pendingFiles 还引用。
+      // 上传用刚创建的 taskId（显式传参），而非闭包里的旧 taskId 状态。
       const staged = pendingFiles;
       setPendingFiles([]);
       if (staged.length > 0) {
-        await uploadStaged(staged);
+        await uploadStaged(staged, created.task_id);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /** 返回第一步：清空本轮已建任务的上传状态。
+   *
+   * 若不清空，用户「返回修改问题」后重新提交会残留上一轮任务的论文清单
+   * （``uploads`` 仍指向旧任务的已上传文件），而 ``confirmClaims`` 用的是
+   * 新建任务的 id——旧任务的论文对新任务无效，后端会报「必须至少上传一篇
+   * 论文」，前端却显示「已加入证据」，二者矛盾。返回即视为放弃本轮，干净
+   * 重置，让下一轮从选文件重新开始。 */
+  function backToQuestion() {
+    setPhase("question");
+    setTaskId(null);
+    setUploads([]);
+    setUploadError(null);
+    setClaims([]);
+    setSelected(new Set());
   }
 
   async function confirmAndStart() {
@@ -503,7 +526,7 @@ export function NewTaskView({
           <button
             type="button"
             className="button"
-            onClick={() => setPhase("question")}
+            onClick={backToQuestion}
             disabled={submitting}
           >
             {t("返回修改问题")}
