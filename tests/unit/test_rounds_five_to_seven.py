@@ -104,15 +104,19 @@ def test_full_bounty_to_rejudgment_pipeline() -> None:
     assert len(final_output.judgments) == 7
 
 
-def test_bounty_assignments_target_evidence_auditor() -> None:
+def test_bounty_assignments_form_seven_seat_coalition() -> None:
     handler = BlindspotBountyHandler()
     output = handler.score_and_assign(
         BountyInput(blindspot_items=(_blindspot(),))
     )
-    assert all(
-        a["target_seat"] == Seat.EVIDENCE_AUDITOR.value
-        for a in output.assignments
-    )
+    # Design doc 6: a blindspot is not handed to one best scientist; the whole
+    # seven-seat council investigates it from complementary angles.
+    seats = {a["target_seat"] for a in output.assignments}
+    assert seats == {seat.value for seat in Seat}
+    # Every seat got a distinct, non-empty task.
+    tasks = {a["target_seat"]: a["task"] for a in output.assignments}
+    assert all(tasks[seat] for seat in seats)
+    assert len(set(tasks.values())) == 7
 
 
 async def test_bounty_carries_ranked_pending_investigations() -> None:
@@ -139,16 +143,10 @@ async def test_bounty_carries_ranked_pending_investigations() -> None:
             "status": "pending_investigation",
         },
     )
-    assert assignments == (
-        {
-            "blindspot_id": str(blindspot_id),
-            "statement": "An unmeasured confound remains untested",
-            "target_seat": Seat.EVIDENCE_AUDITOR.value,
-            "priority_rank": 1,
-            "score": "0.7700",
-            "status": "pending_investigation",
-        },
-    )
+    # Seven-seat division of labour: one entry per seat, each with its own task.
+    assert {a["target_seat"] for a in assignments} == {seat.value for seat in Seat}
+    assert all(a["task"] for a in assignments)
+    assert all(a["priority_rank"] == 1 for a in assignments)
 
 
 def test_joint_model_no_majority_vote() -> None:

@@ -447,6 +447,15 @@ class PhaseContext:
     # has ids (evaluation harness, older tests) -- queries then fall back to
     # the research question.
     claim_statements: Mapping[UUID, str] = field(default_factory=dict)
+    # The collective executive memory's cognitive frontier, rendered as plain
+    # text (see packages/memory/collective.py). Deliberately a *separate* field
+    # from ``recall``: ``recall`` is each seat's own private process memory
+    # (never shared), whereas this is the shared scientific record -- which
+    # claims are active, which blindspots are open, which disputes are
+    # unresolved. Rendered into every seat's prompt as explicitly shared
+    # context, so the seven seats work from one fact base while keeping their
+    # private reasoning apart (design doc 6/7; CLAUDE.md 3/11).
+    collective: str = ""
 
     def key(self, *parts: object) -> str:
         """Build a replay-stable idempotency key for this phase.
@@ -1758,6 +1767,7 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
                 "blindspot_id": str(item["blindspot_id"]),
                 "statement": statements.get(str(item["blindspot_id"]), ""),
                 "target_seat": str(item["target_seat"]),
+                "task": str(item.get("task", "")),
                 "priority_rank": int(str(item["priority_rank"])),
                 "score": str(item["score"]),
                 "status": "pending_investigation",
@@ -1800,6 +1810,7 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
                         {
                             "blindspot_id": str(item["blindspot_id"]),
                             "target_seat": str(item["target_seat"]),
+                            "task": str(item.get("task", "")),
                             "priority_rank": int(str(item["priority_rank"])),
                             "score": str(item["score"]),
                         }

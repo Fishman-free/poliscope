@@ -227,6 +227,12 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     private = context.recall.get(seat, "")
     if private:
         lines.append(f"Your private recall: {private}")
+    # The shared cognitive frontier (collective executive memory), deliberately
+    # separate from private recall: the seven seats work from one fact base --
+    # active claims, open blindspots, unresolved disputes -- while keeping
+    # their private reasoning apart (design doc 6/7).
+    if context.collective:
+        lines.append(f"Collective cognitive frontier (shared): {context.collective}")
     for key in sorted(context.carried):
         if key.lower() in _BIBLIOGRAPHIC_IDENTITY_KEYS:
             # Blind evidence review: never render this, whatever produced it.
@@ -297,14 +303,16 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
                     )
                 )
         if isinstance(assignments, (list, tuple)) and assignments:
-            lines.append("【待调查盲点分配（调度信息，不是证据）】")
+            lines.append("【待调查盲点分工（七人协作调度，不是证据）】")
             for raw in assignments:
                 if not isinstance(raw, Mapping):
                     continue
                 lines.append(
-                    "- rank={rank}; target={target}; statement={statement}".format(
+                    "- rank={rank}; seat={target}; task={task}; "
+                    "statement={statement}".format(
                         rank=raw.get("priority_rank", "?"),
                         target=raw.get("target_seat", "?"),
+                        task=raw.get("task", "?"),
                         statement=raw.get("statement", ""),
                     )
                 )

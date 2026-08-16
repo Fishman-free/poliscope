@@ -54,7 +54,9 @@ from packages.epistemo.contracts import (
 from packages.epistemo.state_machine import TaskStateMachine
 from packages.epistemo.stopping import StopReason, decide_stop
 from packages.evidence.lifecycle import QuarantinedNode
+from packages.memory.collective import CollectiveMemory
 from packages.memory.council_memory import CouncilMemory
+from packages.memory.recall import get_policy, perspective_recall
 
 PHASE_FAILED = "PHASE_FAILED"
 PHASE_SKIPPED = "PHASE_SKIPPED"
@@ -91,6 +93,32 @@ def _next_phase(current: TaskPhase) -> TaskPhase | None:
     if index + 1 < len(PHASE_SEQUENCE):
         return PHASE_SEQUENCE[index + 1]
     return None
+
+
+def _render_role_context(role_context: object) -> str:
+    """Flatten a perspective recall's RoleContext into one prompt-ready string.
+
+    A seat's recall prompt is a single string; the role projection is a sorted
+    list of the shared cognitive frontier. This renders it as "private recall
+    (unchanged) + your role's evidence ranking", so the two never blur into one
+    shared transcript.
+    """
+    process = getattr(role_context, "process_recall", "")
+    projection = getattr(role_context, "evidence_projection", None)
+    items = getattr(projection, "items", ())
+    ranked: list[str] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        statement = item.get("statement")
+        if statement:
+            ranked.append(str(statement))
+    if not ranked:
+        return process
+    ranked_text = "；".join(ranked)
+    if process:
+        return f"{process} [你的角色证据排序: {ranked_text}]"
+    return f"[你的角色证据排序: {ranked_text}]"
 
 
 async def run_round(
@@ -255,6 +283,11 @@ class CouncilOrchestrator:
         self._phases = phases
         self._dialectical_fold = dialectical_fold
         self._run_started: float | None = None
+        # Collective executive memory: a materialised index over the ledger's
+        # structured cognitive events, rebuilt from the events this run emits.
+        # It feeds the seats' recall with the shared cognitive frontier (design
+        # doc 1/6) while never writing the Evidence Graph itself.
+        self._collective = CollectiveMemory()
         # Round-10 「停止研究」: polled between phases. When it returns True
         # the run halts at the next phase boundary with CANCELLED as the
         # terminal status, recording the phases it did complete. None when no
@@ -660,6 +693,7 @@ class CouncilOrchestrator:
             guidance=council_guidance,
             paper_understanding=paper_understanding,
             dialectical_fold=self._dialectical_fold,
+            collective=self._collective.view().summary,
         )
         try:
             outcome = await runner_for(phase)(context)
@@ -739,7 +773,24 @@ class CouncilOrchestrator:
     async def _recall(self) -> Mapping[Seat, str]:
         if self._memory is None:
             return {}
-        return await self._memory.recall(self._seats)
+        private = await self._memory.recall(self._seats)
+        # Perspective recall (design doc 7): each seat sees its own private
+        # process recall PLUS a role-ranked projection of the shared cognitive
+        # frontier, so the causal scientist meets causal claims first and the
+        # measurement scientist meets measurement claims first -- one fact base,
+        # seven cognitive cuts. The projection is a *summary* of the shared
+        # frontier, appended to (never merged into) the seat's private recall.
+        snapshot = self._collective.evidence_snapshot()
+        if not snapshot:
+            return private
+        projected: dict[Seat, str] = {}
+        for seat in self._seats:
+            policy = get_policy(seat.value)
+            role_context = perspective_recall(
+                policy, private.get(seat, ""), snapshot
+            )
+            projected[seat] = _render_role_context(role_context)
+        return projected
 
     async def _remember(self, phase: TaskPhase, outcome: PhaseOutcome) -> None:
         """Record what the round did in each participating seat's own memory.
@@ -778,6 +829,11 @@ class CouncilOrchestrator:
                 claim_id=event.claim_id,
             )
             state.events += 1
+        # Feed the collective executive memory from the same structured events
+        # the ledger just received -- it is a materialised view, never a second
+        # source of truth (CLAUDE.md 6). Only the emitted structured actions
+        # reach it, never a seat's private reasoning (CLAUDE.md 3/11).
+        self._collective.absorb(outcome.events)
 
 
 __all__ = [
