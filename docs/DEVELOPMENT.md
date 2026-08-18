@@ -275,7 +275,7 @@ python scripts/seed_demo_task.py     # 用真实 Worker 跑一个演示任务
 
 ## 自建部署：Docker Compose + Caddy
 
-作者当前维护一份公开演示实例：**`http://39.96.197.238/`**（阿里云 ECS，纯 HTTP、无域名）。以下是一键自建部署的完整说明，想部署自己的实例时照着做即可。
+作者当前维护一份公开演示实例：**`https://poliscope.tech/`**（阿里云 ECS，Caddy 自动签发 HTTPS）。以下是一键自建部署的完整说明，想部署自己的实例时照着做即可。
 
 不想手动起五个进程，可以直接用根目录的 `docker-compose.yml`：
 
@@ -342,7 +342,7 @@ docker compose up --build -d
 ### 域名与 HTTPS：只改一行
 
 `POLISCOPE_SITE_ADDRESS` 默认 `:80`（纯 HTTP，适合本机或还没申请域名的裸 IP 云主机）。域名申请
-下来之后，把这一行改成真实域名（例如 `poliscope.example.com`），Caddy 会自动申请并续期一张真实的
+下来之后，把这一行改成真实域名（例如 `poliscope.tech`），Caddy 会自动申请并续期一张真实的
 HTTPS 证书——这是 Caddy 的原生行为，栈里其余任何一处配置都不用动。
 
 ```bash
@@ -384,9 +384,9 @@ docker compose up -d --build        # 首次手动部署
 **部署完成后的健康检查**（在服务器本机或浏览器中）：
 
 ```bash
-curl -I http://39.96.197.238/          # 落地页公开：200
-curl -I http://39.96.197.238/workspace # 未登录：200（SPA 页面）
-curl http://39.96.197.238/api/auth/me  # 无 token：401 —— 访问控制由 API 层账号系统承担
+curl -I https://poliscope.tech/          # 落地页公开：200
+curl -I https://poliscope.tech/workspace # 未登录：200（SPA 页面）
+curl https://poliscope.tech/api/auth/me  # 无 token：401 —— 访问控制由 API 层账号系统承担
 ```
 
 ### 任务级模型设置：研究者自带接口

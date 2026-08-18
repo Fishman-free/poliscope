@@ -4,7 +4,7 @@
 
 > 七位 AI 科学家，一场没有和稀泥的科研审查。欢迎来到现场。
 >
-> **在线体验：** [http://39.96.197.238/](http://39.96.197.238/) — 作者部署的公开实例，打开即用，无需安装
+> **在线体验：** [https://poliscope.tech/](https://poliscope.tech/) — 作者部署的公开实例，打开即用，无需安装
 >
 > **学术论文：** [《EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery》](docs/paper/epistemobrain.pdf)（ACL Findings 2026 格式，`docs/paper/epistemobrain.tex`，[PDF 直下](docs/paper/epistemobrain.pdf)）
 
@@ -157,7 +157,7 @@ Poliscope 不是替你写文字，而是替你**发现混杂、边界、测量�
 
 ### 1. Web 网页：上线两个功能
 
-打开**公开演示实例 `http://39.96.197.238/`**，点「进入工作台」（或直接访问 `/workspace`），注册一个账号即可开始。目前上线两个功能：
+打开**公开演示实例 `https://poliscope.tech/`**，点「进入工作台」（或直接访问 `/workspace`），注册一个账号即可开始。目前上线两个功能：
 
 - **深度研究**：输入一个存疑的争议问题，七人议会独立取证、交叉质询，产出一张可审计的证据地图；
 - **论文审查**：先**上传待审查的论文**（PDF / Word / PPT / Excel / HTML / TXT 等，单个 ≤ 20 MB），议会读清论文的研究问题、主要观点与佐证，再逐项审查论证严谨性、证据充分性、测量与样本代表性，给出改进建议。审查完成后可在「补充提问」里继续追问，模型会基于论文全文回答。

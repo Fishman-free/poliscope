@@ -4,7 +4,7 @@
 
 > Seven AI scientists walk into a review. Nobody gets to paper over the disagreements.
 >
-> **Try it live:** [http://39.96.197.238/](http://39.96.197.238/) — the author's public deployment; open it and start, no install needed
+> **Try it live:** [https://poliscope.tech/](https://poliscope.tech/) — the author's public deployment; open it and start, no install needed
 >
 > **Paper:** [*EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery*](docs/paper/epistemobrain.pdf) (ACL Findings 2026 format; [PDF](docs/paper/epistemobrain.pdf)) · [技术白皮书](docs/tech/tech.pdf)
 
@@ -123,7 +123,7 @@ The workspace provides eight views. The center of the product is the **evidence 
 
 ### 4.1 Web: Two Features Are Live
 
-Open the **public demo instance `http://39.96.197.238/`**, click "进入工作台" (or visit `/workspace` directly) and register an account. Two features are live:
+Open the **public demo instance `https://poliscope.tech/`**, click "进入工作台" (or visit `/workspace` directly) and register an account. Two features are live:
 
 - **Deep research**: ask a contested question and the seven-scientist council investigates independently and cross-examines, producing an auditable evidence map;
 - **Paper review**: first **upload the paper to review** (PDF / Word / PPT / Excel / HTML / TXT, ≤ 20 MB each), the council reads its research question, main claims and evidence, then critiques argument rigor, evidence sufficiency, and measurement / sample representativeness with improvement suggestions. After the review you can keep asking in "补充提问" (Follow-up), and the model answers grounded in the paper's full text.

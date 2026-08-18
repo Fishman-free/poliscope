@@ -4,7 +4,7 @@
 
 > 七位 AI 科學家，一場沒有和稀泥的科研審查。歡迎來到現場。
 >
-> **線上體驗：** [http://39.96.197.238/](http://39.96.197.238/) — 作者部署的公開實例，打開即用，無需安裝
+> **線上體驗：** [https://poliscope.tech/](https://poliscope.tech/) — 作者部署的公開實例，打開即用，無需安裝
 >
 > **學術論文：** [《EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery》](docs/paper/epistemobrain.pdf)（ACL Findings 2026 格式，[PDF 直下](docs/paper/epistemobrain.pdf)）
 
@@ -123,7 +123,7 @@ Poliscope 的設計從一開始就是反著來的：先決定「一個可靠的�
 
 ### 1. 網址：先看這裡
 
-作者維護一份**公開演示實例：`http://39.96.197.238/`**（阿里雲伺服器，隨時可訪問）。想直接試用 Poliscope，打開這個地址即可；研究證據工作台在 `/workspace`，註冊一個帳號就能開始。
+作者維護一份**公開演示實例：`https://poliscope.tech/`**（阿里雲伺服器，隨時可訪問）。想直接試用 Poliscope，打開這個地址即可；研究證據工作台在 `/workspace`，註冊一個帳號就能開始。
 
 Poliscope 按 MIT 協議開源，你也可以自己部署，**部署後的網址取決於你的部署方式**：
 
@@ -135,7 +135,7 @@ Poliscope 按 MIT 協議開源，你也可以自己部署，**部署後的網址
 
 ### 2. 三步開始研究
 
-1. **進入工作台。** 打開上面的演示地址 `http://39.96.197.238/`（或你自部署的 `http://localhost:8080/`），點「進入工作台」（或直接訪問 `/workspace`）。首次使用先註冊帳號（使用者名稱 + 密碼），之後本機自動登入。
+1. **進入工作台。** 打開上面的演示地址 `https://poliscope.tech/`（或你自部署的 `http://localhost:8080/`），點「進入工作台」（或直接訪問 `/workspace`）。首次使用先註冊帳號（使用者名稱 + 密碼），之後本機自動登入。
 2. **建任務。** 寫清楚你的爭議問題。可選地：
    - 關聯一個**知識庫**（你的文獻作為 Level A 使用者提供源參與議會；需要整理文件時點「管理知識庫」）；
    - 上傳 **PDF**（任務級，全文核驗後按 Level A 進入證據圖）；

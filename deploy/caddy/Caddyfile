@@ -13,17 +13,11 @@
 #
 # 监听地址占位符：由 .env 的 POLISCOPE_SITE_ADDRESS 控制。
 # - 默认 ":80"：纯 HTTP，本机 / 局域网可用。
-# - 填真实域名（如 "example.com"）：Caddy 自动向 Let's Encrypt 签发受信
-#   HTTPS 证书，无需改本文件。
-# - 填 "https://<IP>"（无域名的公网 IP 直连）：配合下方 `tls internal`
-#   强制用 Caddy 本地 CA 签发自签证书，让浏览器"自动升级 HTTPS"后仍能
-#   访问（会提示证书不受信，点"继续访问"即可）。
+# - 填真实域名（如 "poliscope.tech"）：Caddy 自动向 Let's Encrypt 签发受信
+#   HTTPS 证书并自动续期，无需改本文件。
+# - 无域名的公网 IP 直连（"https://<IP>"）暂不自动 HTTPS：Let's Encrypt
+#   拒绝为纯 IP 签发证书。确需自签证书时，自行加 `tls internal`。
 {$POLISCOPE_SITE_ADDRESS} {
-	# 无域名 IP 直连时，强制用本地 CA 签发自签证书（Let's Encrypt 拒绝为
-	# 纯 IP 签发证书，默认行为会失败）。配了真实域名时自动 HTTPS 优先，
-	# 此指令在域名模式下是安全的 no-op，不影响公网证书签发。
-	tls internal
-
 	handle {
 		reverse_proxy web:80
 	}
