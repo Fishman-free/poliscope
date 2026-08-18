@@ -489,6 +489,14 @@ function Footer() {
       <div className="landing__copyright">
         <span>Poliscope · EpistemoBrain</span>
         <span>{t("科研辅助工具 · 非临床诊断")}</span>
+        <a
+          className="landing__icp"
+          href="https://beian.miit.gov.cn/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          苏ICP备2026058422号
+        </a>
       </div>
     </>
   );
