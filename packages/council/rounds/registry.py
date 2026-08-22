@@ -1716,6 +1716,7 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
     outputs, unfilled, absent, reasons, attempts = await _collect(context)
     handler = BlindspotBountyHandler()
     items: list[BlindspotItem] = []
+    seen_ids: set[UUID] = set()
     for output in outputs.values():
         raw = output.get("blindspots")
         if not isinstance(raw, (list, tuple)):
@@ -1726,9 +1727,21 @@ async def run_blindspot_bounty(context: PhaseContext) -> PhaseOutcome:
             ids = _uuids([item.get("id")])
             if not ids:
                 continue
+            blindspot_id = ids[0]
+            # Real models hallucinate ids: two distinct blindspots can arrive
+            # with the same uuid (e.g. a prompt example reused verbatim), and
+            # the idempotency key below derives from this id -- a duplicate
+            # would collide the ledger's unique key with two different
+            # payloads and raise EventConflict. Re-key the repeat
+            # deterministically from its statement so a replay stays stable.
+            if blindspot_id in seen_ids:
+                blindspot_id = uuid5(
+                    NAMESPACE_URL, f"blindspot:{item.get('statement', '')}"
+                )
+            seen_ids.add(blindspot_id)
             items.append(
                 BlindspotItem(
-                    id=ids[0],
+                    id=blindspot_id,
                     statement=str(item.get("statement", "")),
                     impact=_decimal(item.get("impact")),
                     uncertainty=_decimal(item.get("uncertainty")),

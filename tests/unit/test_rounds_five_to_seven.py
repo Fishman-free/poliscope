@@ -60,6 +60,64 @@ class _BlindspotDeliberator:
         }
 
 
+class _CollidingIdDeliberator:
+    """Two seats nominate DIFFERENT blindspots under the SAME hallucinated id.
+
+    Real models do this (a prompt example uuid reused verbatim); the id is
+    derived into the idempotency key, so a duplicate must be re-keyed
+    deterministically instead of raising EventConflict.
+    """
+
+    def __init__(self, shared_id: UUID) -> None:
+        self._shared_id = shared_id
+
+    async def deliberate(
+        self, seat: Seat, phase: TaskPhase, context: PhaseContext
+    ) -> Mapping[str, object] | None:
+        assert phase is TaskPhase.BLINDSPOT_BOUNTY
+        statement = (
+            "A measurement bias from self-reported use"
+            if seat is Seat.CAUSAL_SCIENTIST
+            else "An unmeasured reverse-causation channel"
+        )
+        return {
+            "blindspots": [
+                {
+                    "id": str(self._shared_id),
+                    "statement": statement,
+                    "impact": "0.9",
+                    "uncertainty": "0.8",
+                    "investigability": "0.7",
+                    "novelty": "0.6",
+                    "normalized_cost": "0.3",
+                }
+            ]
+        }
+
+
+async def test_bounty_rekeys_hallucinated_duplicate_ids() -> None:
+    """A repeated model uuid must not collide the ledger idempotency key."""
+    shared_id = uuid4()
+    context = PhaseContext(
+        task_id=uuid4(),
+        phase=TaskPhase.BLINDSPOT_BOUNTY,
+        seats=(Seat.CAUSAL_SCIENTIST, Seat.MEASUREMENT_SCIENTIST),
+        question="Does screen time affect wellbeing?",
+        confirmed_claims=(uuid4(),),
+        deliberator=_CollidingIdDeliberator(shared_id),
+    )
+
+    outcome = await run_blindspot_bounty(context)
+
+    # Both blindspots survive (nothing dropped on the collision), and their
+    # ids are distinct: the second was re-keyed deterministically.
+    ranked = outcome.carry["ranked_blindspots"]
+    assert len(ranked) == 2
+    rekeyed = [r for r in ranked if r["blindspot_id"] != str(shared_id)]
+    assert len(rekeyed) == 1
+    assert rekeyed[0]["statement"] == "An unmeasured reverse-causation channel"
+
+
 def test_full_bounty_to_rejudgment_pipeline() -> None:
     bounty_handler = BlindspotBountyHandler()
     bounty_output = bounty_handler.score_and_assign(
