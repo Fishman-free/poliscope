@@ -52,8 +52,27 @@
 
 \begin{itemize}
 \item 时间切片语料（截止日前封闭语料）尚未采集 $\rightarrow$ 无独立 B\_test。
-\item 真实模型 + 真实语料的五基线受控对照实验尚未运行（需模型凭证与语料采集）。
 \item 人工标注（金标准盲点的 Kappa/Alpha 一致性）尚未产生标注数据——但协议骨架（双人标注 + 仲裁者 + 统计）已实现于 \texttt{packages/evaluation/agreement.py}。
 \end{itemize}
 
-当前可复现的数字来自 \texttt{scripts/arbor\_eval.py} 在脚本化 demo case（无模型调用、无网络、无数据库）上的确定性测量，属于 B\_dev。脚本化 gateway 的固有边界被如实报告：协议/记忆/证据门对盲点\emph{整合}的贡献在盲点指标上不可观测（两个消融在脚本化素材上是零效应），它们体现在辅助分数（异议保留、引用蕴含、证据独立性）并要求真实模型运行才能观测。
+真实模型受控对照实验\emph{已经运行}（\texttt{scripts/live\_ablation.py}，DeepSeek-V4-Flash 于 OpenAI 兼容端点，11 变体 $\times$ 语义裁判），结果与边界见下节「盲点质量裁判」与论文 4.6 节。
+
+当前可复现的脚本化数字来自 \texttt{scripts/arbor\_eval.py} 在 demo case（无模型调用、无网络、无数据库）上的确定性测量，属于 B\_dev。脚本化 gateway 的固有边界被如实报告：协议/记忆/证据门对盲点\emph{整合}的贡献在盲点指标上不可观测（两个消融在脚本化素材上是零效应），它们体现在辅助分数（异议保留、引用蕴含、证据独立性）并要求真实模型运行才能观测——真实模型运行后的结论见下。
+
+\subsection{盲点质量裁判：关键词代理到语义评判}
+
+真实模型跑消融时暴露了一个测量缺陷：\texttt{score\_blindspots} 用关键词子串匹配 gold blindspot（例如把 \texttt{reverse\_causation} 拆词后要求逐词出现），而真实模型的自由文本「效应的方向可能反向」根本不含该 token，导致多数变体 recall 塌陷为 0.0——这不是系统能力为 0，而是测量仪器失效。修复是 \texttt{packages/evaluation/semantic\_blindspot.py}：用\emph{同一个}模型网关（不引第二个厂商 SDK）做语义评判，对每个 gold 概念询问「哪几条候选盲点陈述在语义上覆盖了它」，再按与关键词版完全相同的定义导出 recall/precision。
+
+语义评判的诚实边界同样被保留：它仍不是人工金标准（那是 \texttt{agreement.py} 未来工作的位置），且判官不可达或结构化输出被隔离时返回 \texttt{None}（「未测量」），绝不静默写成 0.0。\texttt{scripts/live\_ablation.py} 通过 \texttt{--semantic} 开关在同一份消融表里并列输出关键词列与语义列（\texttt{rec\_sem}/\texttt{prec\_sem}/\texttt{F1\_sem}），使两种裁判的差异本身可审计。对应测试 \texttt{test\_evaluation\_semantic\_blindspot.py}。
+
+\subsection{真实模型运行的结果与边界}
+
+真实模型（DeepSeek-V4-Flash，官方 API 端点）先跑 11 变体单次扫描，端点随即限流两天，12 个 run 被污染（unfilled 跳到 46、语义裁判全部不可达）——这些 run 被弃用而非报告。随后对 5 个关键变体（完整系统、单 agent 基线、三个机制效应最大的消融）各跑 3 次取均值，降方差后的三个发现：
+
+\begin{enumerate}
+\item \textbf{语义裁判修复了测量}：关键词版在自由文本下对完整系统报 recall 0.0；语义版产生可读、非退化分布，precision 呈现真实梯度（0.406--1.000），裁判本身有效。
+\item \textbf{降方差后不是噪声，是稳定的精度—召回权衡}：完整 Poliscope 的语义 precision 满分 1.000，但 recall 最低（0.286，三次全部恰好覆盖 2/7 个 gold 概念）；所有简化变体（含单 agent 基线）recall 高达 0.809--1.000，precision 反而降到 0.406--0.586。去预承诺三次全部复现 recall 1.000——此前单次运行的观察不是采样假象，而是真实、可重复的效应。unfilled 解释了差距：完整系统平均 12.3 个空槽（模型产不出结构化提名），简化变体只有 1.0--1.7。\textbf{协议负担是 flash 级模型的硬约束}：议会的治理机制用 recall 换取 precision，弱模型下 recall 代价主导了 F1。
+\item \textbf{数据层确定性分数全 run 一致}：citation entailment 0.5、evidence independence 0.667、dissent preservation 1.0 在 15 个 run 中全部相同——评分管道与模型无关，一致性得到验证。
+\end{enumerate}
+
+结论：语义裁判是盲点质量的可用测量工具（方法贡献）；但 EpistemoBrain 的机制是\emph{整合级}的（跨阶段塑造席位推理与召回），观测其收益需要强到能支撑完整协议不缺席的模型、或更轻的协议。这是工程后续项，不是静默假设。脚本化案例已隔离每个机制的结构贡献；本节记录真实模型下隔离失效的边界。

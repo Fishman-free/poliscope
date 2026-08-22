@@ -51,7 +51,7 @@ ACL 模板的 `\maketitle` 会建立跨双栏的标题区并切入双栏模式�
 | 1 Introduction | 问题动机（复现危机文献）+ 系统概述 + 三点贡献 | 1 Introduction |
 | 2 Related Work | 多智能体辩论 / 记忆 / RAG 与事实核验 / 科学智能体 | 2 Related Work |
 | 3 Method | 3.1 Overview / 3.2 七席议会 / 3.3 分层记忆 / 3.4 双图治理 / 3.5 证据门 / 3.6 认识论路由 / 3.7 人类检查点 / 3.8 工程实现 | 3 Method |
-| 4 Experiments | 4.1 ForesightBlindspot 基准设计 / 4.2 五基线 / 4.3 基线构造正确性（评测管道发现的修复）/ 4.4 脚本化案例结果（5 变体对比表）/ 4.5 消融分析（6 变体消融表，round-15 新增）/ 4.6 系统验证 | 4 Experiment |
+| 4 Experiments | 4.1 ForesightBlindspot 基准设计 / 4.2 五基线 / 4.3 基线构造正确性（评测管道发现的修复）/ 4.4 脚本化案例结果（5 变体对比表）/ 4.5 消融分析（6 变体消融表，round-15 新增）/ 4.6 真实模型 + 语义裁判结果（11 变体，round-16 新增）/ 4.7 系统验证 | 4 Experiment |
 | 5 Conclusion | 结论与未来工作 | 5 Conclusion |
 | Appendix A | 实现细节：确定性 harness、权限即设计、可复现性 | Appendix A |
 
@@ -65,11 +65,26 @@ ACL 模板的 `\maketitle` 会建立跨双栏的标题区并切入双栏模式�
 解读：三个消融有机制级效应（去证伪者/去审计员 → 盲点 recall 下降；
 去谱系 → 证据独立性被抬高为 1.0），两个消融在脚本化素材上无差异
 （去预承诺、去 MemoBrain）——论文如实标注为测量边界而非机制无效。
+真实模型受控对照实验**已经运行**：`scripts/live_ablation.py`
+（`--semantic --repeat 3`，DeepSeek-V4-Flash 于官方 DeepSeek API 端点，
+5 个关键变体各 3 次重复取均值），结果记入论文 4.6 节
+（`\subsection{Results with a Real Model and a Semantic Judge}`）与
+`docs/tech/ch10_evaluation.tex`。核心结论：关键词版盲点 recall 在自由
+文本下塌陷为 0；语义裁判（`packages/evaluation/semantic_blindspot.py`）
+修复了测量；降方差后呈现稳定的精度—召回权衡而非噪声——完整系统
+precision 1.000 / recall 0.286（3 次一致），所有简化变体（含单 agent）
+recall 0.809--1.000 但 precision 0.406--0.586，去预承诺 3 次全部复现
+recall 1.000；unfilled 12.3 vs 1.0--1.7 表明协议负担是 flash 级模型的
+硬约束。早期 11 变体单次扫描因端点限流两天、12 个 run 被污染而弃用
+（备份在 `live_ablation_repeat.progress.20260820-polluted.bak`）。
+
 以下内容论文中如实标注为未来工作，**没有编造任何数字**：
 
 - 时间切片语料（截止日前封闭语料）尚未采集 → 无独立 B_test
-- 真实模型 + 真实语料的五基线受控对照实验尚未运行（需模型凭证与语料采集）
 - 人工标注（金标准盲点的 Kappa/Alpha 一致性）尚未产生标注数据
+- 真实模型的多次重复降方差实验已对 5 个关键变体完成（n=3 均值，
+  DeepSeek 官方端点），其余 6 变体的重复实验留作后续工作（早期单次
+  扫描数据因端点限流弃用）
 
 ## 评测实验的演进记录（Arbor 会话）
 

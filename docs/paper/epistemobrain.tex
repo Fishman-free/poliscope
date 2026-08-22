@@ -75,8 +75,16 @@ coverage is driven by the council's seat coverage -- a lone researcher
 misses six of seven specialist blindspots -- and the ablations show that
 removing the adversarial falsifier or the evidence auditor each costs a
 gold blindspot, while removing lineage tracking inflates the system's own
-evidence-independence report. End-to-end verification on real research
-tasks is reported alongside.
+evidence-independence report. A real-model run shows that keyword-based
+blindspot recall fails on free-form text and that a semantic judge
+repairs the measurement. Repeated runs then reveal a stable
+precision--recall trade-off rather than variance noise: the full
+system's governance achieves perfect blindspot precision at the cost of
+the lowest recall (two of seven gold concepts), while every simplified
+variant -- including a lone researcher -- finds nearly all gold concepts
+with lower precision; removing precommitment reproduces recall 1.0 in
+every run. End-to-end verification on real research tasks is reported
+alongside.
 
 \end{abstract}
 
@@ -657,10 +665,95 @@ three effects as validated mechanism checks and the two null results as
 an identified measurement boundary, not as evidence that the two
 capabilities contribute nothing.
 
+\subsection{Results with a Real Model and a Semantic Judge}
+
+The scripted case is deterministic by construction, and its blindspot
+metric rests on a \emph{keyword} proxy: ``reverse\_causation'' matches only
+statements that literally contain those words (underscore-separated and
+case-folded). The scripted gateway writes its statements to contain the
+keyword, so the proxy works there. It does not survive contact with a real
+model: free-form output such as ``the direction of effect could run the
+other way'' names the reverse-causation gap without containing the token,
+so the keyword score reports recall 0.0 even when the gap was found. To
+measure blindspot quality under a real model we added a \emph{semantic
+judge}: for each gold concept, the same model gateway (no second vendor
+SDK) is asked which numbered candidate statements semantically address
+that concept, and recall/precision are derived with the identical
+definitions the keyword score uses. A judge that is unreachable or whose
+structured answer is quarantined returns \emph{unmeasured} rather than
+silently 0.0.
+
+We then ran five key variants (the full system, the single-agent
+baseline, and the three mechanism ablations whose scripted effects were
+largest) through the real gateway (DeepSeek-V4-Flash on the official
+DeepSeek API), three runs each, and scored blindspots with the semantic
+judge. The initial eleven-variant single-run sweep was abandoned because
+the first endpoint rate-limited for two days, polluting twelve runs
+(unfilled slots jumped to 46 and the judge was unreachable for every
+semantic call); those runs were discarded rather than reported.
+Table~\ref{tab:real} reports the three-run means (F1 recomputed from the
+mean recall and precision, not the mean of per-run F1s).
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Variant} & \textbf{Sem-R} & \textbf{Sem-P} & \textbf{Sem-F1} & \textbf{Unf.} & \textbf{$n$} \\
+\midrule
+Single-Agent Deep Research & 0.809 & 0.544 & 0.651 & 1.0 & 3 \\
+Full Poliscope & 0.286 & 1.000 & 0.444 & 12.3 & 3 \\
+\quad$-$ Precommitment & 1.000 & 0.490 & 0.658 & 1.0 & 3 \\
+\quad$-$ Adversarial falsifier & 1.000 & 0.406 & 0.577 & 1.7 & 3 \\
+\quad$-$ Evidence auditor & 0.952 & 0.586 & 0.726 & 1.3 & 3 \\
+\bottomrule
+\end{tabular}
+\caption{Blindspot scoring on repeated real-model runs, means over $n=3$.
+``Sem'' is the semantic judge; R/P/F1 are recall, precision, and F1;
+``Unf.'' is the mean number of unfinished evidence slots. The keyword
+proxy is omitted: on this endpoint it again collapses to 0 for the full
+system, and the semantic judge is the controlled measurement.}
+\label{tab:real}
+\end{table*}
+
+Three findings follow. \emph{First}, the semantic judge repairs the
+measurement: the keyword proxy reports recall 0.0 for the full system on
+free-form text, while the semantic judge produces a readable,
+non-degenerate distribution. \emph{Second}, the repeated runs turn the
+earlier single-run reading -- ``sampling variance dominates'' -- into a
+stable, reproducible \emph{precision--recall trade-off}: full Poliscope
+achieves perfect precision ($1.000$) at the cost of the lowest recall
+($0.286$, exactly two of seven gold concepts in all three runs), while
+every simplified variant -- including the lone researcher -- finds nearly
+all gold concepts (recall $0.809$--$1.000$) with markedly lower precision
+($0.406$--$0.586$). The precommitment removal reproduces recall $1.000$
+in every run, so the earlier single-run observation was not a sampling
+artifact but a real, repeated effect. Unfilled slots explain the gap: the
+full system leaves 12.3 slots unfilled on average (the model produced no
+structured nomination), versus 1.0--1.7 for the simplified variants.
+Protocol burden on a flash-tier model is the binding constraint: the
+council's governance mechanisms buy precision at the cost of recall, and
+under a weak model the recall cost dominates F1. \emph{Third}, the
+deterministic data-level scores (citation entailment $0.5$, evidence
+independence $0.667$, dissent preservation $1.0$) are identical across
+all fifteen runs, as expected for scoring that does not depend on model
+output.
+
+We report this honestly rather than as a positive result. The semantic
+judge is a usable measurement instrument for blindspot quality -- it
+replaces a keyword proxy that demonstrably fails on free-form text -- but
+the mechanisms EpistemoBrain adds are \emph{integration-level}: they shape
+what a seat reasons and recalls across phases, and observing their
+benefit requires a model strong enough to sustain the full protocol
+without the seat absence seen here (or a lighter protocol). That is an
+engineering follow-on, not a silent assumption; the scripted case
+already isolates each mechanism's structural contribution, and this
+subsection records the real-model boundary at which that isolation stops.
+
 \subsection{System Verification}
 
 Beyond the controlled comparison, Poliscope is verified end to end.
-The test suite comprises 714 unit tests and 359 integration tests over a
+The test suite comprises 752 unit tests and 364 integration tests over a
 real PostgreSQL instance with three database identities, including
 privilege tests that assert the application role cannot write the
 evidence graph and the projector role cannot rewrite the ledger -- the
@@ -689,9 +782,18 @@ protocol, the five-baseline comparison, and the six-variant ablation ladder
 establish a measurement basis -- with the caveat, reported openly, that
 scripted gateways make the protocol's integration-level contributions
 unobservable on the blindspot metric (two of the six ablations are null on
-this material for exactly that reason), and that a time-sliced corpus with
-a held-out split, human annotation, and real-model controlled runs is the
-next step of this research program.
+this material for exactly that reason). A real-model run further shows
+that a keyword proxy for blindspot recall fails on free-form text and that
+a semantic judge repairs the measurement. Repeated runs then expose a
+stable boundary rather than noise: under a flash-tier model the full
+protocol's governance buys perfect blindspot precision at the cost of
+recall -- every simplified variant, including a lone researcher, finds
+more gold concepts -- with seat absence (12.3 unfilled slots versus
+1.0--1.7) as the binding constraint. Observing integration-level
+benefits thus requires either a stronger model or a lighter protocol;
+both are honest engineering follow-ons. A time-sliced corpus with a
+held-out split and human annotation remains the next step of this
+research program.
 
 \section*{Acknowledgments}
 
