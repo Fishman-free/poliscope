@@ -179,6 +179,29 @@ FINAL_JUDGMENT: Final[dict[str, Any]] = {
     "required": ["final_judgment"],
 }
 
+# Evaluation-judge schema for packages.evaluation.semantic_blindspot -- not one
+# of the seven seat phase schemas, so it is not subject to the seat/phase
+# consistency contract that governs PHASE_OUTPUT_SCHEMAS. It shapes one judge
+# call that decides, for ONE expected blindspot concept, which of a numbered
+# list of candidate blindspot statements semantically address it. The judge is
+# the fix for scoring's keyword proxy failing on free-form model text; it still
+# is not human ground truth (see packages/evaluation/semantic_blindspot.py).
+BLINDSPOT_SEMANTIC_MATCH: Final[dict[str, Any]] = {
+    "type": "object",
+    "properties": {
+        "addressed_statement_indices": {
+            "type": "array",
+            "items": {"type": "number"},
+            "description": (
+                "Zero-based indices of the candidate blindspot statements that "
+                "semantically address the expected blindspot concept; an empty "
+                "array when none of them do."
+            ),
+        },
+    },
+    "required": ["addressed_statement_indices"],
+}
+
 # System-level schema for packages.papers.finding_extraction.FindingExtractor --
 # not one of the seven seat phase schemas above, so it is not subject to the
 # seat/phase consistency contract that governs PHASE_OUTPUT_SCHEMAS. It shapes
@@ -488,6 +511,7 @@ PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     "BlindspotNominations": BLINDSPOT_NOMINATIONS,
     "JointModelContribution": JOINT_MODEL_CONTRIBUTION,
     "FinalJudgment": FINAL_JUDGMENT,
+    "BlindspotSemanticMatch": BLINDSPOT_SEMANTIC_MATCH,
     "StudyFindingExtraction": STUDY_FINDING_EXTRACTION,
     # Not a council round: the report synthesizer's one-shot paper output
     # (packages/reports/synthesis.py). Same repair/quarantine machinery as the

@@ -56,6 +56,20 @@ def _admitted(events: Iterable[LedgerEntry], event_type: str) -> list[LedgerEntr
     ]
 
 
+def admitted_blindspot_statements(events: Iterable[LedgerEntry]) -> list[str]:
+    """Admitted Blindspot statements, in ledger order.
+
+    Shared by :func:`score_blindspots` and the semantic judge
+    (:mod:`packages.evaluation.semantic_blindspot`) so both apply the same
+    admission filter -- a quarantined blindspot is excluded from either metric,
+    never counted differently by the two.
+    """
+    return [
+        str(entry.payload.get("statement", ""))
+        for entry in _admitted(events, EvidenceNodeType.BLINDSPOT.value)
+    ]
+
+
 def _author_names(raw: object) -> tuple[str, ...]:
     """Coerce a payload's untyped ``authors`` value into a tuple of names.
 
@@ -82,11 +96,7 @@ def score_blindspots(
     ``0.0`` when there is nothing to compare (no expectations, or no admitted
     blindspots), which is the honest value rather than an undefined one.
     """
-    events = list(events)
-    statements = [
-        str(entry.payload.get("statement", ""))
-        for entry in _admitted(events, EvidenceNodeType.BLINDSPOT.value)
-    ]
+    statements = admitted_blindspot_statements(events)
     if not expected_blindspots:
         return (0.0, 0.0)
     matched_statements: set[int] = set()
@@ -234,6 +244,7 @@ def cost_per_valid_blindspot(
 
 
 __all__ = [
+    "admitted_blindspot_statements",
     "cost_per_valid_blindspot",
     "score_blindspots",
     "score_causal_overclaim",
