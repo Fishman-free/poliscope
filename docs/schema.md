@@ -8,7 +8,7 @@
 
 ## Evidence Graph
 
-### Node Types (9)
+### Node Types (10)
 
 - `ResearchQuestion`
 - `Claim`
@@ -19,6 +19,7 @@
 - `Blindspot`
 - `DebateCapsule`
 - `DiscriminatingStudy`
+- `DissentCertificate`
 
 ### Edge Types (12)
 

@@ -729,7 +729,7 @@ git add packages/papers migrations/versions/0002_papers_and_objects.py tests/fix
 git commit -m "feat(papers): build private complete evidence packets"
 ```
 
-### 任务 6：定义 9 节点、12 边与最小 Evidence Gate
+### 任务 6：定义 10 节点、12 边与最小 Evidence Gate
 
 **文件：**
 - 创建：`packages/evidence/contracts.py`
@@ -741,10 +741,11 @@ git commit -m "feat(papers): build private complete evidence packets"
 - [ ] **步骤 1：编写失败测试**
 
 ```python
-def test_graph_contract_has_exactly_nine_nodes_and_twelve_edges() -> None:
-    assert len(EvidenceNodeType) == 9
+def test_graph_contract_has_exactly_ten_nodes_and_twelve_edges() -> None:
+    assert len(EvidenceNodeType) == 10
     assert len(EvidenceEdgeType) == 12
     assert EvidenceNodeType.DISCRIMINATING_STUDY.value == "DiscriminatingStudy"
+    assert EvidenceNodeType.DISSENT_CERTIFICATE.value == "DissentCertificate"
 
 @pytest.mark.parametrize("level,expected", [("A", "ADMIT"), ("B", "SOURCE_ONLY"), ("C", "DISCOVERY_ONLY"), ("D", "TOOL_LEAD_ONLY")])
 def test_minimal_gate_applies_level_matrix(level, expected, minimal_gate) -> None:
@@ -2011,7 +2012,7 @@ git commit -m "feat(web): add responsive research council workbench"
 - [ ] **步骤 1：编写失败测试**
 
 ```tsx
-it('节点 pointer-down 即时选择且 9 节点/12 边语义不只依赖颜色', () => {
+it('节点 pointer-down 即时选择且 10 节点/12 边语义不只依赖颜色', () => {
   render(<ControversyMapView graph={workspaceFixture.graph} />)
   fireEvent.pointerDown(screen.getByRole('button', { name: /Claim c-1/ }))
   expect(screen.getByRole('button', { name: /Claim c-1/ })).toHaveAttribute('aria-pressed', 'true')

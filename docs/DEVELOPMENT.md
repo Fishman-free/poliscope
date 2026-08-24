@@ -164,7 +164,7 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 | 事件账本幂等与断线续传（SSE 按 `Last-Event-ID` 续传） | 集成测试 + 浏览器实测 53/53 事件 |
 | 证据门六阶段审核、A–D 分级、因果越级隔离 | 集成测试，关键项经变异测试自证 |
 | 十三个 CLI 子命令（含 `pause`/`resume`/`health`/`council-preview`/`council-guidance`/`login`/`register`/`logout`） | 逐条对真实 API 手工验证 |
-| 九个前端视图（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View / 最终论文 / 知识库）+ 议会检查点面板 + 建任务/确认主张首屏 + 注册登录/账号隔离 + 模型设置 / Skills / 会话历史面板 | 真实数据 + 浏览器实测，无控制台错误 |
+| 八个前端视图（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View / 最终论文 / 知识库）+ 议会检查点面板 + 建任务/确认主张首屏 + 注册登录/账号隔离 + 模型设置 / Skills / 会话历史面板 | 真实数据 + 浏览器实测，无控制台错误 |
 | 全文获取 → 解析 → StudyFinding 抽取 → 引用锚点核验 | 单元测试（程序化生成 PDF fixture，无需网络）+ 集成测试断言 `DERIVED_FROM` 边真正出现在证据图上 |
 | 联合建模 → Dialectical Fold → `DebateCapsule`；最终复判 → 异议 → `DissentCertificate` | 单元测试覆盖两条产出路径与「无边界/无冲突则不折叠」「无异议目标则记未填槽位」两条弃权路径；集成测试断言完整任务运行后证据图上真的出现对应节点 |
 | **真实模型调用**（研究者自带 OpenAI 兼容端点：DeepSeek 等）跑通 7 席全程议会 → 条件化共识 → 最终论文合成 | 真实任务端到端（`COMPLETED_WITH_GAPS` 与 `COMPLETED` 两种终态各验证一次），论文含 19 篇带 DOI 的参考文献与 11 条局限；浏览器全标签页实测无控制台错误 |

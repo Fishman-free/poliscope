@@ -9,7 +9,7 @@ https://aclanthology.org/2026.findings-acl.127/ ）的章节结构与文风撰�
 - `epistemobrain.tex` — 论文正文（标题、作者、摘要、正文、参考文献、附录都在此文件内），是 self-contained body：不含 `\documentclass`，编译时接入官方 ACL 模板的 `.sty`
 - `epistemobrain_main.tex` — 编译驱动（wrapper）：提供 ACL 模板 preamble 与 `\begin{document}`，`\input{epistemobrain}` 引入正文
 - `acl.sty` — 官方 ACL 模板（来自 https://github.com/acl-org/acl-style-files ，仓库根目录），编译依赖
-- `epistemobrain.pdf` — 已编译的 PDF（ACL Findings 2026 版式，10 页）
+- `epistemobrain.pdf` — 已编译的 PDF（ACL Findings 2026 版式，11 页）
 - `README.md` — 本文件
 
 ## 作者信息（按要求填写）
@@ -51,7 +51,7 @@ ACL 模板的 `\maketitle` 会建立跨双栏的标题区并切入双栏模式�
 | 1 Introduction | 问题动机（复现危机文献）+ 系统概述 + 三点贡献 | 1 Introduction |
 | 2 Related Work | 多智能体辩论 / 记忆 / RAG 与事实核验 / 科学智能体 | 2 Related Work |
 | 3 Method | 3.1 Overview / 3.2 七席议会 / 3.3 分层记忆 / 3.4 双图治理 / 3.5 证据门 / 3.6 认识论路由 / 3.7 人类检查点 / 3.8 工程实现 | 3 Method |
-| 4 Experiments | 4.1 ForesightBlindspot 基准设计 / 4.2 五基线 / 4.3 基线构造正确性（评测管道发现的修复）/ 4.4 脚本化案例结果（5 变体对比表）/ 4.5 消融分析（6 变体消融表，round-15 新增）/ 4.6 真实模型 + 语义裁判结果（11 变体，round-16 新增）/ 4.7 系统验证 | 4 Experiment |
+| 4 Experiments | 4.1 ForesightBlindspot 基准设计 / 4.2 五基线 / 4.3 基线构造正确性（评测管道发现的修复）/ 4.4 脚本化案例结果（5 变体对比表）/ 4.5 消融分析（6 变体消融表，round-15 新增）/ 4.6 真实模型 + 语义裁判结果（5 个关键变体 × 3 次重复取均值，round-16 新增）/ 4.7 系统验证 | 4 Experiment |
 | 5 Conclusion | 结论与未来工作 | 5 Conclusion |
 | Appendix A | 实现细节：确定性 harness、权限即设计、可复现性 | Appendix A |
 
@@ -69,14 +69,18 @@ ACL 模板的 `\maketitle` 会建立跨双栏的标题区并切入双栏模式�
 （`--semantic --repeat 3`，DeepSeek-V4-Flash 于官方 DeepSeek API 端点，
 5 个关键变体各 3 次重复取均值），结果记入论文 4.6 节
 （`\subsection{Results with a Real Model and a Semantic Judge}`）与
-`docs/tech/ch10_evaluation.tex`。核心结论：关键词版盲点 recall 在自由
+`docs/tech/ch10_evaluation.tex`。原始 run 数据（15 条逐 run 记录）与
+均值聚合表随本仓库归档于 `docs/paper/data/`
+（`live_ablation_repeat.progress.jsonl`、`live_ablation_repeat.md`），
+论文 4.6 节数字可逐行核验。核心结论：关键词版盲点 recall 在自由
 文本下塌陷为 0；语义裁判（`packages/evaluation/semantic_blindspot.py`）
 修复了测量；降方差后呈现稳定的精度—召回权衡而非噪声——完整系统
 precision 1.000 / recall 0.286（3 次一致），所有简化变体（含单 agent）
 recall 0.809--1.000 但 precision 0.406--0.586，去预承诺 3 次全部复现
 recall 1.000；unfilled 12.3 vs 1.0--1.7 表明协议负担是 flash 级模型的
 硬约束。早期 11 变体单次扫描因端点限流两天、12 个 run 被污染而弃用
-（备份在 `live_ablation_repeat.progress.20260820-polluted.bak`）。
+（污染数据备份在 `docs/paper/data/live_ablation_repeat.progress.20260820-polluted.bak`，
+保留作弃用凭证，不参与论文任何数字）。
 
 以下内容论文中如实标注为未来工作，**没有编造任何数字**：
 
