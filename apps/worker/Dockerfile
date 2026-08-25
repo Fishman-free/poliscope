@@ -26,7 +26,20 @@ WORKDIR /app
 # Tesseract + language packs for the OCR fallback in packages/papers/parser.py:
 # scanned/image PDFs have no text layer, and PyMuPDF's OCR bridge needs the
 # system libtesseract and traineddata at runtime. No new Python dependency.
-RUN apt-get update \
+#
+# The deployment host is a mainland-China server where deb.debian.org is
+# unreachably slow; swap the apt source to Alibaba's mirror first (same
+# discipline as the ECR/DaoCloud image mirrors in docker-compose.yml) so the
+# first build does not stall for tens of minutes on the language pack.
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' \
+            /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list; \
+    fi; \
+    apt-get update \
     && apt-get install -y --no-install-recommends \
         tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
