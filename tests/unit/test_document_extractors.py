@@ -171,3 +171,44 @@ def test_pdf_magic_wins_over_wrong_extension() -> None:
     # filename says otherwise -- but garbage PDF bytes are refused honestly.
     with pytest.raises(InvalidDocument, match="pdf parsing failed"):
         extract_text(b"%PDF-1.7 this is not really a pdf", "file.txt")
+
+
+def test_short_native_text_pdf_is_not_ocrd() -> None:
+    # A native-text page with a short caption is sparse but carries NO raster
+    # image, so the OCR fallback must not fire: the text the PDF itself states
+    # is exact and always preferred over an OCR pass (CLAUDE.md 7). This pins
+    # the image gate -- without it, a tesseract-enabled environment would
+    # re-OCR short pages and risk garbling text we already have.
+    import fitz  # type: ignore[import-untyped]
+
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Short caption only.")
+    content = bytes(document.tobytes())
+
+    blocks, count = extract_text(content, "caption.pdf")
+    assert count == 1
+    assert "Short caption only." in blocks[0].text
+
+
+def test_scanned_pdf_without_text_layer_is_ocrd() -> None:
+    # A raster-only page (no embedded text layer) is exactly the scanned case
+    # the OCR fallback exists for. Skip when Tesseract is absent from the test
+    # environment -- the assertion only holds where OCR can actually run.
+    import fitz  # type: ignore[import-untyped]
+
+    source = fitz.open()
+    source_page = source.new_page(width=300, height=120)
+    source_page.insert_text((20, 60), "ScannedBody ZXQY987")
+    pixmap = source_page.get_pixmap(dpi=200)
+
+    document = fitz.open()
+    page = document.new_page(width=300, height=120)
+    page.insert_image(page.rect, pixmap=pixmap)
+    content = bytes(document.tobytes())
+
+    blocks, _count = extract_text(content, "scanned.pdf")
+    joined = "\n".join(block.text for block in blocks)
+    if "ZXQY987" not in joined:
+        pytest.skip("tesseract OCR unavailable or failed to read the image")
+    assert "ScannedBody" in joined

@@ -25,6 +25,13 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.12-slim
 WORKDIR /app
+# Tesseract + language packs for the OCR fallback in packages/papers/parser.py:
+# scanned/image PDFs have no text layer, and PyMuPDF's OCR bridge needs the
+# system libtesseract and traineddata at runtime. No new Python dependency.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --create-home --shell /bin/bash poliscope
 COPY --from=base --chown=poliscope:poliscope /app /app
 ENV PATH="/app/.venv/bin:$PATH" \
