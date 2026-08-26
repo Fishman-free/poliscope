@@ -26,13 +26,13 @@ import { t } from "../i18n";
 import "./NewTaskView.css";
 
 const EVIDENCE_PRIORITY_LABELS: Record<string, string> = {
-  CORRELATION: "相关关系",
-  CAUSAL_OR_REVERSE_CAUSAL: "因果 / 反向因果",
-  MEASUREMENT: "测量与构念",
-  REPLICATION: "复现与统计",
-  BOUNDARY: "适用边界",
-  MECHANISM: "作用机制",
-  NULL_OR_COUNTEREXAMPLE: "零效应 / 反例",
+  CORRELATION: "相关 ≠ 因果（两件事只是碰巧同步变化？）",
+  CAUSAL_OR_REVERSE_CAUSAL: "因果方向（是 A 导致 B，还是 B 导致 A？）",
+  MEASUREMENT: "测量与指标（用什么测的？测得准不准？）",
+  REPLICATION: "能否复现（换一批数据或样本还成立吗？）",
+  BOUNDARY: "适用范围（对谁、在什么情境下才成立？）",
+  MECHANISM: "作用机制（它是通过什么起作用的？）",
+  NULL_OR_COUNTEREXAMPLE: "无效应与反例（有没有相反结果或“没发现效果”的研究？）",
 };
 
 function splitList(value: string): string[] {
@@ -743,7 +743,7 @@ export function NewTaskView({
           </div>
 
           <fieldset className="newtask__priorities">
-            <legend>{t("证据侧重（可多选，默认相关关系）")}</legend>
+            <legend>{t("证据侧重（可多选，默认：相关 ≠ 因果）")}</legend>
             {Object.entries(EVIDENCE_PRIORITY_LABELS).map(([key, label]) => (
               <label key={key} className="newtask__priority">
                 <input

@@ -17,10 +17,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import run_task
+from apps.worker.jobs import PaperReviewInputError, run_task
 from packages.evidence.models import GraphNodeModel, ScientificEventModel
 from packages.kernel.contracts import FrozenDict
 from packages.models.contracts import (
@@ -379,6 +380,43 @@ async def test_paper_review_confirm_requires_an_upload(
     )
     assert response.status_code == 422
     assert "必须至少上传一篇论文" in response.json()["detail"]
+
+
+async def test_paper_review_without_upload_fails_loudly(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Round-15 regression: a ``paper_review`` task with no uploaded paper must
+    stop immediately with ``PaperReviewInputError`` -- not run the whole council
+    on no input and finish looking like a review (CLAUDE.md 7)."""
+    task_id = uuid4()
+    async with app_sessions() as session:
+        session.add(
+            ResearchTaskModel(
+                id=uuid4(),
+                task_id=task_id,
+                question=QUESTION,
+                status="QUEUED",
+                created_by="paper_review_pipeline_test",
+                wall_clock_minutes=60,
+                model_cost_usd=Decimal("10.0000"),
+                tool_call_limit=100,
+                source_limit=50,
+                user_evidence={},
+                task_type="paper_review",
+            )
+        )
+        await session.commit()
+
+    with pytest.raises(PaperReviewInputError):
+        await run_task(
+            app_sessions,
+            projector_sessions,
+            task_id,
+            gateway=_ReviewGateway(),
+        )
+
+    assert await _task_status(app_sessions, task_id) == "FAILED"
 
 
 # --- worker understanding step + review report -----------------------------

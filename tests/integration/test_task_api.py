@@ -680,6 +680,66 @@ async def test_delete_task_removes_the_task_and_its_records(
     assert unknown.status_code == 404
 
 
+async def test_delete_task_with_uploaded_paper_source_succeeds(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Round-15 regression: a paper-review task's uploaded paper writes a
+    ``sources.object_id -> objects.id`` reference. The cascade must delete the
+    referencing source before the object -- deleting the object first raised a
+    foreign-key violation that surfaced as a 500 on session-history deletion."""
+    from packages.papers.models import ObjectModel, SourceModel
+
+    created = await _create(api_client)
+    task_id = UUID(created["task_id"])
+    object_id = uuid4()
+
+    async with app_sessions() as session:
+        session.add(
+            ObjectModel(
+                id=object_id,
+                task_id=task_id,
+                object_key=f"tasks/{task_id}/regression.pdf",
+                content_hash="a" * 64,
+                encryption="AES256",
+                content_type="application/pdf",
+                size_bytes=1234,
+                file_name="regression.pdf",
+            )
+        )
+        session.add(
+            SourceModel(
+                id=uuid4(),
+                task_id=task_id,
+                doi=None,
+                canonical_doi=None,
+                title="",
+                provider_ids={},
+                authors=[],
+                object_id=object_id,
+            )
+        )
+        await session.commit()
+
+    deleted = await api_client.delete(f"/api/tasks/{task_id}")
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted"] == str(task_id)
+
+    async with app_sessions() as session:
+        assert (
+            await session.scalar(
+                select(ObjectModel).where(ObjectModel.id == object_id)
+            )
+            is None
+        )
+        assert (
+            await session.scalar(
+                select(SourceModel).where(SourceModel.task_id == task_id)
+            )
+            is None
+        )
+
+
 async def _running_task(
     api_client: httpx.AsyncClient,
     app_sessions: async_sessionmaker[AsyncSession],

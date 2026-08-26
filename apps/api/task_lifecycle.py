@@ -59,8 +59,14 @@ _TASK_SCOPED_CHILDREN: tuple[type[object], ...] = (
     ProcessStreamModel,
     ModelCallModel,
     ToolCallModel,
-    ObjectModel,
+    # SourceModel must precede ObjectModel: ``sources.object_id`` references
+    # ``objects.id``, so the referencing source has to go before the object it
+    # points at. A paper-review task's uploaded paper creates exactly that
+    # shape (``SourceAcquisition._persist_uploaded``), and deleting the object
+    # first previously raised a foreign-key violation (IntegrityError) that
+    # surfaced as a 500 on session-history deletion.
     SourceModel,
+    ObjectModel,
     CouncilRoundModel,
     GraphEdgeModel,
     GraphNodeModel,

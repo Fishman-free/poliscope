@@ -95,6 +95,18 @@ class TaskNotRunnable(Exception):
     """Raised when a task cannot be run, with the reason kept for the caller."""
 
 
+class PaperReviewInputError(Exception):
+    """Raised when a ``paper_review`` task cannot read its uploaded paper.
+
+    Round-15: the paper-understanding step failing used to be logged and then
+    silently dropped, so the council ran through all seven rounds with no paper
+    input and finished looking like a real review. This error stops that: a
+    paper review that cannot read the paper is an input failure, not a gap to
+    paper over (CLAUDE.md 7 -- an unreadable source must stay visibly
+    unreadable, never guessed at).
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class JobResult:
     task_id: UUID
@@ -593,8 +605,13 @@ async def _deliberate_impl(
     # the captured event back instead of paying for the call again. The
     # summary is injected into every seat's prompt as explicitly non-evidence
     # context; the paper's own text is the Level A evidence via the
-    # acquisition pass. With no model provider the step is skipped and the
-    # report must admit it (gateway None -> no event).
+    # acquisition pass.
+    #
+    # Round-15: a paper review that cannot read its paper must stop here with a
+    # clear failure, not run the whole council on no input. Every ``ok=False``
+    # reason -- no uploaded papers, an object missing from the store, an
+    # unparsable file, no model provider, a failed reader call -- is an input
+    # failure for this task type, so all of them raise (CLAUDE.md 7).
     paper_understanding: dict[str, object] | None = None
     if getattr(task, "task_type", "deep_research") == "paper_review":
         if checkpoint is None:
@@ -607,14 +624,16 @@ async def _deliberate_impl(
             )
             if understanding.ok:
                 paper_understanding = understanding.payload
-            elif understanding.reason:
-                logger.warning(
-                    "paper understanding unavailable for task %s: %s",
-                    task_id,
-                    understanding.reason,
+            else:
+                raise PaperReviewInputError(
+                    understanding.reason or "the uploaded paper could not be read"
                 )
         else:
             paper_understanding = await load_paper_understanding(session, task_id)
+            if paper_understanding is None:
+                raise PaperReviewInputError(
+                    "a resumed paper review has no captured paper understanding"
+                )
 
     if checkpoint is None:
         report = await orchestrator.run(
@@ -800,9 +819,11 @@ async def _persist_council_runs(
 
 
 async def _mark_failed(
-    app_sessions: async_sessionmaker[AsyncSession], task_id: UUID
+    app_sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+    reason: str,
 ) -> None:
-    """Terminate a task stuck behind an unrecoverable ``EventConflict``.
+    """Terminate a task stuck behind an unrecoverable error.
 
     Runs in a brand-new session because the one that raised is already
     rolled back and about to be closed by its own ``async with`` block in
@@ -835,9 +856,7 @@ async def _mark_failed(
                     fallback_session,
                     task_id,
                     None,
-                    emergency_reason=(
-                        "unrecoverable event identity conflict (EventConflict)"
-                    ),
+                    emergency_reason=reason,
                 )
                 await fallback_session.commit()
             except BaseException:
@@ -900,7 +919,19 @@ async def run_task(
                 await session.commit()
             except EventConflict:
                 await session.rollback()
-                await _mark_failed(app_sessions, task_id)
+                await _mark_failed(
+                    app_sessions,
+                    task_id,
+                    "unrecoverable event identity conflict (EventConflict)",
+                )
+                raise
+            except PaperReviewInputError as error:
+                await session.rollback()
+                await _mark_failed(
+                    app_sessions,
+                    task_id,
+                    f"论文审查无法读取论文：{error}",
+                )
                 raise
             except BaseException:
                 await session.rollback()
@@ -923,6 +954,7 @@ async def run_task(
 
 __all__ = [
     "JobResult",
+    "PaperReviewInputError",
     "TaskNotRunnable",
     "deliberate",
     "project",
