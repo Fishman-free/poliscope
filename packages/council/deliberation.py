@@ -332,7 +332,16 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
         TaskPhase.CROSS_EXAMINATION,
         TaskPhase.FINAL_REJUDGMENT,
     }
+    # Round-7 paper-review: the paper-understanding summary must reach the
+    # seats from the very first protocol phase. PRECOMMITMENT is included so
+    # the seven seats open the review already knowing which paper (title,
+    # research question, main claims) they are committing to critique --
+    # without it a paper_review task's opening round is fed only the
+    # placeholder review question, and every seat honestly reports "no paper
+    # was provided", which reads as a failure even though the paper was read
+    # and understood (see the fail-loud PaperReviewInputError path).
     _PAPER_PHASES = {
+        TaskPhase.PRECOMMITMENT,
         TaskPhase.ACQUISITION,
         TaskPhase.EVIDENCE_EXCHANGE,
         TaskPhase.CROSS_EXAMINATION,
