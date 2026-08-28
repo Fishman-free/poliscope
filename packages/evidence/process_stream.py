@@ -65,14 +65,25 @@ class ProcessStreamRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def next_seq(self, task_id: UUID) -> int:
+    async def latest_seq(self, task_id: UUID) -> int:
+        """The newest stored seq for a task, or -1 when the trace is empty.
+
+        The API's process stream uses this to bound its (re)connect replay to
+        the newest rows: a long run stores tens of thousands of token deltas,
+        and replaying all of them on every reconnect saturated the event loop
+        and froze every client (see apps/api/routers/stream.py).
+        """
         current = await self._session.scalar(
             select(ProcessStreamModel.seq)
             .where(ProcessStreamModel.task_id == task_id)
             .order_by(ProcessStreamModel.seq.desc())
             .limit(1)
         )
-        return 0 if current is None else current + 1
+        return -1 if current is None else current
+
+    async def next_seq(self, task_id: UUID) -> int:
+        latest = await self.latest_seq(task_id)
+        return 0 if latest < 0 else latest + 1
 
     def append(
         self, task_id: UUID, seq: int, kind: str, payload: dict[str, object]

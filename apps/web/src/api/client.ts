@@ -53,6 +53,37 @@ function authHeaders(): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
+/** A wedged server must surface as an error, never as an infinite spinner
+ * (background-tab recovery fix: a stalled API used to leave every view on
+ * 载入中 forever). Every JSON request gets a bounded lifetime; the workspace
+ * refresh still aborts superseded requests through its own controller, and
+ * that abort keeps its original semantics (the caller checks its controller
+ * before reporting the error). */
+const REQUEST_TIMEOUT_MS = 60_000;
+
+function withTimeout(signal?: AbortSignal): AbortSignal | undefined {
+  const abortAny = (
+    AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }
+  ).any;
+  const makeTimeout = (
+    AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal }
+  ).timeout;
+  if (typeof abortAny !== "function" || typeof makeTimeout !== "function") {
+    return signal;
+  }
+  const signals: AbortSignal[] = [makeTimeout(REQUEST_TIMEOUT_MS)];
+  if (signal) signals.push(signal);
+  return abortAny(signals);
+}
+
+/** A timeout abort surfaces as a readable fact, not a thrown string. */
+function requestErrorMessage(cause: unknown): string {
+  if (cause instanceof DOMException && cause.name === "AbortError") {
+    return "请求超时（60 秒）：服务器未响应，请稍后刷新重试";
+  }
+  return `无法连接 API：${String(cause)}`;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -67,11 +98,11 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
-      signal,
+      signal: withTimeout(signal),
       headers: { accept: "application/json", ...authHeaders() },
     });
   } catch (cause) {
-    throw new ApiError(0, `无法连接 API：${String(cause)}`);
+    throw new ApiError(0, requestErrorMessage(cause));
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -106,9 +137,10 @@ async function sendJson<T>(
         ...authHeaders(),
       },
       body: JSON.stringify(body),
+      signal: withTimeout(),
     });
   } catch (cause) {
-    throw new ApiError(0, `无法连接 API：${String(cause)}`);
+    throw new ApiError(0, requestErrorMessage(cause));
   }
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -818,7 +850,13 @@ export function subscribe(
   // no audit trail.
   source.onmessage = (message) => {
     try {
-      onEvent(JSON.parse(message.data) as LedgerEvent);
+      const event = JSON.parse(message.data) as LedgerEvent;
+      onEvent(event);
+      // A terminal event is the last thing this stream will ever deliver.
+      // Closing here stops the browser's EventSource reconnect loop from
+      // re-opening the stream against a finished task (the server would
+      // otherwise keep-alive each reconnect until the tab closes).
+      if (TERMINAL_EVENT_KINDS.has(event.kind)) source.close();
     } catch {
       // An unparseable frame is skipped rather than crashing the view; the next
       // snapshot refresh is authoritative anyway.
@@ -826,6 +864,14 @@ export function subscribe(
   };
   return () => source.close();
 }
+
+/** Ledger event kinds after which no further event can arrive; the
+ * subscription closes itself when it sees one (see subscribe). */
+const TERMINAL_EVENT_KINDS = new Set([
+  "TASK_COMPLETED",
+  "TASK_COMPLETED_WITH_GAPS",
+  "TASK_FAILED",
+]);
 
 /** Process trace stream (live view). Frames carry an explicit `event: process`
  * line, so this uses addEventListener rather than onmessage; deduplication by

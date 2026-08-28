@@ -51,6 +51,7 @@ from packages.tools.contracts import ToolGateway, ToolRequest, ToolResult
 from packages.tools.fulltext_fetcher import FullTextFetcher
 
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
+CLAIM_STATEMENT = "Heavy use predicts higher depressive symptom scores."
 SHARED_COHORT_DOI = "10.1234/shared-cohort"
 SHARED_COHORT_QUOTE = (
     "We found a significant association between screen time and anxiety."
@@ -288,7 +289,7 @@ async def _seed_queued_task(
             AtomicClaimModel(
                 id=claim_id,
                 task_id=task_id,
-                statement="Heavy use predicts higher depressive symptom scores.",
+                statement=CLAIM_STATEMENT,
                 claim_type="correlational",
                 scope={"population": "adolescents"},
                 falsification_condition="A preregistered cohort finds a null effect.",
@@ -645,7 +646,10 @@ async def test_the_prompt_carries_the_question_and_the_confirmed_claims(
         if request.purpose != "FINAL_SYNTHESIS"
     ]
     assert all(QUESTION in message for message in user_messages)
-    assert all(str(claim_id) in message for message in user_messages)
+    # The prompt carries the claim as its human-readable statement (round-8:
+    # bare UUIDs are unreadable), not as the raw id -- the id still reaches
+    # the model through the structured evidence_refs field below.
+    assert all(CLAIM_STATEMENT in message for message in user_messages)
     assert all(claim_id in request.evidence_refs for request in gateway.calls)
 
 

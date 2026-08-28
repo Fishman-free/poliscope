@@ -45,6 +45,32 @@ TERMINAL_EVENT_TYPES = frozenset(
     {"TASK_COMPLETED", "TASK_COMPLETED_WITH_GAPS", "TASK_FAILED"}
 )
 
+# Task statuses after which no further event can ever arrive. The ledger
+# stream's normal path ends when a terminal event is fetched, but a reconnect
+# whose cursor has already passed that event would otherwise keep-alive a
+# finished task forever (one DB poll a second, one held connection, per tab);
+# CANCELLED tasks emit no terminal ledger event at all and need the same stop.
+TERMINAL_TASK_STATUSES = frozenset(
+    {
+        TaskStatus.COMPLETED.value,
+        TaskStatus.COMPLETED_WITH_GAPS.value,
+        TaskStatus.FAILED.value,
+        TaskStatus.CANCELLED.value,
+    }
+)
+
+# How many of the newest process rows a (re)connect replays. The process
+# trace is token deltas and heartbeats, so a long run stores tens of
+# thousands of rows; replaying all of them on every reconnect (a background
+# tab thawing, a network hiccup, the EventSource retry after the stream
+# closed) saturated the single API event loop and stalled every request --
+# one client's reconnect could hang every other user. The live view only
+# reads the recent slice (each seat's thinking slice resets on the next
+# seat_deliberation, and the tool cards scroll), so the tail is the part
+# that matters; a slice longer than this cap may start mid-text, which is an
+# accepted cosmetic trade for bounded replay work.
+MAX_PROCESS_REPLAY_ROWS = 5000
+
 
 def parse_last_event_id(raw: str | None) -> int:
     """Interpret the resume header, tolerating a client that sends nonsense.
@@ -76,6 +102,19 @@ async def _events(
         # connection idled for that long is a connection the pool cannot reuse.
         async with state.session_factory() as session:
             entries = await SqlEventLedger(session).list_since(task_id, cursor)
+            if not entries:
+                # Nothing after the cursor. A terminal task can never emit
+                # another event -- this is the reconnect-after-terminal case
+                # (the cursor already passed the terminal event) -- so end the
+                # stream instead of keep-alive polling a finished task forever.
+                # A deleted task is equally final.
+                try:
+                    task = await ResearchRepository(session).get_task(task_id)
+                    terminal = task.status in TERMINAL_TASK_STATUSES
+                except TaskNotFound:
+                    terminal = True
+                if terminal:
+                    return
         if not entries:
             yield KEEPALIVE_FRAME
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
@@ -150,16 +189,6 @@ async def stream_events(
     )
 
 
-PROCESS_TERMINAL_STATUSES = frozenset(
-    {
-        TaskStatus.COMPLETED.value,
-        TaskStatus.COMPLETED_WITH_GAPS.value,
-        TaskStatus.FAILED.value,
-        TaskStatus.CANCELLED.value,
-    }
-)
-
-
 async def _process_events(
     state: AppState,
     task_id: UUID,
@@ -170,16 +199,22 @@ async def _process_events(
     Deliberately *not* replay-guaranteed, unlike the ledger stream above: the
     trace is live noise (token deltas, tool calls), written to
     ``process_stream`` by the worker and read here. A reconnecting client
-    re-reads from the start and deduplicates by ``seq``; the ledger's
-    ``Last-Event-ID`` resume semantics deliberately do not apply. The stream
-    ends when the task reaches a terminal status and everything already
-    flushed has been sent -- the client is expected to close this connection
-    itself on TASK_COMPLETED from the ledger stream.
+    re-reads the newest ``MAX_PROCESS_REPLAY_ROWS`` rows and deduplicates by
+    ``seq``; the ledger's ``Last-Event-ID`` resume semantics deliberately do
+    not apply. The stream ends when the task reaches a terminal status and
+    everything already flushed has been sent -- the client is expected to
+    close this connection itself on TASK_COMPLETED from the ledger stream.
     """
     # seq starts at 0 and list_since means "> after_seq", so "from the
     # beginning" is -1, not 0 -- a cursor of 0 would silently drop the very
-    # first event of every task.
+    # first event of every task. The (re)connect replay is then bounded to
+    # the newest MAX_PROCESS_REPLAY_ROWS rows: replaying the whole trace of a
+    # long task on every reconnect stalled the API for every user.
     cursor = -1
+    async with state.session_factory() as session:
+        latest = await ProcessStreamRepository(session).latest_seq(task_id)
+    if latest > MAX_PROCESS_REPLAY_ROWS:
+        cursor = latest - MAX_PROCESS_REPLAY_ROWS
     while True:
         if await request.is_disconnected():
             return
@@ -200,7 +235,7 @@ async def _process_events(
                 ensure_ascii=False,
             )
             yield f"event: process\nid: p{row.seq}\ndata: {body}\n\n"
-        if status in PROCESS_TERMINAL_STATUSES:
+        if status in TERMINAL_TASK_STATUSES:
             return
         yield KEEPALIVE_FRAME
         await asyncio.sleep(POLL_INTERVAL_SECONDS)

@@ -13,6 +13,30 @@ export type StreamState = "open" | "reconnecting" | "closed";
  * means the map only ever shows a state the server actually committed. */
 const REFRESH_DEBOUNCE_MS = 250;
 
+/** Task statuses after which no further event can arrive. Both subscriptions
+ * close when the snapshot reaches one of these and stay closed; they re-open
+ * on their own if a re-research moves the status back out of the set. */
+const TERMINAL_STATUSES = new Set([
+  "COMPLETED",
+  "COMPLETED_WITH_GAPS",
+  "FAILED",
+  "CANCELLED",
+]);
+
+/** Process events kept in memory. The live view only reads the recent slice
+ * (each seat's thinking slice resets on the next seat_deliberation, the tool
+ * cards scroll), so an unbounded array only costs memory and re-render time:
+ * the per-event O(N) aggregation over a whole run's token stream is what
+ * froze the tab when a reconnect replayed the trace (background-tab
+ * unresponsive fix). */
+const PROCESS_EVENT_CAP = 5000;
+
+/** Flush cadence for process events: incoming frames collect in a buffer and
+ * land in state at most every 250 ms, so a thawing tab's burst of thousands
+ * of replayed frames produces a handful of renders instead of one render per
+ * frame. */
+const PROCESS_FLUSH_MS = 250;
+
 export interface WorkspaceState {
   snapshot: WorkspaceSnapshot | null;
   load: LoadState;
@@ -47,6 +71,10 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   // fetch never lands its snapshot over a fresher one.
   const controllerRef = useRef<AbortController | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  // Terminal snapshot: both streams close (and stay closed) once the task
+  // cannot emit anything more; a re-research flips this back to false.
+  const terminal =
+    snapshot !== null && TERMINAL_STATUSES.has(snapshot.task.status);
 
   const refresh = useCallback((): Promise<boolean> => {
     if (!taskId) {
@@ -83,7 +111,16 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   }, [refresh]);
 
   useEffect(() => {
-    if (!taskId) return;
+    if (!taskId) {
+      setEvents([]);
+      return;
+    }
+    // Terminal: keep the collected events on screen (audit trail), but do not
+    // subscribe -- the cleanup below already closed the stream when the
+    // status flipped. A re-research flips the status back out of the set and
+    // this effect re-subscribes: a fresh EventSource replays the ledger from
+    // sequence 0, which refills the just-cleared list.
+    if (terminal) return;
     setEvents([]);
     const close = subscribe(
       taskId,
@@ -99,23 +136,48 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
       close();
       setStream("closed");
     };
-  }, [taskId, refresh]);
+  }, [taskId, refresh, terminal]);
 
-  // Process trace: reconnect replays from the start (deliberately not
-  // Last-Event-ID resume), so deduplicate by server seq.
+  // Process trace: reconnect replays the newest rows (bounded server-side)
+  // and deduplicates by server seq. Incoming frames are buffered and flushed
+  // at most every PROCESS_FLUSH_MS so a replay burst produces a few renders
+  // instead of one per frame, and the kept array is capped at
+  // PROCESS_EVENT_CAP -- the combination is what keeps the tab responsive
+  // after a long background period (the old per-frame O(N) path froze it).
   useEffect(() => {
     if (!taskId) {
       setProcessEvents([]);
       return;
     }
+    if (terminal) return;
+    setProcessEvents([]);
     const seen = new Set<number>();
+    const buffer: ProcessEvent[] = [];
+    let flushTimer = 0;
+    const flush = () => {
+      flushTimer = 0;
+      if (buffer.length === 0) return;
+      const batch = buffer.splice(0, buffer.length);
+      setProcessEvents((current) => {
+        const next = [...current, ...batch];
+        return next.length > PROCESS_EVENT_CAP
+          ? next.slice(next.length - PROCESS_EVENT_CAP)
+          : next;
+      });
+    };
     const close = subscribeProcess(taskId, (event) => {
       if (seen.has(event.seq)) return;
       seen.add(event.seq);
-      setProcessEvents((current) => [...current, event]);
+      buffer.push(event);
+      if (flushTimer === 0) {
+        flushTimer = window.setTimeout(flush, PROCESS_FLUSH_MS);
+      }
     });
-    return () => close();
-  }, [taskId]);
+    return () => {
+      close();
+      if (flushTimer !== 0) window.clearTimeout(flushTimer);
+    };
+  }, [taskId, terminal]);
 
   return { snapshot, load, stream, error, events, processEvents, refresh };
 }
