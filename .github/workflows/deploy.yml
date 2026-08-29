@@ -35,6 +35,14 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      # Docs-only commits change nothing the containers run; rebuilding the
+      # whole stack for them only risks the flaky China-hosted build for no
+      # deployable change. Code pushes still deploy as before, and the manual
+      # "Run workflow" button below always works.
+      - "docs/**"
+      - "**/*.md"
+      - ".github/**"
   workflow_dispatch: # manual "Run workflow" button for on-demand deploys
 
 jobs:
