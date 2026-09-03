@@ -20,6 +20,7 @@ honest description of what happened.
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -31,6 +32,7 @@ from packages.council.contracts import ALL_SEATS, Seat
 from packages.council.rounds.registry import (
     PHASE_COMPLETED,
     PHASE_STARTED,
+    EmittedEvent,
     FindingExtractor,
     KnowledgeDocumentLike,
     KnowledgeSearcher,
@@ -242,6 +244,28 @@ class _Accumulator:
     carried: dict[str, object] = field(default_factory=dict)
     events: int = 0
     seat_runs: list[SeatRunRecord] = field(default_factory=list)
+
+
+def _episode_summary(
+    phase: TaskPhase, events: list[EmittedEvent]
+) -> str:
+    """One seat's structured actions in a phase, compactly rendered.
+
+    Upstream MemoBrain abstracts episodes into dependency-aware thoughts;
+    feeding it "N events" would abstract nothing. Each of the seat's own
+    events becomes one line -- event type plus the payload's salient text --
+    capped per line so one wordy precommitment cannot drown the episode.
+    """
+    if not events:
+        return ""
+    lines = [f"{phase.value} round, {len(events)} structured actions:"]
+    for event in events:
+        payload = {key: value for key, value in event.payload.items() if key != "seat"}
+        body = json.dumps(payload, ensure_ascii=False, default=str)
+        if len(body) > 320:
+            body = body[:320] + "…"
+        lines.append(f"- {event.event_type}: {body}")
+    return "\n".join(lines)
 
 
 class CouncilOrchestrator:
@@ -795,6 +819,11 @@ class CouncilOrchestrator:
     async def _remember(self, phase: TaskPhase, outcome: PhaseOutcome) -> None:
         """Record what the round did in each participating seat's own memory.
 
+        Round-16: the episode fed to upstream MemoBrain is the seat's own
+        structured actions in this phase (event types plus their payloads),
+        not a bare event count -- upstream thought construction abstracts the
+        semantic content, and "N events" would abstract nothing.
+
         An absent seat gets nothing: writing "you were unavailable" into its
         private memory would let a later round mistake the record of a gap for
         the seat's own reasoning. The gap is already on the ledger, where the
@@ -802,12 +831,25 @@ class CouncilOrchestrator:
         """
         if self._memory is None:
             return
-        summary = (
-            f"{phase.value}: {len(outcome.events)} events, "
-            f"{len(outcome.unfilled_slots)} unfilled slots"
-        )
+        per_seat: dict[Seat, list[EmittedEvent]] = {
+            seat: [] for seat in self._seats
+        }
+        for event in outcome.events:
+            seat_value = event.payload.get("seat")
+            if isinstance(seat_value, str):
+                try:
+                    event_seat = Seat(seat_value)
+                except ValueError:
+                    continue
+                # An ablation run's ablated seat is not in self._seats; its
+                # leftover events must not resurrect a memory slot for it.
+                if event_seat in per_seat:
+                    per_seat[event_seat].append(event)
         for seat in self._seats:
             if seat in outcome.absent_seats:
+                continue
+            summary = _episode_summary(phase, per_seat.get(seat, []))
+            if not summary:
                 continue
             await self._memory.remember(seat, phase.value, summary)
 

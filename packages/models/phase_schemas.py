@@ -501,6 +501,77 @@ PAPER_REVIEW_OUTPUT: Final[dict[str, Any]] = {
     ],
 }
 
+# Upstream MemoBrain (vendored under packages/memory/vendor/memobrain,
+# Apache-2.0) memory-model outputs: the dependency-aware thought patch from
+# memory construction, and the FOLD/FLUSH operation set from memory
+# management. Registered here so the seats' executive-memory calls run
+# through the same Model Gateway schema machinery as every other model call
+# (CLAUDE.md 8) -- the vendored MemoBrain parses the JSON text itself, the
+# gateway guarantees the shape.
+MEMOBRAIN_PATCH_OUTPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "add_nodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "tmp_id": {"type": "string"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["task", "subtask", "evidence", "summary"],
+                    },
+                    "thought": {"type": "array", "items": {"type": "object"}},
+                },
+                "required": ["tmp_id", "kind", "thought"],
+            },
+        },
+        "add_edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string"},
+                    "dst": {"type": "string"},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["src", "dst"],
+            },
+        },
+    },
+    "required": ["add_nodes", "add_edges"],
+}
+
+MEMOBRAIN_FLUSH_FOLD_OUTPUT: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "flush_ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["id"],
+            },
+        },
+        "fold_ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "integer"}},
+                    "notes": {"type": "array", "items": {"type": "object"}},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["ids", "notes"],
+            },
+        },
+    },
+    "required": ["flush_ops", "fold_ops"],
+}
+
 # Keyed by the exact schema name strings in
 # packages.council.deliberation.PHASE_OUTPUT_SCHEMAS.
 PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
@@ -522,6 +593,11 @@ PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     # (packages/reports/synthesis.py). Neither is a seat's answer.
     "PaperUnderstanding": PAPER_UNDERSTANDING_OUTPUT,
     "PaperReviewReport": PAPER_REVIEW_OUTPUT,
+    # Round-16: upstream MemoBrain's memory-model outputs (memory construction
+    # patch + memory management FOLD/FLUSH set), used by
+    # packages/memory/memobrain_adapter.py.
+    "MemoBrainPatch": MEMOBRAIN_PATCH_OUTPUT,
+    "MemoBrainFlushAndFold": MEMOBRAIN_FLUSH_FOLD_OUTPUT,
 }
 
 __all__ = ["PHASE_OUTPUT_JSON_SCHEMAS"]

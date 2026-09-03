@@ -555,7 +555,19 @@ async def _deliberate_impl(
         cancel_check=lambda: repository.check_cancel_request(task_id),
         # Process memory, per CLAUDE.md 6. It is created per run rather than per
         # process so one task's recall can never leak into another's.
-        memory=CouncilMemory(create_memory_adapter(), task_id),
+        # Round-16: the upstream MemoBrain adapter (vendored, Apache-2.0) is
+        # used only when the gateway is a real OpenAI-compatible endpoint --
+        # scripted test gateways and missing providers keep the heuristic
+        # graph adapter, preserving the honest no-model run and the
+        # evaluation baselines' exact semantics.
+        memory=CouncilMemory(
+            create_memory_adapter(
+                AuditedModelGateway(gateway, session)
+                if isinstance(gateway, OpenAICompatibleModelGateway)
+                else None
+            ),
+            task_id,
+        ),
         # Only when a tool provider is configured. Without one the acquisition
         # round records requests and reports the gap, per CLAUDE.md 7 and 10.
         acquirer=(

@@ -14,6 +14,7 @@ dependencies = [
     "boto3>=1.35,<2",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
+    "openai>=1.0.0",
     "pgvector>=0.3,<1",
     "pydantic>=2.10,<3",
     "pymupdf>=1.25,<2",
@@ -49,6 +50,9 @@ markers = [
 [tool.ruff]
 target-version = "py312"
 line-length = 88
+# Vendored third-party code (upstream MemoBrain, Apache-2.0) is kept
+# byte-for-byte unmodified; it is not ours to lint.
+extend-exclude = ["packages/memory/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -57,3 +61,5 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+# Same rule as ruff: unmodified vendored upstream code is not ours to type.
+exclude = ["packages/memory/vendor"]
