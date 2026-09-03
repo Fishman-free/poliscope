@@ -60,6 +60,7 @@ interface NewTaskDraft {
   wallClockMinutes: number;
   toolCallLimit: number;
   sourceLimit: number;
+  corpusCutoff?: string;
   knowledgeBaseId: string;
   selectedSkills: string[];
 }
@@ -118,6 +119,8 @@ export function NewTaskView({
   const [sourceLimit, setSourceLimit] = useState(
     draft?.sourceLimit ?? DEFAULT_NEW_TASK_OPTIONS.sourceLimit,
   );
+  // A3 语料截止年份（可选）：只检索不晚于该年发表的来源，留空表示不封闭。
+  const [corpusCutoff, setCorpusCutoff] = useState(draft?.corpusCutoff ?? "");
   // 知识库（长期记忆）：文档作为 Level A 用户提供源交给议会。模型设置
   // 已移至右侧栏永久设置（保存于服务器，创建任务时自动生效），表单不再收集。
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseSummary[]>([]);
@@ -151,6 +154,7 @@ export function NewTaskView({
             wallClockMinutes,
             toolCallLimit,
             sourceLimit,
+            corpusCutoff,
             knowledgeBaseId,
             selectedSkills: Array.from(selectedSkills),
           } satisfies NewTaskDraft),
@@ -171,6 +175,7 @@ export function NewTaskView({
     wallClockMinutes,
     toolCallLimit,
     sourceLimit,
+    corpusCutoff,
     knowledgeBaseId,
     selectedSkills,
   ]);
@@ -356,6 +361,7 @@ export function NewTaskView({
         wallClockMinutes,
         toolCallLimit,
         sourceLimit,
+        corpusCutoff: corpusCutoff.trim() ? `${corpusCutoff.trim()}-12-31` : null,
         knowledgeBaseId: knowledgeBaseId || null,
         skillIds: Array.from(selectedSkills),
         taskType: mode,
@@ -727,6 +733,18 @@ export function NewTaskView({
                 min={1}
                 value={toolCallLimit}
                 onChange={(event) => setToolCallLimit(Number(event.target.value) || 1)}
+                disabled={submitting}
+              />
+            </label>
+            <label className="newtask__field">
+              {t("语料截止年份（可选，时间旅行）")}
+              <input
+                type="number"
+                min={1900}
+                max={2100}
+                placeholder="2018"
+                value={corpusCutoff}
+                onChange={(event) => setCorpusCutoff(event.target.value)}
                 disabled={submitting}
               />
             </label>

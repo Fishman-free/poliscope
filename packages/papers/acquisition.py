@@ -36,6 +36,11 @@ from packages.papers.candidate_pool import CandidatePool
 from packages.papers.models import SourceModel
 from packages.papers.query_planner import QueryPlanner
 from packages.papers.query_sanitize import sanitize_search_query
+from packages.papers.relevance import (
+    DEFAULT_RELEVANCE_THRESHOLD,
+    is_topically_relevant,
+    within_cutoff,
+)
 from packages.tools.adapters import SEARCH_ADAPTER_NAMES, adapter, search_adapter
 from packages.tools.adapters.normalization import NormalizedSource, normalize_doi
 from packages.tools.contracts import ToolGateway
@@ -131,6 +136,10 @@ class SourceAcquisition:
         budget: BudgetTracker | None = None,
         *,
         on_process: ProcessCallback | None = None,
+        relevance_context: tuple[str, ...] = (),
+        relevance_threshold: float = DEFAULT_RELEVANCE_THRESHOLD,
+        relevance_enabled: bool = True,
+        corpus_cutoff_year: int | None = None,
     ) -> None:
         self._session = session
         self._gateway = gateway
@@ -140,6 +149,16 @@ class SourceAcquisition:
         # clickable row in the workbench, so the researcher sees *where the
         # papers came from*, not just that papers appeared (CLAUDE.md 7.4).
         self._on_process = on_process
+        # B5 post-retrieval relevance filter + A3 corpus cutoff. Both apply
+        # only to *discovered* sources (this acquisition pass), never to the
+        # researcher's own uploaded/DOI/knowledge evidence, which is admitted
+        # through the separate acquire_* methods and must not be silently
+        # censored. Every excluded candidate becomes a RefusedCandidate with
+        # its exact reason -- nothing disappears quietly (CLAUDE.md 7).
+        self._relevance_context = tuple(relevance_context)
+        self._relevance_threshold = relevance_threshold
+        self._relevance_enabled = relevance_enabled
+        self._corpus_cutoff_year = corpus_cutoff_year
 
     async def _existing(self, doi: str) -> SourceModel | None:
         row: SourceModel | None = await self._session.scalar(
@@ -188,10 +207,48 @@ class SourceAcquisition:
             title=normalized.title,
             provider_ids=dict(normalized.provider_ids),
             authors=list(normalized.authors),
+            publication_year=normalized.year,
         )
         self._session.add(row)
         await self._session.flush()
         return row
+
+    def _screen_discovered(
+        self,
+        normalized: NormalizedSource,
+        query: str,
+        *,
+        relevance_screen: bool = True,
+    ) -> str | None:
+        """Return a refusal reason for a *discovered* candidate, or None to admit.
+
+        Applies the A3 corpus cutoff first (a post-cutoff paper is outside the
+        time-travel window), then the B5 deterministic relevance filter. A
+        candidate with an unknown year is admitted on date grounds (the unknown
+        stays visible), and an empty relevance context fails open.
+
+        ``relevance_screen=False`` is used when a seat explicitly named the
+        DOI: the B5 filter exists to drop off-topic hits from *free-text*
+        search, never to second-guess a specific identifier a scientist asked
+        for. The corpus cutoff still applies -- a time-travel replay cannot
+        admit a post-cutoff paper just because a seat named its DOI.
+        """
+        if self._corpus_cutoff_year is not None and not within_cutoff(
+            normalized.year, self._corpus_cutoff_year
+        ):
+            return (
+                f"after corpus cutoff {self._corpus_cutoff_year} "
+                f"(published {normalized.year})"
+            )
+        if relevance_screen and self._relevance_enabled:
+            admitted, score = is_topically_relevant(
+                self._relevance_context,
+                normalized.title,
+                threshold=self._relevance_threshold,
+            )
+            if not admitted:
+                return f"below relevance threshold (score={score:.3f})"
+        return None
 
     async def _persist_uploaded(self, object_id: UUID) -> SourceModel:
         """Persist a source that came from an upload, not a lookup.
@@ -335,6 +392,23 @@ class SourceAcquisition:
                             "query": doi,
                             "miss": True,
                             "reason": "source is retracted",
+                        },
+                    )
+                continue
+            # Explicit DOI lookup: corpus cutoff still applies, but the B5
+            # topical filter does not -- a named identifier is a directed fetch.
+            screen_reason = self._screen_discovered(
+                normalized, doi, relevance_screen=False
+            )
+            if screen_reason is not None:
+                refused.append(RefusedCandidate(doi, screen_reason))
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {
+                            "query": doi,
+                            "miss": True,
+                            "reason": screen_reason,
                         },
                     )
                 continue
@@ -484,6 +558,19 @@ class SourceAcquisition:
                 continue
             if resolved.retracted:
                 refused.append(RefusedCandidate(text, "source is retracted"))
+                continue
+            screen_reason = self._screen_discovered(resolved, text)
+            if screen_reason is not None:
+                refused.append(RefusedCandidate(text, screen_reason))
+                if self._on_process is not None:
+                    self._on_process(
+                        "tool_result",
+                        {
+                            "query": text,
+                            "miss": True,
+                            "reason": screen_reason,
+                        },
+                    )
                 continue
             row = await self._persist(resolved)
             acquired.append(

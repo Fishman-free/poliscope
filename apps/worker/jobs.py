@@ -489,8 +489,13 @@ async def deliberate(
     # endpoint, not the process's gateway -- a per-task override, owned and
     # closed by this run (its httpx client must not leak between tasks).
     owned_gateway: OpenAICompatibleModelGateway | None = None
-    if task.model_config:
-        owned_gateway = _gateway_for_task_config(task.model_config)
+    # C10 model hot-swap: a per-task override (model_config_override) takes
+    # precedence over the snapshot taken at creation (model_config). It is only
+    # writable while the task is QUEUED/PAUSED/AWAITING (the API enforces
+    # that), so a RUNNING task is never re-pointed mid call.
+    effective_model_config = task.model_config_override or task.model_config
+    if effective_model_config:
+        owned_gateway = _gateway_for_task_config(effective_model_config)
         gateway = owned_gateway
     try:
         return await _deliberate_impl(
@@ -521,6 +526,9 @@ async def _deliberate_impl(
     # reach every model call of the run -- the council's prompts and the
     # finding extractor alike (round-5 request).
     skills = await _skills_context(session, task)
+    # Fetch confirmed claim statements once and reuse them for both the
+    # orchestrator and the B5 post-retrieval relevance filter's context.
+    claim_statements = await _confirmed_claim_statements(session, task_id)
     repository = ResearchRepository(session)
     if deliberator is None and gateway is not None:
         # Every model call goes through the gateway, audited, per CLAUDE.md 8.
@@ -579,6 +587,16 @@ async def _deliberate_impl(
                 task_id,
                 budget,
                 on_process=None if process is None else process.emit,
+                # B5: deterministic post-retrieval relevance filter, judged
+                # against the question plus every confirmed atomic claim.
+                relevance_context=(task.question, *claim_statements.values()),
+                # A3: time-travel corpus cutoff (year granularity -- metadata
+                # sources carry only a publication year, not a full date).
+                corpus_cutoff_year=(
+                    cutoff.year
+                    if (cutoff := task.corpus_cutoff) is not None
+                    else None
+                ),
             )
         ),
         # Needs both a tool provider (open access lookup) and a model provider
@@ -652,7 +670,7 @@ async def _deliberate_impl(
             task_id=task_id,
             question=task.question,
             confirmed_claims=await _confirmed_claim_ids(session, task_id),
-            claim_statements=await _confirmed_claim_statements(session, task_id),
+            claim_statements=claim_statements,
             quarantined=await _quarantined_nodes(session, task_id),
             pdf_object_ids=_pdf_object_ids(task),
             user_dois=_user_dois(task),
@@ -668,7 +686,7 @@ async def _deliberate_impl(
             task_id=task_id,
             question=task.question,
             confirmed_claims=await _confirmed_claim_ids(session, task_id),
-            claim_statements=await _confirmed_claim_statements(session, task_id),
+            claim_statements=claim_statements,
             quarantined=await _quarantined_nodes(session, task_id),
             pdf_object_ids=_pdf_object_ids(task),
             user_dois=_user_dois(task),

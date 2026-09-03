@@ -45,6 +45,13 @@ EXPECTED_COLUMNS = {
         "output_language",
         # Task mode (migration 0020): "deep_research" or "paper_review".
         "task_type",
+        # Research workbench tools (migration 0026): A3 corpus cutoff + replay
+        # linkage, A2 read-only share token, C10 queued-task model override.
+        "corpus_cutoff",
+        "replay_of_task_id",
+        "share_token",
+        "share_created_at",
+        "model_config_override",
     },
     "research_scopes": {
         "id",
@@ -120,6 +127,12 @@ NULLABLE_COLUMNS = {
         "knowledge_base_id",
         # Pre-account rows only; every task created after 0012 owns one.
         "user_id",
+        # Migration 0026 workbench columns are all nullable by design.
+        "corpus_cutoff",
+        "replay_of_task_id",
+        "share_token",
+        "share_created_at",
+        "model_config_override",
     },
     "research_scopes": {"date_from"},
     "atomic_claims": set(),

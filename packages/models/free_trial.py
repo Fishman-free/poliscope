@@ -2,7 +2,7 @@
 
 One vendor, one model, one quota per account: the deployment operator puts a
 DashScope API key in the environment (``DASHSCOPE_API_KEY``), and every
-account may save the free-trial endpoint as its model settings twice
+account may run the free-trial endpoint as its model settings exactly once
 (``confirm-claims`` consumes a slot -- see apps/api/routers/tasks.py). The
 key lives in the operator's environment and is written into the account's
 ``app_settings`` row exactly like any other saved key: stored server-side,
@@ -20,7 +20,7 @@ from collections.abc import Mapping
 
 FREE_TRIAL_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 FREE_TRIAL_MODEL_NAME = "qwen3.8-max"
-FREE_TRIAL_LIMIT = 2
+FREE_TRIAL_LIMIT = 1
 
 # Environment variable holding the deployment's DashScope API key. Named
 # DASHSCOPE_API_KEY to match DashScope's own SDK convention (the same key a

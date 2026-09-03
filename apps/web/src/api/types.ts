@@ -436,6 +436,130 @@ export function isPaperReview(
   return paper !== null && "paper_overview" in paper;
 }
 
+/** A1 evidence-lineage view: every admitted Source, the dependency links that
+ * show why two papers are NOT independent evidence, and the independent
+ * clusters they fold into. */
+export interface LineageSource {
+  source_id: string;
+  title: string;
+  year: number | null;
+  cluster_key: string | null;
+  cluster_index: number | null;
+  evidence_level: string | null;
+}
+
+export interface LineageLink {
+  dep_type: string;
+  group_key: string;
+  merges: boolean;
+  source_ids: string[];
+}
+
+export interface LineageCluster {
+  cluster_index: number;
+  key: string;
+  source_ids: string[];
+  reason: string | null;
+}
+
+export interface LineageViewData {
+  paper_count: number;
+  independent_cluster_count: number;
+  sources: LineageSource[];
+  links: LineageLink[];
+  clusters: LineageCluster[];
+}
+
+/** B6 researcher-adjudication view. Every item is something the council left
+ * unresolved; `resolved` means the researcher has recorded a process decision.
+ * The decision never writes the Evidence Graph. */
+export interface AdjudicationItem {
+  key: string;
+  kind: "merge_candidate" | "quarantined";
+  detail: string;
+  resolved: boolean;
+  decisions: {
+    decision: string;
+    note: string;
+    decided_by: string | null;
+  }[];
+}
+
+export interface AdjudicationViewData {
+  merge_candidates: AdjudicationItem[];
+  quarantined: AdjudicationItem[];
+}
+
+/** D1 cost/usage panel, aggregated server-side from model_calls/tool_calls. */
+export interface UsageViewData {
+  model: {
+    calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: string;
+    error_count: number;
+    by_purpose: Record<string, number>;
+  };
+  tools: {
+    calls: number;
+    error_count: number;
+    by_tool: Record<string, number>;
+  };
+  budget: {
+    wall_clock_minutes: number | null;
+    model_cost_usd: string | null;
+    tool_call_limit: number | null;
+    source_limit: number | null;
+  } | null;
+}
+
+/** C9 human-annotation batch. Labels are per-rater judgments about the
+ * system's output; agreement is Cohen's kappa (2 raters) or Krippendorff's
+ * alpha (3+). */
+export interface AnnotationLabel {
+  rater_name: string;
+  label: string;
+  note: string;
+}
+
+export interface AnnotationItemData {
+  id: string;
+  ref_kind: string;
+  ref_node_id: string | null;
+  statement: string;
+  position: Record<string, unknown>;
+  labels: AnnotationLabel[];
+}
+
+export interface AnnotationBatchSummary {
+  batch_id: string;
+  task_id: string;
+  title: string | null;
+  created_by: string;
+  created_at: string;
+  item_count: number;
+  rater_count: number;
+}
+
+export interface AnnotationBatchDetail extends AnnotationBatchSummary {
+  items: AnnotationItemData[];
+  agreement: {
+    method: string;
+    value: number | null;
+    raters: number;
+    note: string | null;
+  };
+}
+
+/** A3 deterministic claim-set diff between two owned tasks. */
+export interface TaskCompare {
+  task_a: { task_id: string; claim_count: number };
+  task_b: { task_id: string; claim_count: number };
+  shared: string[];
+  only_in_a: string[];
+  only_in_b: string[];
+}
+
 export interface WorkspaceSnapshot {
   task: TaskSummary;
   brief: ResearchBrief;
@@ -454,6 +578,12 @@ export interface WorkspaceSnapshot {
   paper: FinalPaper | PaperReviewReport | null;
   /** The conditioned consensus from joint modeling, or null. */
   consensus: Record<string, unknown> | null;
+  /** A1 evidence-lineage view (absent on older snapshots). */
+  lineage?: LineageViewData | null;
+  /** B6 merge/quarantine adjudication view. */
+  adjudication?: AdjudicationViewData | null;
+  /** D12 model/tool usage against the task budget. */
+  usage?: UsageViewData | null;
 }
 
 /** One row of the audit trail, straight off the Scientific Event Ledger. */

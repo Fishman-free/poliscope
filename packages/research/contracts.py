@@ -116,3 +116,13 @@ class ResearchContract(ContractModel):
     # the paper-understanding step and which prompt shape to use; the
     # synthesizer reads it to decide which report shape to emit.
     task_type: str = "deep_research"
+    # A3 time-travel: when set, acquisition only admits sources published in or
+    # before this year (year granularity -- metadata sources carry a year, not
+    # a full date). None is the ordinary unbounded case.
+    corpus_cutoff: date | None = None
+    # A3: when this task is a time-travel replay of another task, that source
+    # task's id. Set only by the replay path, never at ordinary creation.
+    # exclude=True: internal replay linkage set only by the service. It must
+    # never cross the HTTP creation boundary (CreateTaskRequest forbids extra
+    # fields), so contract dumps used as API payloads omit it automatically.
+    replay_of_task_id: UUID | None = Field(default=None, exclude=True)

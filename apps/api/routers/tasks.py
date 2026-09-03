@@ -10,15 +10,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import time
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 
 from apps.api import task_lifecycle
@@ -27,18 +28,25 @@ from apps.api.dependencies import (
     ObjectStoreDep,
     SessionDep,
 )
-from apps.api.routers.workspace import _seats
+from apps.api.routers.workspace import RESEARCHER_ADJUDICATION, _seats
 from apps.api.schemas import (
+    AdjudicationRequest,
     ConfirmClaimsRequest,
     CouncilGuidanceRequest,
     CreateTaskRequest,
     FollowUpRequest,
+    ModelOverrideRequest,
+    ReplayRequest,
     ReResearchRequest,
+    SaveToKnowledgeRequest,
 )
 from packages.accounts.repository import StoredUser
 from packages.epistemo.contracts import TaskStatus
+from packages.evidence.models import GraphNodeModel
+from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
+from packages.knowledge.service import KnowledgeService
 from packages.models.endpoint_config import normalize_base_url
 from packages.models.free_trial import (
     FREE_TRIAL_EXHAUSTED_MESSAGE,
@@ -278,6 +286,7 @@ async def create_task(
                 "skill_ids": tuple(request.skill_ids),
                 "output_language": output_language,
                 "task_type": request.task_type,
+                "corpus_cutoff": request.corpus_cutoff,
             }
         )
     except ValueError as error:
@@ -1171,3 +1180,296 @@ async def get_task(
             task.model_config, saved
         ),
     }
+
+
+# --- A2 read-only share links -----------------------------------------
+
+
+@router.post("/{task_id}/share")
+async def create_share_link(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Mint (or rotate) an unauthenticated read-only share token (A2).
+
+    Re-minting rotates the token, so the previous link stops resolving.
+    """
+    await _owned_task(session, task_id, current_user)
+    token = secrets.token_urlsafe(32)
+    created = await _service(session).mint_share_token(task_id, token)
+    return {
+        "share_token": token,
+        "created_at": created.isoformat() if created is not None else None,
+    }
+
+
+@router.delete("/{task_id}/share")
+async def revoke_share_link(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Revoke a share link so its token no longer resolves (A2)."""
+    await _owned_task(session, task_id, current_user)
+    await _service(session).revoke_share(task_id)
+    return {"revoked": str(task_id)}
+
+
+# --- A3 time-travel replay + evidence-graph diff ----------------------
+
+
+@router.post("/{task_id}/replay")
+async def replay_at_cutoff(
+    task_id: UUID,
+    body: ReplayRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Clone a finished task restricted to a corpus cutoff (A3).
+
+    Unlike 「从头研究」, the source task is deliberately kept so the two
+    evidence graphs can be diffed via the compare endpoint.
+    """
+    await _owned_task(session, task_id, current_user)
+    try:
+        replay_id = await _service(session).replay_at_cutoff(
+            task_id, body.corpus_cutoff, user_id=current_user.id
+        )
+    except TaskNotFound as error:
+        raise _not_found(task_id, error) from error
+    except (InvalidPauseState, UnconfirmedClaims) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error)
+        ) from error
+    return {
+        "task_id": str(replay_id),
+        "source_task_id": str(task_id),
+        "corpus_cutoff": body.corpus_cutoff.isoformat(),
+        "status": TaskStatus.QUEUED,
+    }
+
+
+async def _claim_statements(
+    session: SessionDep, task_id: UUID
+) -> dict[str, str]:
+    """Map a task's graph Claim node ids to their statement text."""
+    result = await session.execute(
+        select(GraphNodeModel).where(
+            GraphNodeModel.task_id == task_id,
+            GraphNodeModel.node_type == "Claim",
+        )
+    )
+    statements: dict[str, str] = {}
+    for row in result.scalars():
+        text = row.payload.get("statement") if isinstance(row.payload, dict) else None
+        if isinstance(text, str) and text.strip():
+            statements[str(row.id)] = text.strip()
+    return statements
+
+
+@router.get("/{task_id}/compare/{other_id}")
+async def compare_tasks(
+    task_id: UUID,
+    other_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Diff two owned tasks' claim sets by statement text (A3).
+
+    A deterministic set difference -- not a semantic similarity claim. It shows
+    which atomic claims each evidence graph ended up holding, so a time-travel
+    replay can be read against its source without either graph being mutated.
+    """
+    await _owned_task(session, task_id, current_user)
+    await _owned_task(session, other_id, current_user)
+    left = await _claim_statements(session, task_id)
+    right = await _claim_statements(session, other_id)
+    left_text = set(left.values())
+    right_text = set(right.values())
+    return {
+        "task_a": {
+            "task_id": str(task_id),
+            "claim_count": len(left_text),
+        },
+        "task_b": {
+            "task_id": str(other_id),
+            "claim_count": len(right_text),
+        },
+        "shared": sorted(left_text & right_text),
+        "only_in_a": sorted(left_text - right_text),
+        "only_in_b": sorted(right_text - left_text),
+    }
+
+
+# --- A4 distil a finished task into the knowledge base ----------------
+
+
+def _knowledge_document_markdown(question: str, brief: dict[str, Any]) -> str:
+    """Render a finished task's confirmed output as one plain-text document."""
+    lines: list[str] = [
+        f"# Poliscope 研究沉淀：{question}",
+        "",
+        "> 本文档由 Poliscope 从一次已完成的七人议会研究自动沉淀，",
+        "> 属于 AI 辅助整理的二手材料，不是原始研究证据；",
+        "> 引用其中任何结论前请回到对应来源核对原文（CLAUDE.md 7）。",
+        "",
+    ]
+
+    def _section(title: str, key: str, text_field: str = "statement") -> None:
+        items = brief.get(key)
+        if not isinstance(items, list) or not items:
+            return
+        lines.append(f"## {title}")
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            text = item.get(text_field)
+            if isinstance(text, dict):
+                text = text.get("statement")
+            if isinstance(text, str) and text.strip():
+                lines.append(f"- {text.strip()}")
+        lines.append("")
+
+    _section("已确认的原子主张", "confirmed_claims")
+    _section("已采纳发现", "findings", text_field="payload")
+    _section("盲点", "blindspots")
+    _section("少数异议", "dissents")
+    _section("局限", "limitations")
+    absent = brief.get("absent_seats")
+    if isinstance(absent, list) and absent:
+        lines.append("## 缺席席位")
+        lines.append("、".join(map(str, absent)))
+        lines.append("")
+    return "\n".join(lines).strip() + "\n"
+
+
+@router.post("/{task_id}/save-to-knowledge")
+async def save_to_knowledge(
+    task_id: UUID,
+    body: SaveToKnowledgeRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    object_store: ObjectStoreDep,
+) -> dict[str, Any]:
+    """Distil a finished task into one text document in a knowledge base (A4)."""
+    task = await _owned_task(session, task_id, current_user)
+    if task.status not in ("COMPLETED", "COMPLETED_WITH_GAPS"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"任务当前为 {task.status}，完成后才能沉淀到知识库",
+        )
+    try:
+        await KnowledgeRepository(session).get_knowledge_base(
+            body.knowledge_base_id, current_user.id
+        )
+    except KnowledgeBaseNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"unknown knowledge base {body.knowledge_base_id}",
+        ) from error
+    brief = to_dict(await ReportService(session).build(task_id))
+    content = _knowledge_document_markdown(task.question, brief)
+    service = KnowledgeService(KnowledgeRepository(session), object_store)
+    document = await service.add_text_document(
+        body.knowledge_base_id,
+        title=f"Poliscope 沉淀：{task.question[:80]}",
+        content=content,
+        created_by=current_user.username,
+    )
+    return {
+        "document_id": str(document.id),
+        "knowledge_base_id": str(body.knowledge_base_id),
+    }
+
+
+# --- B6 researcher adjudication of merge/quarantine ------------------
+
+
+@router.post("/{task_id}/adjudicate")
+async def adjudicate(
+    task_id: UUID,
+    body: AdjudicationRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Record the researcher's manual decision on a merge candidate or a
+    quarantined node (B6).
+
+    This is a process-only ledger event. It never writes the Evidence Graph:
+    the researcher directs attention but cannot bypass the evidence gate
+    (AGENTS.md principle 8). A full history is kept, so re-adjudicating appends
+    rather than overwriting.
+    """
+    await _owned_task(session, task_id, current_user)
+    target = body.target_key.strip()
+    decision = body.decision.strip()
+    if not target or not decision:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="target_key and decision must not be empty",
+        )
+    await SqlEventLedger(session).append(
+        task_id,
+        RESEARCHER_ADJUDICATION,
+        {
+            "target_key": target,
+            "decision": decision,
+            "note": body.note,
+            "decided_by": current_user.username,
+        },
+        f"adjudication:{task_id}:{uuid4()}",
+    )
+    return {"recorded": True, "target_key": target, "decision": decision}
+
+
+# --- C10 model hot-swap ----------------------------------------------
+
+# Statuses in which the per-task model configuration may still be changed:
+# nothing is mid-flight, so the next claim/run picks the new endpoint up.
+_MODEL_SWAPPABLE_STATUSES = frozenset(
+    {
+        TaskStatus.QUEUED,
+        TaskStatus.PAUSED,
+        TaskStatus.AWAITING_COUNCIL_INPUT,
+        TaskStatus.AWAITING_CLAIM_CONFIRMATION,
+    }
+)
+
+
+@router.put("/{task_id}/model-override")
+async def set_model_override(
+    task_id: UUID,
+    body: ModelOverrideRequest,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> dict[str, Any]:
+    """Hot-swap (or clear) the model endpoint a not-yet-running task uses (C10).
+
+    A RUNNING/REPORTING task is refused with 409: a model is never re-pointed
+    in the middle of an LLM call, so the boundary is stated honestly rather
+    than silently swapping under a live worker.
+    """
+    task = await _owned_task(session, task_id, current_user)
+    if task.status not in _MODEL_SWAPPABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"task is {task.status}; the model can only be changed while "
+                "queued, paused, awaiting claims, or awaiting council input"
+            ),
+        )
+    if body.clear or body.config is None:
+        await _service(session).set_model_override(task_id, None)
+        return {"task_id": str(task_id), "override": None}
+    config = _normalized_model_config(dict(body.config))
+    try:
+        # Validate exactly as a creation-time per-task config would be.
+        TaskModelConfig.model_validate(config)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    await _service(session).set_model_override(task_id, config)
+    return {"task_id": str(task_id), "override": {"base_url": config.get("base_url")}}

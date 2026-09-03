@@ -10,7 +10,8 @@ an arriving SSE event is already reflected in what it is showing.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
+from decimal import Decimal
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
@@ -28,21 +29,28 @@ from packages.council.rounds.registry import (
 )
 from packages.epistemo.orchestrator import ORDERED_SEATS
 from packages.evidence.contracts import EvidenceNodeType
-from packages.evidence.independence import cluster_evidence
-from packages.evidence.lineage_detection import LineageSourceRow, detect_lineage
+from packages.evidence.lineage_view import LineageViewRow, build_lineage_view
 from packages.evidence.models import (
+    EventAuditModel,
     GraphEdgeModel,
     GraphNodeModel,
     ScientificEventModel,
 )
 from packages.evidence.sql_ledger import SqlEventLedger
+from packages.evidence.sql_projector import STATUS_QUARANTINED, node_id_for
 from packages.kernel.contracts import FrozenDict
 from packages.kernel.database import canonical_uuid
+from packages.models.usage import TaskBudget, aggregate_task_usage
 from packages.papers.models import SourceModel
 from packages.reports.json_export import to_dict
+from packages.reports.safety import sanitize_export
 from packages.reports.service import ReportService
 from packages.reports.synthesis import FINAL_PAPER_DRAFTED
-from packages.research.repository import ResearchRepository, TaskNotFound
+from packages.research.repository import (
+    ResearchRepository,
+    StoredTask,
+    TaskNotFound,
+)
 
 router = APIRouter()
 
@@ -153,51 +161,147 @@ async def _graph(session: AsyncSession, task_id: UUID) -> FrozenDict[str, object
     )
 
 
-async def _evidence_counts(
+# B6: process-only event recording a researcher's manual adjudication of a
+# merge candidate or quarantined node. It is never projected into the Evidence
+# Graph (the projector allowlist ignores it): a researcher directs attention
+# but cannot bypass the evidence gate (AGENTS.md principle 8), so this is an
+# auditable decision record, not a graph mutation.
+RESEARCHER_ADJUDICATION = "RESEARCHER_ADJUDICATION"
+CONSENSUS_DRAFTED = "CONSENSUS_DRAFTED"
+
+
+async def _lineage(
     session: AsyncSession,
     task_id: UUID,
-) -> tuple[int, int]:
-    """Return paper count and independent evidence cluster count.
+) -> FrozenDict[str, object]:
+    """A1: full evidence-lineage view -- sources, dependency links, clusters.
 
-    CLAUDE.md 7.4 requires both numbers to reach the interface, because papers
-    that share a dataset, a sample, or a research team are not independent
-    evidence and a single count invites exactly that mistake.
-
-    Shared canonical DOI (two rows describing one work) and shared
-    ``dataset_id`` both merge clusters. Shared authorship never merges --
-    CLAUDE.md 4 treats two datasets from one lab as two datasets -- but is
-    still detected so a future view can surface it. No current provider
-    adapter resolves a dataset identifier, so in practice ``dataset_id`` is
-    ``None`` for essentially every row today; this is an upper bound on
-    independence, not a guarantee, and is computed by the same clustering used
-    everywhere else so that wiring a real dataset-id source later changes the
-    input and not the rule.
+    Uses the same detect_lineage + cluster_evidence rule as the paper/cluster
+    counts (CLAUDE.md 7.4), but returns the structure behind the numbers so the
+    Evidence Lineage view can show why N papers collapse into M independent
+    clusters: shared dataset/sample/preprint links merge, shared authorship is
+    shown but never merges.
     """
     result = await session.execute(
         select(
             SourceModel.id,
+            SourceModel.doi,
             SourceModel.canonical_doi,
             SourceModel.dataset_id,
             SourceModel.authors,
+            SourceModel.title,
+            SourceModel.publication_year,
         ).where(SourceModel.task_id == task_id)
     )
     rows = list(result)
-    sources = [canonical_uuid(row.id) for row in rows]
-    # A source with no canonical DOI stays its own cluster: unknown identity must
-    # not silently merge two papers into one piece of evidence.
-    dependencies = detect_lineage(
+    view = build_lineage_view(
         [
-            LineageSourceRow(
+            LineageViewRow(
                 source_id=canonical_uuid(row.id),
+                title=row.title or "",
+                doi=row.doi,
                 canonical_doi=row.canonical_doi,
                 dataset_id=row.dataset_id,
-                authors=tuple(row.authors),
+                authors=tuple(row.authors or ()),
+                publication_year=row.publication_year,
             )
             for row in rows
         ]
     )
-    clusters = cluster_evidence(sources, dependencies)
-    return clusters.paper_count, clusters.independent_cluster_count
+    return FrozenDict(view)
+
+
+async def _adjudication_decided_keys(
+    session: AsyncSession, task_id: UUID
+) -> set[str]:
+    """Candidate/node keys the researcher has already adjudicated."""
+    result = await session.execute(
+        select(ScientificEventModel).where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.event_type == RESEARCHER_ADJUDICATION,
+        )
+    )
+    decided: set[str] = set()
+    for row in result.scalars():
+        target = row.payload.get("target_key")
+        if isinstance(target, str):
+            decided.add(target)
+    return decided
+
+
+async def _adjudication(
+    session: AsyncSession,
+    task_id: UUID,
+) -> FrozenDict[str, object]:
+    """B6: pending merge candidates + quarantined nodes, with their reasons.
+
+    Merge candidates are the CONSENSUS_DRAFTED ``merge_candidates`` (unresolved
+    conflicts the joint round deliberately does *not* auto-merge). Quarantined
+    nodes come from STATUS_QUARANTINED ledger events joined to their ADMISSION
+    audit reasons (the same read the worker's Resurrect path uses). Anything
+    already carrying a RESEARCHER_ADJUDICATION is marked resolved.
+    """
+    decided = await _adjudication_decided_keys(session, task_id)
+    consensus = await _latest_event_payload(session, task_id, CONSENSUS_DRAFTED)
+    raw_candidates = (
+        consensus.get("merge_candidates", ()) if consensus is not None else ()
+    )
+    candidate_items = (
+        raw_candidates
+        if isinstance(raw_candidates, (list, tuple))
+        else ()
+    )
+    merge_candidates = tuple(
+        FrozenDict(
+            {
+                "key": str(item),
+                "description": str(item),
+                "resolved": str(item) in decided,
+            }
+        )
+        for item in candidate_items
+    )
+
+    quarantined_events = await session.scalars(
+        select(ScientificEventModel).where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.status == STATUS_QUARANTINED,
+        )
+    )
+    quarantined: list[FrozenDict[str, object]] = []
+    for event in quarantined_events:
+        audit = await session.scalar(
+            select(EventAuditModel)
+            .where(
+                EventAuditModel.event_id == event.id,
+                EventAuditModel.gate_stage == "ADMISSION",
+            )
+            .order_by(EventAuditModel.created_at.desc())
+        )
+        raw_reasons = audit.reasons.get("reasons") if audit is not None else None
+        reasons = (
+            tuple(str(item) for item in raw_reasons)
+            if isinstance(raw_reasons, (list, tuple))
+            else ()
+        )
+        node_key = str(node_id_for(event))
+        quarantined.append(
+            FrozenDict(
+                {
+                    "node_id": node_key,
+                    "event_type": event.event_type,
+                    "sequence": event.sequence,
+                    "reasons": reasons,
+                    "resolved": node_key in decided,
+                }
+            )
+        )
+    return FrozenDict(
+        {
+            "merge_candidates": merge_candidates,
+            "quarantined": tuple(quarantined),
+        }
+    )
 
 
 async def _seats(
@@ -318,34 +422,63 @@ async def _evolution(
     return tuple(entries)
 
 
-@router.get("/{task_id}", response_model=WorkspaceSnapshot)
-async def get_workspace(
-    task_id: UUID,
-    session: SessionDep,
-    current_user: CurrentUserDep,
+async def _assemble_snapshot(
+    session: AsyncSession,
+    task: StoredTask,
+    *,
+    public: bool = False,
 ) -> WorkspaceSnapshot:
-    try:
-        task = await ResearchRepository(session).get_task(task_id, current_user.id)
-    except TaskNotFound as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"unknown task {task_id}",
-        ) from error
+    """Build the one-moment workspace snapshot for one task.
 
+    Shared by the authenticated workspace endpoint and the A2 public share
+    endpoint so a shared link shows exactly what the owner sees, minus the
+    account-private cost usage and share metadata, and with a signed-URL/local
+    -path redaction pass (``public=True``).
+    """
+    task_id = task.task_id
     # The brief is built from the same session and the same moment as the graph
     # below, so the Research Brief panel cannot show a different conclusion from
     # the Controversy Map beside it.
     brief = to_dict(await ReportService(session).build(task_id))
-    paper_count, cluster_count = await _evidence_counts(session, task_id)
+    lineage = await _lineage(session, task_id)
+    paper_count = int(cast(int, lineage["paper_count"]))
+    cluster_count = int(
+        cast(int, lineage["independent_cluster_count"])
+    )
     version = await SqlEventLedger(session).latest_sequence(task_id)
+    usage = None if public else await aggregate_task_usage(
+        session,
+        task_id,
+        TaskBudget(
+            model_cost_usd=Decimal(task.model_cost_usd),
+            tool_call_limit=task.tool_call_limit,
+            source_limit=task.source_limit,
+        ),
+    )
+    corpus_cutoff = task.corpus_cutoff
+    replay_of_task_id = task.replay_of_task_id
+    share_created_at = task.share_created_at
     task_payload: dict[str, Any] = {
         "task_id": str(task.task_id),
         "question": task.question,
         "status": task.status,
         "created_by": task.created_by,
         "task_type": task.task_type,
+        "corpus_cutoff": (
+            corpus_cutoff.isoformat() if corpus_cutoff is not None else None
+        ),
+        "replay_of_task_id": (
+            str(replay_of_task_id) if replay_of_task_id is not None else None
+        ),
     }
-    return WorkspaceSnapshot(
+    if not public:
+        task_payload["has_share"] = task.share_token is not None
+        task_payload["share_created_at"] = (
+            share_created_at.isoformat()
+            if share_created_at is not None
+            else None
+        )
+    snapshot = WorkspaceSnapshot(
         task=FrozenDict(task_payload),
         brief=FrozenDict(brief),
         seats=await _seats(session, task_id),
@@ -360,10 +493,43 @@ async def get_workspace(
         evolution=await _evolution(session, task_id),
         paper_count=paper_count,
         independent_cluster_count=cluster_count,
+        lineage=lineage,
+        adjudication=await _adjudication(session, task_id),
+        usage=None if usage is None else FrozenDict(usage),
         workspace_version=version,
         safety_notice=SafetyNotice(),
         paper=await _latest_event_payload(session, task_id, FINAL_PAPER_DRAFTED),
         consensus=await _latest_event_payload(
-            session, task_id, "CONSENSUS_DRAFTED"
+            session, task_id, CONSENSUS_DRAFTED
         ),
     )
+    if not public:
+        return snapshot
+    return redact_public_snapshot(snapshot)
+
+
+def redact_public_snapshot(snapshot: WorkspaceSnapshot) -> WorkspaceSnapshot:
+    """A2: strip private fields and redact signed URLs/local paths for sharing."""
+    import json
+
+    data = snapshot.model_dump(mode="json")
+    # Cost usage is account-private; a shared reader never sees it.
+    data["usage"] = None
+    raw = sanitize_export(json.dumps(data, ensure_ascii=False))
+    return WorkspaceSnapshot.model_validate(json.loads(raw))
+
+
+@router.get("/{task_id}", response_model=WorkspaceSnapshot)
+async def get_workspace(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> WorkspaceSnapshot:
+    try:
+        task = await ResearchRepository(session).get_task(task_id, current_user.id)
+    except TaskNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"unknown task {task_id}",
+        ) from error
+    return await _assemble_snapshot(session, task)

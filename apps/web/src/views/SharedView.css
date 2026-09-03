@@ -1,0 +1,82 @@
+/* A2 public shared snapshot: instrument-clean, read-only, no sidebar. */
+
+.shared {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  color: var(--ink-1, #1d1d1f);
+}
+
+.shared__chrome {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.shared__wordmark {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.shared__tag {
+  font-size: 12.5px;
+  color: var(--ink-3, #6e6e73);
+}
+
+.shared__card {
+  background: var(--surface-parchment, #f5f5f7);
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.09));
+  border-radius: var(--radius-3, 16px);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.shared__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shared__head h1 {
+  font-size: 18px;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.shared__notice {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-3, #6e6e73);
+  border-left: 3px solid var(--provisional, #9a6700);
+  padding-left: 10px;
+}
+
+.shared section h2 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.shared__list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.shared__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-3, #6e6e73);
+}

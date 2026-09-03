@@ -133,8 +133,16 @@ class _SearchProviderGateway:
     to script all three identically.
     """
 
-    def __init__(self, hit_doi: str | None) -> None:
+    def __init__(
+        self,
+        hit_doi: str | None,
+        hit_title: str = (
+            "Adolescent social media and depressive symptoms: "
+            "a counterexample study"
+        ),
+    ) -> None:
         self._hit_doi = hit_doi
+        self._hit_title = hit_title
         self.calls: list[ToolRequest] = []
 
     async def execute(self, request: ToolRequest) -> ToolResult:
@@ -173,7 +181,10 @@ class _SearchProviderGateway:
                 {
                     "doi": self._hit_doi,
                     "id": f"https://openalex.org/{self._hit_doi}",
-                    "title": "A counterexample study",
+                    # Title is injected so one test can serve an off-topic
+                    # hit (B5 refusal) while the default stays aligned with
+                    # QUESTION (an on-topic free-text hit is admitted).
+                    "title": self._hit_title,
                     "authors": ("Rivera",),
                     "year": 2021,
                     "type": "journal-article",
@@ -453,6 +464,35 @@ async def test_a_freetext_query_resolves_via_real_search(
     assert len(search_calls) == 1
     assert search_calls[0].tool_name == "openalex"
     assert search_calls[0].arguments["query"] == FREE_TEXT_ADVERSARIAL_QUERY
+
+
+async def test_an_offtopic_freetext_hit_is_refused_with_its_score(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """B5: a free-text search hit whose title shares no topic token with the
+    question is refused (not persisted), and the refusal is recorded with its
+    exact score rather than dropped silently (CLAUDE.md 7: the unknown and the
+    excluded must both stay visible)."""
+    task_id = await _seed(app_sessions)
+    tools = _SearchProviderGateway(
+        hit_doi=SEARCH_HIT_DOI,
+        hit_title="Quantum chromodynamics on compact Riemann surfaces",
+    )
+
+    await run_task(
+        app_sessions,
+        projector_sessions,
+        task_id,
+        gateway=_FreeTextRequestingGateway(FREE_TEXT_ADVERSARIAL_QUERY),
+        tools=tools,
+    )
+
+    sources = await _sources(app_sessions, task_id)
+    assert sources == []
+    refused = await _events_of_type(app_sessions, task_id, "SOURCE_REFUSED")
+    reasons = [str(event.payload.get("reason", "")) for event in refused]
+    assert any("below relevance threshold" in reason for reason in reasons), reasons
 
 
 async def test_a_freetext_query_every_provider_missing_stays_unresolvable(

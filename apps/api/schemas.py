@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from packages.kernel.contracts import (
@@ -40,6 +40,12 @@ class WorkspaceSnapshot(ContractModel):
     # exist. Both are ledger-derived read-only views; neither is evidence
     # (the paper is an expression-layer document, the consensus is the joint
     # modelling round's own text).
+    # A1 evidence lineage: sources, dependency links, independent clusters.
+    lineage: FrozenDict[str, object] | None = None
+    # B6 adjudication queue: pending merge candidates + quarantined nodes.
+    adjudication: FrozenDict[str, object] | None = None
+    # D12 real-time budget/cost usage aggregated from the audit tables.
+    usage: FrozenDict[str, object] | None = None
     paper: FrozenDict[str, object] | None = None
     consensus: FrozenDict[str, object] | None = None
 
@@ -109,6 +115,9 @@ class CreateTaskRequest(ContractModel):
     # researcher uploads a paper and the council critiques it instead of
     # investigating a controversy question.
     task_type: str = "deep_research"
+    # A3 time-travel: when set, only sources published in/before this year are
+    # admitted during acquisition (year granularity).
+    corpus_cutoff: date | None = None
 
 
 class ConfirmClaimsRequest(ContractModel):
@@ -263,3 +272,56 @@ class ModelSettingsUpdate(ContractModel):
     api_key: str | None = None
     model_name: str | None = None
     clear_api_key: bool = False
+
+
+class ReplayRequest(ContractModel):
+    """Body for POST /api/tasks/{id}/replay (A3 time-travel)."""
+
+    corpus_cutoff: date
+
+
+class AdjudicationRequest(ContractModel):
+    """Body for a researcher's manual merge/quarantine decision (B6).
+
+    The decision is recorded as a process-only RESEARCHER_ADJUDICATION ledger
+    event; it never writes the Evidence Graph (AGENTS.md principle 8).
+    """
+
+    # Which merge candidate (its text) or quarantined node (its node id).
+    target_key: str
+    # Free-form decision label, e.g. keep_separate / accept / keep_quarantined.
+    decision: str
+    note: str = ""
+
+
+class ModelOverrideRequest(ContractModel):
+    """Body for C10 model hot-swap. ``clear`` removes the override."""
+
+    config: FrozenDict[str, object] | None = None
+    clear: bool = False
+
+
+class AnnotationItemInput(ContractModel):
+    ref_kind: str
+    ref_node_id: str
+    statement: str
+    position: FrozenDict[str, object] | None = None
+
+
+class AnnotationCreateRequest(ContractModel):
+    title: str = ""
+    note: str = ""
+    items: tuple[AnnotationItemInput, ...] = ()
+
+
+class AnnotationLabelRequest(ContractModel):
+    item_id: UUID
+    rater_name: str
+    label: str
+    note: str = ""
+
+
+class SaveToKnowledgeRequest(ContractModel):
+    """Body for A4: distil a finished task into one knowledge-base document."""
+
+    knowledge_base_id: UUID

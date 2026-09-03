@@ -175,21 +175,20 @@ async def test_quota_exhausted_blocks_new_tasks_and_confirmations(
     app_sessions: async_sessionmaker[AsyncSession],
     trial_account: dict[str, Any],
 ) -> None:
-    """Two confirms use the two slots; a third task is refused at creation
-    (the first gate), and a trial task that somehow survived is refused at
-    confirm (the atomic second gate)."""
+    """The single confirm uses the only slot; a second task is refused at
+    creation (the first gate), and a trial task that somehow survived is
+    refused at confirm (the atomic second gate)."""
     activated = await trial_client.post(FREE_TRIAL_PATH, json={})
     assert activated.status_code == 200
 
-    for _ in range(2):
-        created = await _create_task(trial_client)
-        response = await trial_client.post(
-            CONFIRM_PATH.format(task_id=created["task_id"]),
-            json={"claim_ids": [created["suggested_claims"][0]["id"]]},
-        )
-        assert response.status_code == 200
+    created = await _create_task(trial_client)
+    response = await trial_client.post(
+        CONFIRM_PATH.format(task_id=created["task_id"]),
+        json={"claim_ids": [created["suggested_claims"][0]["id"]]},
+    )
+    assert response.status_code == 200
 
-    # 第三任务：创建即被拒（创建时拦截）。
+    # 第二任务：创建即被拒（创建时拦截）。
     refused = await trial_client.post(
         "/api/tasks", json=make_research_contract().model_dump(mode="json")
     )
@@ -237,19 +236,13 @@ async def test_concurrent_confirms_consume_exactly_one_slot(
     app_sessions: async_sessionmaker[AsyncSession],
     trial_account: dict[str, Any],
 ) -> None:
-    """The atomic UPDATE ... WHERE free_trial_used < limit gate: with one
-    slot left, two confirmations racing for it -- exactly one wins."""
+    """The atomic UPDATE ... WHERE free_trial_used < limit gate: with a
+    single slot in total, two fresh confirmations racing for it -- exactly
+    one wins."""
     activated = await trial_client.post(FREE_TRIAL_PATH, json={})
     assert activated.status_code == 200
 
-    # 先用掉一个额度，制造「只剩最后一个槽位」的竞争条件。
-    first = await _create_task(trial_client)
-    spent = await trial_client.post(
-        CONFIRM_PATH.format(task_id=first["task_id"]),
-        json={"claim_ids": [first["suggested_claims"][0]["id"]]},
-    )
-    assert spent.status_code == 200
-
+    # 唯一额度尚未使用：两个草稿任务同时确认，竞争同一个槽位。
     created_a = await _create_task(trial_client)
     created_b = await _create_task(trial_client)
     body_a = {"claim_ids": [created_a["suggested_claims"][0]["id"]]}
@@ -273,8 +266,8 @@ async def test_concurrent_confirms_consume_exactly_one_slot(
             )
         )
     assert settings is not None
-    # 1（已花掉）+ 1（并发中成功的那一次）；失败的那一次回滚不扣。
-    assert settings.free_trial_used == 2
+    # 并发中恰好一次成功；失败的那一次回滚不扣，唯一额度被用掉后 used==1。
+    assert settings.free_trial_used == 1
 
 
 async def test_switching_to_own_key_stops_drawing_on_quota(

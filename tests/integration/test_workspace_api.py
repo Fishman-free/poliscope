@@ -31,6 +31,9 @@ WORKSPACE_FIELDS = {
     "safety_notice",
     "paper",
     "consensus",
+    "lineage",
+    "adjudication",
+    "usage",
 }
 
 

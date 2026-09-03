@@ -564,8 +564,8 @@ async def test_free_trial_activation_saves_the_trial_endpoint(
         assert body["model_name"] == "qwen3.8-max"
         assert body["free_trial"]["active"] is True
         assert body["free_trial"]["used"] == 0
-        assert body["free_trial"]["limit"] == 2
-        assert body["free_trial"]["remaining"] == 2
+        assert body["free_trial"]["limit"] == 1
+        assert body["free_trial"]["remaining"] == 1
         # 红线：任何响应都不回显 key（含服务端 key）。
         assert "api_key" not in body
         assert "sk-dashscope" not in response.text
@@ -617,7 +617,7 @@ async def test_free_trial_refuses_after_quota_exhausted(
             await session.execute(
                 sa_update(AppSettingsModel)
                 .where(AppSettingsModel.user_id == UUID(account["id"]))
-                .values(free_trial_used=2)
+                .values(free_trial_used=1)
             )
             await session.commit()
 
@@ -677,7 +677,7 @@ async def test_get_reports_free_trial_block_without_leaking_the_key(
 
         assert body["free_trial"]["enabled"] is True
         assert body["free_trial"]["active"] is False
-        assert body["free_trial"]["remaining"] == 2
+        assert body["free_trial"]["remaining"] == 1
         assert "api_key" not in body
         assert "sk-dashscope" not in str(body)
     finally:

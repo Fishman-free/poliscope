@@ -65,6 +65,9 @@ class SourceModel(Base):
         JSONB, nullable=False, default=dict
     )
     authors: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    # Publication year reported by the provider (migration 0026); the A3
+    # closed-corpus cutoff filters on it. NULL = unknown, never guessed.
+    publication_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     dataset_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
     )

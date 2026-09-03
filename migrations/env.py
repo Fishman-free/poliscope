@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # that already exist in the database.
 from packages.accounts import models as account_models  # noqa: F401
 from packages.council import models as council_models  # noqa: F401
+from packages.evaluation import (
+    annotation_models as eval_annotation_models,  # noqa: F401
+)
 from packages.evidence import models as evidence_models  # noqa: F401
 from packages.kernel.config import DatabaseConfig
 from packages.kernel.database import Base

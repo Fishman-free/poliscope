@@ -9,8 +9,6 @@ contribution.
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 from packages.council.contracts import ALL_SEATS
 from packages.memory.collective import (
     BLINDSPOT_EVENT,
@@ -36,7 +34,10 @@ def test_collective_tracks_active_claims_and_blindspots() -> None:
     memory.absorb(
         (
             (CLAIM_EVENT, _claim("短视频导致抑郁")),
-            (BLINDSPOT_EVENT, {"node_id": "b1", "statement": "自报告偏差", "kind": "bounty"}),
+            (
+                BLINDSPOT_EVENT,
+                {"node_id": "b1", "statement": "自报告偏差", "kind": "bounty"},
+            ),
         )
     )
     view = memory.view()
@@ -49,8 +50,22 @@ def test_collective_tracks_challenges_and_dissents() -> None:
     memory = CollectiveMemory()
     memory.absorb(
         (
-            (CHALLENGE_EVENT, {"seat": "causal_scientist", "claim_id": "c1", "statement": "反向因果"}),
-            (DISSENT_EVENT, {"seat": "adversarial_falsifier", "statement": "证据不足", "target_id": "c1"}),
+            (
+                CHALLENGE_EVENT,
+                {
+                    "seat": "causal_scientist",
+                    "claim_id": "c1",
+                    "statement": "反向因果",
+                },
+            ),
+            (
+                DISSENT_EVENT,
+                {
+                    "seat": "adversarial_falsifier",
+                    "statement": "证据不足",
+                    "target_id": "c1",
+                },
+            ),
         )
     )
     view = memory.view()

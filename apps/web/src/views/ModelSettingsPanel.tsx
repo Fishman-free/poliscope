@@ -349,7 +349,7 @@ export function ModelSettingsPanel() {
                   freeTrial.limit,
                 )
               : t(
-                  "每个账号可使用部署方提供的免费 qwen3.8-max 模型提问 2 次，之后需要填写自己的 API Key。点上方「免费体验」按钮启用。",
+                  "每个账号仅可使用部署方提供的免费 qwen3.8-max 模型提问 1 次，之后需要填写自己的 API Key。点上方「免费体验」按钮启用。",
                 )}
           </p>
           {freeTrial.enabled && freeTrial.used >= freeTrial.limit ? (

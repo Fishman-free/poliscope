@@ -99,6 +99,14 @@ class StoredTask:
     source_limit: int = 0
     output_language: str = "auto"
     skill_ids: tuple[UUID, ...] = ()
+    # A3 time-travel: corpus cutoff (date) and the task this one replays.
+    corpus_cutoff: Any | None = None
+    replay_of_task_id: UUID | None = None
+    # A2 read-only share token + when it was minted (None when unshared).
+    share_token: str | None = None
+    share_created_at: datetime | None = None
+    # C10 hot-swap override applied on top of the creation snapshot.
+    model_config_override: dict[str, Any] | None = None
 
 
 class TaskNotFound(Exception):
@@ -150,6 +158,8 @@ class ResearchRepository:
                 ),
                 knowledge_base_id=contract.knowledge_base_id,
                 task_type=contract.task_type,
+                corpus_cutoff=contract.corpus_cutoff,
+                replay_of_task_id=contract.replay_of_task_id,
             )
         )
         # Flushed before the dependent rows because their foreign key targets
@@ -225,6 +235,11 @@ class ResearchRepository:
             source_limit=row.source_limit,
             output_language=row.output_language,
             skill_ids=tuple(row.skill_ids or ()),
+            corpus_cutoff=row.corpus_cutoff,
+            replay_of_task_id=row.replay_of_task_id,
+            share_token=row.share_token,
+            share_created_at=row.share_created_at,
+            model_config_override=row.model_config_override,
         )
 
     async def get_status(self, task_id: UUID) -> TaskStatus | None:
@@ -458,4 +473,88 @@ class ResearchRepository:
                 TaskCancelRequestModel.task_id == task_id
             )
         )
+        await self._session.flush()
+
+    async def set_share_token(
+        self, task_id: UUID, token: str | None
+    ) -> datetime | None:
+        """Mint (token given) or revoke (token None) a read-only share link.
+
+        Returns the stored creation timestamp on mint, or None on revoke.
+        Re-minting rotates both token and timestamp, so an old link stops
+        resolving the moment a new one is issued.
+        """
+        if token is None:
+            values: dict[str, Any] = {
+                "share_token": None,
+                "share_created_at": None,
+            }
+        else:
+            values = {
+                "share_token": token,
+                "share_created_at": func.now(),
+            }
+        result = cast(CursorResult[Any], await self._session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(**values)
+        ))
+        if result.rowcount == 0:
+            raise TaskNotFound(str(task_id))
+        await self._session.flush()
+        row = await self._session.scalar(
+            select(ResearchTaskModel).where(
+                ResearchTaskModel.task_id == task_id
+            )
+        )
+        return row.share_created_at if row is not None else None
+
+    async def get_task_by_share_token(self, token: str) -> StoredTask:
+        """Resolve a share token to its task, with NO owner scoping.
+
+        This is the single deliberate exception to owner isolation: a share
+        link is meant to be opened without logging in, so the lookup is by
+        token only. The read endpoint built on it still returns a redacted,
+        read-only projection (never the model api key or private process
+        trace) -- see apps/api/routers/shared.py.
+        """
+        row = await self._session.scalar(
+            select(ResearchTaskModel).where(
+                ResearchTaskModel.share_token == token
+            )
+        )
+        if row is None:
+            raise TaskNotFound(token)
+        return StoredTask(
+            task_id=row.task_id,
+            question=row.question,
+            status=row.status,
+            created_by=row.created_by,
+            knowledge_base_id=row.knowledge_base_id,
+            created_at=row.created_at,
+            user_id=row.user_id,
+            updated_at=row.updated_at,
+            task_type=row.task_type,
+            wall_clock_minutes=row.wall_clock_minutes,
+            model_cost_usd=row.model_cost_usd,
+            tool_call_limit=row.tool_call_limit,
+            source_limit=row.source_limit,
+            output_language=row.output_language,
+            corpus_cutoff=row.corpus_cutoff,
+            replay_of_task_id=row.replay_of_task_id,
+            share_token=row.share_token,
+            share_created_at=row.share_created_at,
+        )
+
+    async def set_model_override(
+        self, task_id: UUID, override: dict[str, Any] | None
+    ) -> None:
+        """C10: set or clear the per-task model configuration override."""
+        result = cast(CursorResult[Any], await self._session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(model_config_override=override, updated_at=func.now())
+        ))
+        if result.rowcount == 0:
+            raise TaskNotFound(str(task_id))
         await self._session.flush()

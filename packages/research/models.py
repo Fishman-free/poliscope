@@ -93,6 +93,30 @@ class ResearchTaskModel(Base):
     task_type: Mapped[str] = mapped_column(
         String(32), nullable=False, default="deep_research"
     )
+    # A3 corpus time-travel (migration 0026): inclusive publication-year
+    # cutoff applied at acquisition; NULL means "no closed-corpus constraint".
+    corpus_cutoff: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # The task this closed-corpus replay was cloned from (migration 0026).
+    replay_of_task_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("research_tasks.task_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # A2 read-only share (migration 0026): opaque bearer token; NULL = not
+    # shared. It grants login-free read access to exactly this task and never
+    # encodes ownership, so revoking is simply clearing the column.
+    share_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+    share_created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # C10 model hot-swap (migration 0026): a QUEUED/PAUSED task may be
+    # re-pointed to another endpoint before a worker claims it; the worker
+    # reads this fresh at claim time and prefers it over model_config.
+    model_config_override: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
 
 
 class ResearchScopeModel(Base):

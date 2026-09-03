@@ -24,11 +24,13 @@ from apps.api.routers import (
     papers,
     reports,
     settings,
+    shared,
     skills,
     stream,
     tasks,
     workspace,
 )
+from apps.api.routers import annotations as annotations_router
 
 
 @asynccontextmanager
@@ -57,6 +59,10 @@ app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(account.router, prefix="/api/account", tags=["account"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+app.include_router(shared.router, prefix="/api/shared", tags=["shared"])
+app.include_router(
+    annotations_router.router, prefix="/api", tags=["annotations"]
+)
 
 
 @app.get("/health", tags=["health"])

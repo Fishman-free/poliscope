@@ -10,7 +10,7 @@ would let the council pick its own question.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -199,7 +199,7 @@ class ResearchService:
         if task.status not in _RERUNNABLE_STATUSES:
             raise InvalidPauseState(
                 f"task {task_id} is {task.status}, not one of "
-                f"{sorted(s.value for s in _RERUNNABLE_STATUSES)}; "
+                f"{sorted(_RERUNNABLE_STATUSES)}; "
                 "only a finished, failed, or cancelled task can be re-researched"
             )
         if mode != "full" and task.council_checkpoint is not None:
@@ -252,6 +252,7 @@ class ResearchService:
         task_id: UUID,
         created_by: str,
         user_id: UUID | None = None,
+        corpus_cutoff: date | None = None,
     ) -> UUID:
         """「从头研究」(round-13): start a brand-new task from PRECOMMITMENT.
 
@@ -273,7 +274,7 @@ class ResearchService:
         if task.status not in _RERUNNABLE_STATUSES:
             raise InvalidPauseState(
                 f"task {task_id} is {task.status}, not one of "
-                f"{sorted(s.value for s in _RERUNNABLE_STATUSES)}; "
+                f"{sorted(_RERUNNABLE_STATUSES)}; "
                 "a fresh rerun starts from a finished, failed, or stopped task"
             )
         scope = await self._repository.get_scope(task_id)
@@ -308,6 +309,10 @@ class ResearchService:
             skill_ids=task.skill_ids,
             output_language=task.output_language,
             task_type=task.task_type,
+            # A3 time-travel: a replay carries the cutoff and remembers its
+            # source task so the two evidence graphs can be diffed.
+            corpus_cutoff=corpus_cutoff,
+            replay_of_task_id=task_id if corpus_cutoff is not None else None,
         )
         claims = await self._repository.list_claims(task_id)
         confirmed = tuple(c for c in claims if c.status == CLAIM_CONFIRMED)
@@ -407,6 +412,47 @@ class ResearchService:
         )
         await self._repository.set_status(task_id, TaskStatus.QUEUED)
         return TaskStatus.QUEUED
+
+    async def replay_at_cutoff(
+        self,
+        task_id: UUID,
+        cutoff: date,
+        user_id: UUID | None = None,
+    ) -> UUID:
+        """A3 time-travel: clone a finished task restricted to a corpus cutoff.
+
+        A thin, explicit wrapper over :meth:`rerun_fresh` so the API never has
+        to know that a replay is a fresh clone -- it only states the cutoff
+        year. The source task must be re-runnable (finished/failed/stopped);
+        the clone goes straight to QUEUED with ``replay_of_task_id`` set so the
+        workbench can diff the two evidence graphs.
+        """
+        task = await self._repository.get_task(task_id, user_id=user_id)
+        return await self.rerun_fresh(
+            task_id,
+            created_by=task.created_by,
+            user_id=task.user_id,
+            corpus_cutoff=cutoff,
+        )
+
+    async def mint_share_token(
+        self, task_id: UUID, token: str
+    ) -> datetime | None:
+        """A2: attach a read-only share token (rotation replaces the old)."""
+        await self._repository.get_task(task_id)
+        return await self._repository.set_share_token(task_id, token)
+
+    async def revoke_share(self, task_id: UUID) -> None:
+        """A2: remove a share link so its token stops resolving."""
+        await self._repository.get_task(task_id)
+        await self._repository.set_share_token(task_id, None)
+
+    async def set_model_override(
+        self, task_id: UUID, override: dict[str, object] | None
+    ) -> None:
+        """C10: set/clear a task's model configuration override."""
+        await self._repository.get_task(task_id)
+        await self._repository.set_model_override(task_id, override)
 
 
 __all__ = [

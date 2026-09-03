@@ -26,6 +26,9 @@ import type {
   TaskSummary,
   UploadedPaper,
   VerificationResponse,
+  AnnotationBatchDetail,
+  AnnotationBatchSummary,
+  TaskCompare,
   WorkspaceSnapshot,
 } from "./types";
 
@@ -189,6 +192,9 @@ export interface NewTaskOptions {
    * the council critiques an uploaded paper instead of investigating a
    * controversy question. */
   taskType?: string;
+  /** A3 time-travel: restrict discovery to sources published no later than
+   * this ISO date. Null means no cutoff. */
+  corpusCutoff?: string | null;
 }
 
 export const DEFAULT_NEW_TASK_OPTIONS: Required<
@@ -209,6 +215,7 @@ export const DEFAULT_NEW_TASK_OPTIONS: Required<
   knowledgeBaseId: null,
   skillIds: [],
   taskType: "deep_research",
+  corpusCutoff: null,
 };
 
 /** Create a task from a plain question. The task does not start research --
@@ -249,6 +256,7 @@ export function createTask(
     knowledge_base_id: merged.knowledgeBaseId ?? null,
     skill_ids: merged.skillIds ?? [],
     task_type: merged.taskType ?? "deep_research",
+    corpus_cutoff: merged.corpusCutoff ?? null,
     task_model_config: model
       ? {
           base_url: model.baseUrl,
@@ -896,4 +904,118 @@ export function subscribeProcess(
     }
   });
   return () => source.close();
+}
+
+// --- Research-tools endpoints (A1-A4 / B6 / C9-C10 / D12) -------------
+
+/** A2: mint (rotate) an unauthenticated read-only share token. */
+export function mintShareToken(taskId: string): Promise<{ share_token: string; created_at: string | null }> {
+  return postJson(`/api/tasks/${taskId}/share`, {});
+}
+
+/** A2: revoke the share token. */
+export async function revokeShareToken(taskId: string): Promise<void> {
+  await sendJson("DELETE", `/api/tasks/${taskId}/share`, {});
+}
+
+/** A2: fetch a public, redacted snapshot by share token. Deliberately does
+ * NOT send the bearer token -- a shared link must open on a logged-out
+ * machine. */
+export async function fetchSharedSnapshot(token: string): Promise<WorkspaceSnapshot> {
+  const response = await fetch(`${BASE}/api/shared/${token}`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new ApiError(response.status, detail || response.statusText);
+  }
+  return (await response.json()) as WorkspaceSnapshot;
+}
+
+/** A3: clone a finished task restricted to a corpus cutoff year. */
+export function replayAtCutoff(
+  taskId: string,
+  corpusCutoff: string,
+): Promise<{ task_id: string; source_task_id: string; corpus_cutoff: string; status: string }> {
+  return postJson(`/api/tasks/${taskId}/replay`, { corpus_cutoff: corpusCutoff });
+}
+
+/** A3: deterministic claim-set diff between two owned tasks. */
+export function compareTasks(taskId: string, otherId: string): Promise<TaskCompare> {
+  return getJson<TaskCompare>(`/api/tasks/${taskId}/compare/${otherId}`);
+}
+
+/** A4: distil a finished task into one knowledge-base text document. */
+export function saveTaskToKnowledge(
+  taskId: string,
+  knowledgeBaseId: string,
+): Promise<{ document_id: string; knowledge_base_id: string }> {
+  return postJson(`/api/tasks/${taskId}/save-to-knowledge`, {
+    knowledge_base_id: knowledgeBaseId,
+  });
+}
+
+/** B6: record a researcher decision on a merge candidate / quarantined node.
+ * Process-only; the Evidence Graph is never touched. */
+export function adjudicate(
+  taskId: string,
+  targetKey: string,
+  decision: string,
+  note = "",
+): Promise<{ recorded: boolean }> {
+  return postJson(`/api/tasks/${taskId}/adjudicate`, {
+    target_key: targetKey,
+    decision,
+    note,
+  });
+}
+
+/** C10: hot-swap (or clear) the model endpoint of a not-yet-running task. */
+export function setTaskModelOverride(
+  taskId: string,
+  config: TaskModelConfig | null,
+  clear = false,
+): Promise<{ task_id: string; override: { base_url: string } | null }> {
+  return putJson(`/api/tasks/${taskId}/model-override`, {
+    config: config
+      ? {
+          base_url: config.baseUrl,
+          api_key: config.apiKey,
+          model_name: config.modelName?.trim() || null,
+        }
+      : null,
+    clear,
+  });
+}
+
+/** C9: create an annotation batch from frozen blindspot/claim items. */
+export function createAnnotationBatch(
+  taskId: string,
+  items: { ref_kind: string; ref_node_id: string | null; statement: string; position?: Record<string, unknown> }[],
+  title?: string,
+): Promise<{ batch_id: string; item_count: number }> {
+  return postJson(`/api/tasks/${taskId}/annotation-batches`, { items, title: title ?? null, note: "" });
+}
+
+export function listAnnotationBatches(taskId: string): Promise<AnnotationBatchSummary[]> {
+  return getJson<AnnotationBatchSummary[]>(`/api/tasks/${taskId}/annotation-batches`);
+}
+
+export function fetchAnnotationBatch(batchId: string): Promise<AnnotationBatchDetail> {
+  return getJson<AnnotationBatchDetail>(`/api/annotation-batches/${batchId}`);
+}
+
+export function addAnnotationLabel(
+  batchId: string,
+  itemId: string,
+  raterName: string,
+  label: string,
+  note = "",
+): Promise<{ ok: boolean; agreement: AnnotationBatchDetail["agreement"] }> {
+  return postJson(`/api/annotation-batches/${batchId}/labels`, {
+    item_id: itemId,
+    rater_name: raterName,
+    label,
+    note,
+  });
 }
