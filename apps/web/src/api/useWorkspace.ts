@@ -13,6 +13,14 @@ export type StreamState = "open" | "reconnecting" | "closed";
  * means the map only ever shows a state the server actually committed. */
 const REFRESH_DEBOUNCE_MS = 250;
 
+/** Insurance poll while a task is still live and the tab is visible.
+ *
+ * SSE is the fast path, but a backgrounded browser throttles timers and an
+ * idle proxy can silently kill an EventSource; this slow poll bounds how
+ * stale a returned-to tab can be even when no frame ever arrives. It pauses
+ * while the tab is hidden (background-tab responsiveness fix). */
+const INSURANCE_POLL_MS = 15_000;
+
 /** Task statuses after which no further event can arrive. Both subscriptions
  * close when the snapshot reaches one of these and stay closed; they re-open
  * on their own if a re-research moves the status back out of the set. */
@@ -67,10 +75,23 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<LedgerEvent[]>([]);
   const [processEvents, setProcessEvents] = useState<ProcessEvent[]>([]);
+  // Bumped when a stream reports it has permanently closed, or when the tab
+  // becomes visible again / network returns: it forces both EventSources to
+  // be rebuilt instead of leaving a returned-to tab on a dead connection.
+  const [streamNonce, setStreamNonce] = useState(0);
   // The latest refresh's controller. A newer refresh() aborts it, so a stale
   // fetch never lands its snapshot over a fresher one.
   const controllerRef = useRef<AbortController | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  // Throttle stream rebuilds: an unreachable server must not turn CLOSED ->
+  // rebuild -> CLOSED into a tight request loop.
+  const lastRebuildRef = useRef(0);
+  const rebuildStream = useCallback(() => {
+    const now = Date.now();
+    if (now - lastRebuildRef.current < 3_000) return;
+    lastRebuildRef.current = now;
+    setStreamNonce((current) => current + 1);
+  }, []);
   // Terminal snapshot: both streams close (and stay closed) once the task
   // cannot emit anything more; a re-research flips this back to false.
   const terminal =
@@ -104,11 +125,57 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
       });
   }, [taskId]);
 
+  // Switching sessions must feel instant: drop the previous task's snapshot
+  // immediately (otherwise the old workspace stays on screen while the new
+  // one loads, which reads as a frozen/long-waiting history open) and show
+  // the loading branch until the first snapshot of the new task arrives.
+  useEffect(() => {
+    setSnapshot(null);
+    setEvents([]);
+    setProcessEvents([]);
+    setError(null);
+    setLoad(taskId ? "loading" : "idle");
+  }, [taskId]);
+
   // Initial load, and a fresh load whenever the task changes.
   useEffect(() => {
     void refresh();
     return () => controllerRef.current?.abort();
   }, [refresh]);
+
+  // Returning from a background tab (or the network coming back) must heal
+  // itself immediately: pull the committed snapshot and rebuild any stream
+  // that the browser/proxy silently killed while hidden. Without this, a tab
+  // left in the background came back to a stale map and "unresponsive"
+  // errors until the next event happened to arrive.
+  useEffect(() => {
+    if (!taskId) return;
+    const recover = () => {
+      void refresh();
+      rebuildStream();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") recover();
+    };
+    window.addEventListener("online", recover);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("online", recover);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [taskId, refresh, rebuildStream]);
+
+  // Slow insurance poll while live and visible. Hidden tabs are skipped --
+  // polling a throttled background tab is exactly what used to pile up
+  // requests and stall the return -- and the next visibility recovery heals
+  // them instead.
+  useEffect(() => {
+    if (!taskId || terminal) return;
+    const interval = window.setInterval(() => {
+      if (!document.hidden) void refresh();
+    }, INSURANCE_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [taskId, terminal, refresh]);
 
   useEffect(() => {
     if (!taskId) {
@@ -129,14 +196,19 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
         window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => void refresh(), REFRESH_DEBOUNCE_MS);
       },
-      setStream,
+      (state) => {
+        setStream(state);
+        // A permanently closed stream rebuilds itself via streamNonce rather
+        // than leaving the workspace on a dead EventSource forever.
+        if (state === "closed") rebuildStream();
+      },
     );
     return () => {
       window.clearTimeout(timer.current);
       close();
       setStream("closed");
     };
-  }, [taskId, refresh, terminal]);
+  }, [taskId, refresh, terminal, streamNonce, rebuildStream]);
 
   // Process trace: reconnect replays the newest rows (bounded server-side)
   // and deduplicates by server seq. Incoming frames are buffered and flushed
@@ -165,19 +237,25 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
           : next;
       });
     };
-    const close = subscribeProcess(taskId, (event) => {
-      if (seen.has(event.seq)) return;
-      seen.add(event.seq);
-      buffer.push(event);
-      if (flushTimer === 0) {
-        flushTimer = window.setTimeout(flush, PROCESS_FLUSH_MS);
-      }
-    });
+    const close = subscribeProcess(
+      taskId,
+      (event) => {
+        if (seen.has(event.seq)) return;
+        seen.add(event.seq);
+        buffer.push(event);
+        if (flushTimer === 0) {
+          flushTimer = window.setTimeout(flush, PROCESS_FLUSH_MS);
+        }
+      },
+      (state) => {
+        if (state === "closed") rebuildStream();
+      },
+    );
     return () => {
       close();
       if (flushTimer !== 0) window.clearTimeout(flushTimer);
     };
-  }, [taskId, terminal]);
+  }, [taskId, terminal, streamNonce, rebuildStream]);
 
   return { snapshot, load, stream, error, events, processEvents, refresh };
 }

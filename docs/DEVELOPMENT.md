@@ -503,9 +503,9 @@ poliscope resume --task-id <id>
 ```
 
 `pause` 把一个还没被 worker 认领的任务从 `QUEUED` 挪到 `PAUSED`，恢复之前它永远不会被认领。它**不能**
-打断一个已经在跑的议会——`deliberate()` 把一个任务的八阶段全部跑在一次未提交事务里，跑到一半没有可
-供快照的持久状态。这与上面的议会检查点是两件事：检查点是内容层面「唯一固定的暂停点」，`pause`/`resume`
-是队列层面「还没轮到你就不会被抢」，设计边界说明见[功能全景与设计边界](#功能全景与设计边界)第 7 项。
+打断一个已经在跑的议会——B7 之后议会每跑完一个阶段就把该阶段的账本事件、阶段审计行和运行中检查点提交一次（任务保持 RUNNING），worker 中途崩溃只会回滚被打断阶段的未提交事务，重新认领后从检查点断点续跑、不重花已完成阶段的模型预算；证据图仍只在终态后由投影器身份统一投影。这与上面的议会检查点是两件事：检查点是内容层面「唯一固定的暂停点」，`pause`/`resume` 是队列层面「还没轮到你就不会被抢」，设计边界说明见[功能全景与设计边界](#功能全景与设计边界)第 7 项。
+
+崩溃续跑时若检查点尚未抵达人类引导门（`gate_reached=False` 且 JOINT_MODELING 未开始），续跑会在该门前再次停住，不会因崩溃绕过研究者的方向性引导。
 
 ### 上传 PDF：没有 DOI 的来源怎么进证据管线
 
@@ -807,10 +807,11 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 
 ### 执行语义与运维
 
-7. **快照 / 暂停 / 恢复 = 「暂停认领」。** `deliberate()`（`apps/worker/jobs.py`）把一个任务的完整 8 阶段议会跑在一次未提交事务里——这是「要么完整、要么不跑」的原子性设计，保证账本与证据图在任何时刻都一致（没有可截断的中间持久状态可供半途快照）。`poliscope pause`/`resume` 和对应的 `POST /api/tasks/{id}/pause`/`resume` 端点在 `QUEUED`⇄`PAUSED` 间搬动任务——被暂停的任务在恢复之前永远不会被 worker 认领（`test_a_paused_task_is_never_claimed_until_resumed` 端到端验证）。议会层面的固定暂停点是 JOINT_MODELING 前的人类方向性引导检查点（`AWAITING_COUNCIL_INPUT`，见 CLAUDE.md 第 4.1 节、设计规格第 4.5 节）——唯一、固定，只出现在 BLINDSPOT_BOUNTY 与 JOINT_MODELING 之间。一个任务两种暂停：还没轮到你的，用 `pause`/`resume` 挡在队列外；轮到你了想给议会方向，用检查点。
+7. **快照 / 暂停 / 恢复 = 「暂停认领」。** B7（崩溃安全的真·快照续跑，按 CLAUDE.md 第 17 条记录的有意偏离）之后，`deliberate()`（`apps/worker/jobs.py`）不再把完整 8 阶段议会压在一次未提交事务里：编排器每跑完一个阶段就通过 `on_phase_checkpoint` 回调把该阶段的账本事件、`council_rounds`/`scientist_runs` 审计行和运行中 `CouncilCheckpoint`（新增 `gate_reached` 字段，JSONB 无需迁移）一起提交，任务保持 RUNNING；worker 进程中途死亡只回滚被打断阶段的开放事务，stale 回收（同时覆盖 RUNNING 与 DEGRADED_RUNNING）后从检查点续跑，稳定幂等键保证已提交事件重放为 no-op，已完成阶段的席位不再被重新调用、不再重花模型预算（`test_council_crash_resume.py` 端到端验证）。证据图的写入边界完全不变：仍只在终态提交后由投影器身份的独立会话统一投影，阶段中途提交的只是账本事件。`poliscope pause`/`resume` 和对应的 `POST /api/tasks/{id}/pause`/`resume` 端点在 `QUEUED`⇄`PAUSED` 间搬动任务——被暂停的任务在恢复之前永远不会被 worker 认领（`test_a_paused_task_is_never_claimed_until_resumed` 端到端验证）。议会层面的固定暂停点是 JOINT_MODELING 前的人类方向性引导检查点（`AWAITING_COUNCIL_INPUT`，见 CLAUDE.md 第 4.1 节、设计规格第 4.5 节）——唯一、固定，只出现在 BLINDSPOT_BOUNTY 与 JOINT_MODELING 之间。一个任务两种暂停：还没轮到你的，用 `pause`/`resume` 挡在队列外；轮到你了想给议会方向，用检查点。
 8. **Evolution View：定性轨迹，不是数值置信度曲线。** 关键阶段边界（证据交换、交叉质询、联合建模、最终复判结束时）都会为受影响的 `Claim` 追加一条 `CONFIDENCE_UPDATED` 过程事件（`_confidence_marker()`，`registry.py:345-376`），`_evolution()`（`workspace.py:238-291`）读取后画出跨越全部四个阶段的连续轨迹点。每条事件携带一段文字说明（`confidence_delta_note`），刻意不产出数值置信度——CLAUDE.md 第 16 条禁止用模型置信度替代统计不确定性，定性变化轨迹就是这个原则在产品上的落实。
 9. **域名 HTTPS。** `deploy/caddy/` 的域名切换逻辑（把 `POLISCOPE_SITE_ADDRESS` 改成真实域名即自动签发证书）依赖 Caddy 自身广泛验证过的行为，配置经过语法与拓扑核查（`docker compose config`）；接入真实域名时按 Caddy 官方文档的期望行为自动签发与续期。
 10. **模型设置快照语义。** 任务级 `model_config` 在创建时从账号永久设置（`app_settings`）复制一份（`apps/api/routers/tasks.py`），此后任务永远用这份快照——这是刻意的隔离设计：研究者可以把不同任务指向不同端点。「在面板换了 Key/模型名，旧任务不变」是预期行为；面板保存成功文案与任务行徽章（「你保存的配置 / 系统默认」）已把这条语义讲清楚。
+11. **流畅性、席位参与度与研究者画布（按 CLAUDE.md 第 17 条记录的有意增强，不改变证据边界）。** 三处一起交付：① *历史会话与后台切换提速*——工作台快照 `_assemble_snapshot()`（`apps/api/routers/workspace.py`）原来要 13+N 次串行数据库往返（三类面板节点各查一次、论文/共识事件重复取、席位面板扫全量事件账本、每个隔离事件单独查一次审计），现合并为「面板节点一次查、最新事件一次查、隔离审计批量查、席位面板只查四类席位事件」；前端 `useWorkspace` 增加 `visibilitychange`/`online` 自愈（切回标签页立即拉取并重建已 CLOSED 的 EventSource，重建有 3 秒节流防紧密循环）、非终态可见时 15 秒保险轮询（隐藏时不轮询）、切换会话立即清空旧快照显示加载态。② *七席参与度 / 减少可避免的 COMPLETED_WITH_GAPS*——`_collect()`（`packages/council/rounds/registry.py`）原来只捕获 `TimeoutError`，单个席位抛出的任何其他异常（HTTP 5xx、连接重置、一次性 JSON 解析失败）会穿透并让**整个阶段**失败、七席全丢；现在异常被收敛为该席位一次失败尝试，其余六席继续，`MAX_SEAT_ATTEMPTS` 从 2 提到 3（初次 + 两次重试），重试间使用 1.5s→3s 线性退避（`POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS` 等既有覆盖不变；`CouncilCancelled` 仍立即穿透，绝不被当成缺席重试）。席位仍保持顺序调用而非并发，以避免触发模型提供方限流——这是刻意取舍。人类引导门的无输入宽限期默认从 120 秒调整为 300 秒（`POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS` 可覆盖，下限 30 秒不变），前端检查点面板显示 5 分钟自动续跑倒计时。③ *研究者画布*——证据图（`views/MapView.tsx`）改为自定义节点、平滑边、MiniMap 与毛玻璃工具条；SSE 增量到达时合入新节点但保留研究者拖动的布局；研究者可添加可拖动便签、给节点写私人备注、一键重置布局，并离线导出 PNG（2x）/SVG/JSON。**这些创造与编辑全部是浏览器 localStorage 中的私人覆盖层（`views/map/overlayStore.ts`），不经过 API、不进 Scientific Event Ledger、不写证据图，界面明确标注「不是证据」**——Graph Projector 单一写入权（CLAUDE.md 5.3）完全不变。
 
 ---
 

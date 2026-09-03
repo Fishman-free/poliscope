@@ -844,14 +844,23 @@ export async function deleteSkill(skillId: string): Promise<void> {
 export function subscribe(
   taskId: string,
   onEvent: (event: LedgerEvent) => void,
-  onStateChange?: (state: "open" | "reconnecting") => void,
+  onStateChange?: (state: "open" | "reconnecting" | "closed") => void,
 ): () => void {
   const token = getToken();
   const source = new EventSource(
     `${BASE}/api/stream/${taskId}?token=${encodeURIComponent(token ?? "")}`,
   );
   source.onopen = () => onStateChange?.("open");
-  source.onerror = () => onStateChange?.("reconnecting");
+  source.onerror = () => {
+    // EventSource retries a dropped connection itself; only a CLOSED source
+    // has given up (background-tab idle timeout, network loss). The caller
+    // rebuilds the subscription on "closed" instead of silently going stale.
+    if (source.readyState === EventSource.CLOSED) {
+      onStateChange?.("closed");
+    } else {
+      onStateChange?.("reconnecting");
+    }
+  };
   // One handler for every frame. The server sends no `event:` line precisely so
   // that this cannot become a list of kinds the client happens to know about --
   // an audit trail that omits unfamiliar events without saying so is worse than
@@ -888,14 +897,23 @@ const TERMINAL_EVENT_KINDS = new Set([
 export function subscribeProcess(
   taskId: string,
   onEvent: (event: ProcessEvent) => void,
-  onStateChange?: (state: "open" | "reconnecting") => void,
+  onStateChange?: (state: "open" | "reconnecting" | "closed") => void,
 ): () => void {
   const token = getToken();
   const source = new EventSource(
     `${BASE}/api/stream/${taskId}/process?token=${encodeURIComponent(token ?? "")}`,
   );
   source.onopen = () => onStateChange?.("open");
-  source.onerror = () => onStateChange?.("reconnecting");
+  source.onerror = () => {
+    // EventSource retries a dropped connection itself; only a CLOSED source
+    // has given up (background-tab idle timeout, network loss). The caller
+    // rebuilds the subscription on "closed" instead of silently going stale.
+    if (source.readyState === EventSource.CLOSED) {
+      onStateChange?.("closed");
+    } else {
+      onStateChange?.("reconnecting");
+    }
+  };
   source.addEventListener("process", (raw) => {
     try {
       onEvent(JSON.parse((raw as MessageEvent).data) as ProcessEvent);

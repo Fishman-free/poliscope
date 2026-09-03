@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 2.0
 COUNCIL_INPUT_GRACE_ENV = "POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS"
-DEFAULT_COUNCIL_INPUT_GRACE_SECONDS = 120.0
+DEFAULT_COUNCIL_INPUT_GRACE_SECONDS = 300.0
 MIN_COUNCIL_INPUT_GRACE_SECONDS = 30.0
 
 
@@ -222,12 +222,15 @@ async def recover_stale_running(
 ) -> int:
     """Reset crashed workers' ``RUNNING`` claims back to ``QUEUED``.
 
-    A worker that dies mid-task rolls back its uncommitted deliberation, so
-    re-running the task from PRECOMMITMENT is safe: none of its events were
-    ever committed. A run whose events *were* committed necessarily also
-    committed its terminal status (both live in one transaction), so such a
-    task is never ``RUNNING`` here -- which is exactly why resetting stale
-    ``RUNNING`` rows can never resurrect a finished task.
+    B7 crash-safe council: a worker that dies mid-task rolls back only the
+    interrupted phase's open transaction; every already-finished phase was
+    committed by the per-phase checkpoint hook, so the reclaimed run resumes
+    from its stored checkpoint instead of re-running PRECOMMITMENT. Stable
+    idempotency keys make any surviving event replay a no-op. Both
+    ``RUNNING`` and ``DEGRADED_RUNNING`` claims are reclaimed: a degraded run
+    is still a live run, and a worker killed while degraded must not hang
+    forever. A run whose terminal status committed is never in either state
+    here, so resetting stale rows can never resurrect a finished task.
 
     Returns how many claims were reclaimed.
     """
@@ -235,7 +238,12 @@ async def recover_stale_running(
         result = await session.execute(
             update(ResearchTaskModel)
             .where(
-                ResearchTaskModel.status == TaskStatus.RUNNING,
+                ResearchTaskModel.status.in_(
+                    (
+                        TaskStatus.RUNNING,
+                        TaskStatus.DEGRADED_RUNNING,
+                    )
+                ),
                 ResearchTaskModel.updated_at
                 < func.now()
                 - text(

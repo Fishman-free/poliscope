@@ -58,7 +58,7 @@ from packages.council.rounds.precommitment import (
     PrecommitmentHandler,
     PrecommitmentOutput,
 )
-from packages.epistemo.contracts import TaskPhase
+from packages.epistemo.contracts import CouncilCancelled, TaskPhase
 from packages.evidence.adversarial_retrieval import adversarial_retrieval_queries
 from packages.evidence.contracts import ClaimType, EvidenceEdgeType, EvidenceNodeType
 from packages.evidence.dialectical_fold import DebateCapsule
@@ -509,8 +509,13 @@ _COLLECT_DEADLINE_REASON = "phase collection deadline exceeded"
 SEAT_ATTEMPT_TIMEOUT_SECONDS = 120.0
 _SEAT_ATTEMPT_TIMEOUT_ENV = "POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS"
 _SEAT_ATTEMPT_TIMEOUT_REASON = "seat attempt timed out"
-MAX_SEAT_ATTEMPTS = 2
-_SEAT_RETRY_PAUSE_SECONDS = 0.0
+# Gap-reduction tuning: three asks per seat (initial + two retries) with a
+# short linear backoff (1.5s, then 3s), so a transient 429/5xx/connection
+# reset no longer turns into an avoidable scientist absence -- the dominant
+# cause of avoidable COMPLETED_WITH_GAPS finishes.
+MAX_SEAT_ATTEMPTS = 3
+_SEAT_RETRY_PAUSE_SECONDS = 1.5
+_SEAT_RETRY_PAUSE_ENV = "POLISCOPE_SEAT_RETRY_PAUSE_SECONDS"
 
 
 def _seat_attempt_timeout_seconds() -> float:
@@ -524,13 +529,39 @@ def _seat_attempt_timeout_seconds() -> float:
     return SEAT_ATTEMPT_TIMEOUT_SECONDS
 
 
+def _seat_retry_pause_seconds() -> float:
+    """Linear-backoff base between attempts, env-overridable (0 disables)."""
+    raw = os.environ.get(_SEAT_RETRY_PAUSE_ENV)
+    if raw is not None:
+        try:
+            return max(float(raw), 0.0)
+        except ValueError:
+            pass
+    return _SEAT_RETRY_PAUSE_SECONDS
+
+
+async def _backoff_pause(
+    base_seconds: float, attempts_used: int, deadline: float
+) -> None:
+    """Sleep the linear backoff, but never past the whole-pass deadline.
+
+    Backing off after the phase ceiling has expired would only stall the
+    honest "reported absent" path; the next loop iteration breaks on
+    ``remaining <= 0`` anyway, so the pause is clamped to what is left.
+    """
+    remaining = deadline - time.monotonic()
+    pause = min(base_seconds * attempts_used, max(0.0, remaining))
+    if pause > 0:
+        await asyncio.sleep(pause)
+
+
 async def _collect(
     context: PhaseContext,
     *,
     deadline_seconds: float = _COLLECT_DEADLINE_SECONDS,
     attempt_timeout_seconds: float | None = None,
     max_attempts: int = MAX_SEAT_ATTEMPTS,
-    retry_pause_seconds: float = _SEAT_RETRY_PAUSE_SECONDS,
+    retry_pause_seconds: float | None = None,
 ) -> tuple[
     dict[Seat, Mapping[str, object]],
     tuple[str, ...],
@@ -565,6 +596,12 @@ async def _collect(
     * a seat whose call outlives the whole ``deadline_seconds`` is cut off by
       the phase ceiling, not given a second chance.
 
+    Any other exception a seat raises is caught as a failed attempt for that
+    seat alone (it used to escape and fail the whole phase, losing every
+    scientist); ``CouncilCancelled`` is the sole exception that propagates.
+    Retries use a short linear backoff so a rate-limited or restarting
+    provider has room to recover between asks.
+
     The fifth element, ``attempts``, records how many times each seat was asked
     (0 for a seat never reached because the deadline had already expired).
     """
@@ -573,6 +610,11 @@ async def _collect(
         attempt_timeout_seconds
         if attempt_timeout_seconds is not None
         else _seat_attempt_timeout_seconds()
+    )
+    retry_pause = (
+        retry_pause_seconds
+        if retry_pause_seconds is not None
+        else _seat_retry_pause_seconds()
     )
     outputs: dict[Seat, Mapping[str, object]] = {}
     unfilled: list[str] = []
@@ -593,6 +635,11 @@ async def _collect(
                     context.deliberator.deliberate(seat, context.phase, context),
                     timeout=timeout,
                 )
+            except CouncilCancelled:
+                # Researcher stop (round-10): a redirection, never a failed
+                # attempt -- propagate so the orchestrator halts at the phase
+                # boundary instead of turning it into seven absences.
+                raise
             except TimeoutError:
                 # Distinguish a single attempt that outlived its 120s window
                 # (retryable) from one cut short by the whole-pass deadline
@@ -605,7 +652,26 @@ async def _collect(
                 )
                 if attempts[seat] >= max_attempts:
                     break
-                await asyncio.sleep(retry_pause_seconds)
+                # Linear backoff: 1.5s after attempt 1, 3s after attempt 2,
+                # clamped so it can never eat the whole-pass deadline.
+                await _backoff_pause(
+                    retry_pause, attempts[seat], deadline
+                )
+                continue
+            except Exception as error:  # noqa: BLE001 - recorded per seat
+                # Gap-reduction: previously any non-timeout provider error
+                # (HTTP 5xx, connection reset, malformed JSON once) escaped
+                # _collect and failed the ENTIRE phase, losing all seven
+                # seats. It is now a failed attempt for THIS seat only: the
+                # other six keep running, and this seat is retried with
+                # backoff before it is honestly reported absent
+                # (AGENTS.md 10: a single scientist never aborts the task).
+                reason = f"{type(error).__name__}: {error}"[:200]
+                if attempts[seat] >= max_attempts:
+                    break
+                await _backoff_pause(
+                    retry_pause, attempts[seat], deadline
+                )
                 continue
             if result is None:
                 err = getattr(context.deliberator, "last_error", None)
@@ -617,7 +683,9 @@ async def _collect(
                     break
                 if attempts[seat] >= max_attempts:
                     break
-                await asyncio.sleep(retry_pause_seconds)
+                await _backoff_pause(
+                    retry_pause, attempts[seat], deadline
+                )
                 continue
             outputs[seat] = result
             break

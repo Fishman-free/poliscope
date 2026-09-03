@@ -17,6 +17,7 @@ from uuid import uuid4
 from packages.council.contracts import Seat
 from packages.council.deliberation import GatewayDeliberator
 from packages.council.rounds.registry import (
+    MAX_SEAT_ATTEMPTS,
     SEAT_UNAVAILABLE,
     PhaseContext,
     _collect,
@@ -98,11 +99,11 @@ async def test_unavailable_event_reports_the_real_reason() -> None:
     events = _unavailable_events(context, absent, reasons, attempts)
     assert events[0].event_type == SEAT_UNAVAILABLE
     assert events[0].payload["reason"] == "connection error: DNS lookup failed"
-    # The seat was asked both times (retry budget exhausted) before giving up.
-    assert attempts[Seat.CAUSAL_SCIENTIST] == 2
+    # The seat was asked MAX_SEAT_ATTEMPTS times (retry budget exhausted).
+    assert attempts[Seat.CAUSAL_SCIENTIST] == MAX_SEAT_ATTEMPTS
     # The attempts count rides along on the event so the researcher can tell a
     # single failure from a retried-and-still-down one.
-    assert events[0].payload["attempts"] == 2
+    assert events[0].payload["attempts"] == MAX_SEAT_ATTEMPTS
 
 
 async def test_unavailable_event_defaults_when_no_reason_was_recorded() -> None:

@@ -35,6 +35,12 @@ PROJECTOR_PASSWORD = "isolated-projector-test-password"
 # every test that registers a fresh account reads the code back from here.
 RECORDED_CODES: dict[str, str] = {}
 
+# Deterministic, fast tests: the production seat-retry backoff (1.5s->3s,
+# POLISCOPE_SEAT_RETRY_PAUSE_SECONDS) exists to let a rate-limited provider
+# recover; under the test suite it would add minutes of pure sleeping. Tests
+# that specifically exercise retry timing pass an explicit pause of 0.
+os.environ.setdefault("POLISCOPE_SEAT_RETRY_PAUSE_SECONDS", "0")
+
 
 async def _record_send(
     self: object, to_email: str, code: str, purpose: str = "register"

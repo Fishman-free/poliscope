@@ -963,7 +963,9 @@ export function App() {
                         onExport={exportBriefMarkdown}
                       />
                     ) : null}
-                    {tab === "map" ? <MapView graph={snapshot.graph} /> : null}
+                    {tab === "map" ? (
+                      <MapView graph={snapshot.graph} taskId={taskId ?? ""} />
+                    ) : null}
                     {tab === "council" ? (
                       <CouncilView
                         seats={snapshot.seats}

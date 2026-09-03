@@ -288,6 +288,13 @@ class CouncilOrchestrator:
         cancel_check: Callable[[], Awaitable[bool]] | None = None,
         phases: tuple[TaskPhase, ...] | None = None,
         dialectical_fold: bool = True,
+        on_phase_checkpoint: (
+            Callable[
+                [CouncilCheckpoint, tuple[SeatRunRecord, ...]],
+                Awaitable[None],
+            ]
+            | None
+        ) = None,
     ) -> None:
         self._ledger = ledger
         self._budget = budget
@@ -306,6 +313,11 @@ class CouncilOrchestrator:
         # behaviour so existing callers are untouched.
         self._phases = phases
         self._dialectical_fold = dialectical_fold
+        # B7: optional per-phase durability hook. The worker wires it to commit
+        # the ledger events, the running checkpoint and the phase audit rows
+        # after every phase, so a killed worker resumes at the next phase
+        # instead of re-running (and re-billing) the whole council.
+        self._on_phase_checkpoint = on_phase_checkpoint
         self._run_started: float | None = None
         # Collective executive memory: a materialised index over the ledger's
         # structured cognitive events, rebuilt from the events this run emits.
@@ -438,6 +450,13 @@ class CouncilOrchestrator:
             for phase in resume_from.run_phases:
                 machine.transition_to(phase)
 
+        # B7: a resume pass that already passed the human gate keeps that
+        # fact; a first pass or a crash-before-gate resume stays False until
+        # the stop_before=JOINT_MODELING halt below.
+        carried_gate_reached = (
+            resume_from.gate_reached if resume_from is not None else False
+        )
+
         if self._memory is not None:
             await self._memory.open(self._seats, question)
 
@@ -496,6 +515,11 @@ class CouncilOrchestrator:
                     failures=tuple(state.failures),
                     events_appended=state.events,
                     phase_snapshots=tuple(snapshots),
+                    # This is THE fixed human gate: the returned checkpoint
+                    # is marked so a B7 crash-resume before JOINT_MODELING
+                    # halts here again instead of bypassing the researcher's
+                    # steer opportunity.
+                    gate_reached=phase is TaskPhase.JOINT_MODELING,
                 )
                 machine.transition_to(TaskStatus.AWAITING_COUNCIL_INPUT)
                 return report
@@ -537,8 +561,21 @@ class CouncilOrchestrator:
                 skipped.append(phase)
                 state.unfilled.append(f"{phase.value}:not_reached")
                 await self._append_skip(task_id, phase, stop)
+                # B7: a budget-skipped phase also advances the durable
+                # checkpoint (its not_reached slot is now part of state), so a
+                # crash after the skip does not lose the recorded gap.
+                await self._emit_phase_checkpoint(
+                    self._running_checkpoint(
+                        run_phases,
+                        state,
+                        snapshots,
+                        gate_reached=carried_gate_reached,
+                    ),
+                    (),
+                )
                 continue
             try:
+                seat_runs_before = len(state.seat_runs)
                 await self._run_phase(
                     task_id,
                     phase,
@@ -602,6 +639,19 @@ class CouncilOrchestrator:
                 )
             )
 
+            # B7: durably commit how far the run has got after every phase
+            # that ran, carrying just this phase's seat audit records so the
+            # worker can persist council_rounds/scientist_runs incrementally.
+            await self._emit_phase_checkpoint(
+                self._running_checkpoint(
+                    run_phases,
+                    state,
+                    snapshots,
+                    gate_reached=carried_gate_reached,
+                ),
+                tuple(state.seat_runs[seat_runs_before:]),
+            )
+
         if state.absent:
             machine.transition_to(TaskStatus.DEGRADED_RUNNING)
 
@@ -624,11 +674,47 @@ class CouncilOrchestrator:
             failures=tuple(state.failures),
             events_appended=state.events,
             phase_snapshots=tuple(snapshots),
+            gate_reached=carried_gate_reached,
         )
         machine.transition_to(report.final_status)
         for slot in report.unfilled_slots:
             self._budget.mark_unfilled_slot(slot)
         return report
+
+    def _running_checkpoint(
+        self,
+        run_phases: list[TaskPhase],
+        state: _Accumulator,
+        snapshots: list[CouncilPhaseSnapshot],
+        *,
+        gate_reached: bool,
+    ) -> CouncilCheckpoint:
+        """Build the durable checkpoint for how far the run has got.
+
+        Same fields a halt/terminal report carries, extracted here so the
+        per-phase B7 hook and the report builders can never drift.
+        """
+        return CouncilCheckpoint(
+            run_phases=tuple(run_phases),
+            carried=dict(state.carried),
+            unfilled=tuple(state.unfilled),
+            absent_seats=tuple(
+                sorted(state.absent, key=lambda seat: seat.value)
+            ),
+            failures=tuple(state.failures),
+            events_appended=state.events,
+            phase_snapshots=tuple(snapshots),
+            gate_reached=gate_reached,
+        )
+
+    async def _emit_phase_checkpoint(
+        self,
+        checkpoint: CouncilCheckpoint,
+        phase_seat_runs: tuple[SeatRunRecord, ...],
+    ) -> None:
+        """Invoke the B7 per-phase durability hook when one was wired."""
+        if self._on_phase_checkpoint is not None:
+            await self._on_phase_checkpoint(checkpoint, phase_seat_runs)
 
     def _check_budget(self) -> StopReason:
         """Ask whether there is enough budget left to run another phase.

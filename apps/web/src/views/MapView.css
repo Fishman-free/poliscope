@@ -21,8 +21,68 @@
   min-height: 0;
 }
 
+.map__canvas-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Floating frosted toolbar (Apple material): the canvas scrolls underneath
+   while the controls stay legible. */
+.map__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--chrome-blur);
+  backdrop-filter: var(--chrome-blur);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-3);
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.map__tool {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-small);
+  font-weight: 500;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  min-height: 32px;
+  /* Apple response rule: feedback starts on press, not on release. */
+  transition:
+    transform var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.map__tool:hover {
+  background: var(--accent-soft);
+}
+
+.map__tool:active {
+  transform: scale(0.96);
+}
+
+.map__tool-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--line-strong);
+}
+
 .map__canvas {
-  background: var(--surface-0);
+  position: relative;
+  flex: 1;
+  background: var(--surface-parchment);
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   overflow: hidden;
@@ -42,6 +102,10 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-3);
   padding: var(--space-4);
+}
+
+.map__inspector {
+  overflow: auto;
 }
 
 .map__legend h3,
@@ -108,86 +172,231 @@
   line-height: 1.4;
 }
 
-.map__inspector-type {
+/* ---- Researcher private note inside the inspector ---- */
+.map__note {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-2);
+}
+
+.map__note-label {
+  font-size: var(--text-small);
   font-weight: 600;
+  color: var(--ink-2);
 }
 
-.map__inspector-id {
-  margin-top: var(--space-1);
-  font-size: var(--text-micro);
-  color: var(--ink-4);
-  word-break: break-all;
-}
-
-.map__payload {
-  margin-top: var(--space-3);
-  padding: var(--space-3);
-  background: var(--surface-2);
-  border-radius: var(--radius-2);
-  font-family: var(--mono);
-  font-size: var(--text-micro);
+.map__note-input {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: var(--text-small);
   line-height: 1.5;
-  overflow: auto;
-  max-height: 320px;
+  color: var(--ink-1);
+  background: var(--surface-pearl);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-2);
+  padding: var(--space-2) var(--space-3);
+  transition: border-color var(--duration-fast) var(--ease-standard);
+  box-sizing: border-box;
 }
 
-/* React Flow node styling. Status is carried by border weight and a left bar
- * as well as by colour, so the map still reads without colour. */
+.map__note-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* ---- Custom evidence node ---- */
 .react-flow__node.map-node {
   width: 220px;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-2);
-  border: 1px solid var(--line-strong);
-  border-left-width: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  /* Node motion is driven by React Flow on the compositor; only opacity and
+     the card's own transform animate (frame-smoothness rule). */
+}
+
+.evidence-node {
+  position: relative;
   background: var(--surface-0);
-  color: var(--ink-1);
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--unknown);
+  border-radius: var(--radius-2);
+  padding: var(--space-2) var(--space-3);
+  box-shadow: var(--shadow-3);
   font-size: var(--text-small);
   line-height: 1.4;
   text-align: left;
-  /* 图上的节点是常驻面板的一部分，用 surface + 边框表达，不加投影。
-     React Flow 默认节点的浮动阴影仅留给其悬浮 inspector 语义。 */
-  transition: opacity var(--duration-standard) var(--ease-standard);
+  transition:
+    box-shadow var(--duration-standard) var(--ease-standard),
+    border-color var(--duration-standard) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
 }
 
-.react-flow__node.map-node--admitted {
+.evidence-node:hover {
+  box-shadow: var(--shadow-1);
+}
+
+.evidence-node--selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft), var(--shadow-1);
+}
+
+.evidence-node--admitted {
   border-left-color: var(--admitted);
 }
 
-.react-flow__node.map-node--provisional {
+.evidence-node--provisional {
   border-left-color: var(--provisional);
   border-style: dashed;
   border-left-style: solid;
 }
 
-.react-flow__node.map-node--refuted {
+.evidence-node--refuted {
   border-left-color: var(--refuted);
 }
 
-.react-flow__node.map-node--unknown {
+.evidence-node--unknown {
   border-left-color: var(--unknown);
 }
 
-/* Dimming, never removal. */
-.map--dim-refuted .react-flow__node.map-node--refuted {
+.evidence-node__chip {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  margin-bottom: 2px;
+}
+
+.evidence-node--admitted .evidence-node__chip {
+  color: var(--admitted);
+}
+.evidence-node--provisional .evidence-node__chip {
+  color: var(--provisional);
+}
+.evidence-node--refuted .evidence-node__chip {
+  color: var(--refuted);
+}
+
+.evidence-node__label {
+  display: block;
+  color: var(--ink-1);
+  word-break: break-word;
+}
+
+.evidence-node__note-dot {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
+  box-shadow: var(--shadow-button);
+}
+
+/* Dimming, never removal. The tone class lives on the inner card, so the
+   whole flow node (card + note dot) dims together. */
+.map--dim-refuted .react-flow__node.map-node:has(.evidence-node--refuted) {
   opacity: 0.42;
 }
 
-.react-flow__node.map-node.selected {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+/* ---- Researcher sticky note (personal overlay, never evidence) ---- */
+.react-flow__node.sticky-node {
+  width: 200px;
 }
 
+.sticky-node {
+  border-radius: var(--radius-2);
+  border: 1px dashed rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+  transition: box-shadow var(--duration-standard) var(--ease-standard);
+}
+
+.sticky-node--selected {
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow-1);
+}
+
+.sticky-node--amber {
+  background: #fff8e1;
+}
+.sticky-node--blue {
+  background: #eef4ff;
+}
+.sticky-node--green {
+  background: #edf7ef;
+}
+
+.sticky-node__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px var(--space-2);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-3);
+  letter-spacing: 0.03em;
+}
+
+.sticky-node__delete {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.sticky-node__delete:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--ink-1);
+}
+
+.sticky-node__text {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  background: transparent;
+  resize: none;
+  font: inherit;
+  font-size: var(--text-small);
+  line-height: 1.5;
+  color: var(--ink-1);
+  padding: 0 var(--space-2) var(--space-2);
+}
+
+.sticky-node__text:focus {
+  outline: none;
+}
+
+/* ---- Edges ---- */
 .react-flow__edge.map-edge .react-flow__edge-path {
   stroke: var(--line-strong);
-  stroke-width: 2;
+  stroke-width: 1.8;
+  transition: stroke var(--duration-fast) var(--ease-standard);
+}
+
+.react-flow__edge.map-edge:hover .react-flow__edge-path,
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--accent);
 }
 
 .react-flow__edge.map-edge--cite .react-flow__edge-path {
   stroke: var(--accent);
-  stroke-width: 1.75;
+  stroke-width: 1.6;
   stroke-dasharray: 2 4;
 }
 
@@ -200,18 +409,69 @@
   fill: var(--ink-3);
 }
 
+.react-flow__edge-textbg {
+  fill: var(--surface-0);
+}
+
+/* ---- React Flow chrome ---- */
+.react-flow__controls {
+  border-radius: var(--radius-2);
+  overflow: hidden;
+  box-shadow: var(--shadow-2);
+  border: 1px solid var(--line);
+}
+
 .react-flow__controls button {
-  /* 触控目标 ≥44px：地图缩放/适应控制（按钮内图标保持小尺寸）。 */
-  width: 44px;
-  height: 44px;
+  /* 触控目标 ≥44px 由全局控件规范保证；这里保持紧凑仪器风格。 */
+  width: 34px;
+  height: 34px;
   background: var(--surface-0);
   border-bottom: 1px solid var(--line);
   color: var(--ink-2);
   fill: currentColor;
+  transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-/* The default React Flow background dots are a light grey tuned for white
- * canvases; on the dark field they need the hairline colour instead. */
-.react-flow__background {
-  fill: var(--line);
+.react-flow__controls button:hover {
+  background: var(--surface-3);
+}
+
+.react-flow__controls button:active {
+  background: var(--accent-soft);
+}
+
+.react-flow__controls button:last-child {
+  border-bottom: 0;
+}
+
+.map__minimap {
+  border-radius: var(--radius-2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+  background: var(--surface-0) !important;
+}
+
+/* Smooth pane fade-in when the graph first mounts; transform/opacity only. */
+.react-flow__pane {
+  animation: map-pane-in var(--duration-slow) var(--ease-smooth);
+}
+
+@keyframes map-pane-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Reduced motion: cross-fades only, no springy/animated viewport fits. */
+@media (prefers-reduced-motion: reduce) {
+  .evidence-node,
+  .sticky-node,
+  .map__tool,
+  .react-flow__pane {
+    transition: none;
+    animation: none;
+  }
 }

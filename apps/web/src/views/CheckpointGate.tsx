@@ -14,7 +14,7 @@
  * an incomplete action.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { submitCouncilGuidance } from "../api/client";
 import type { Seat, SeatSummary } from "../api/types";
@@ -23,6 +23,30 @@ import { Badge, Empty, Panel } from "../components/primitives";
 import { t } from "../i18n";
 
 import "./CheckpointGate.css";
+
+/** Countdown to the worker's automatic resume (default 5-minute grace). The
+ * clock starts when the researcher first sees the gate; the server is the
+ * authority and the SSE refresh swaps this panel away the moment it resumes. */
+function AutoResumeHint() {
+  const [left, setLeft] = useState(300);
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setLeft((value) => Math.max(0, value - 1)),
+      1000,
+    );
+    return () => window.clearInterval(id);
+  }, []);
+  const stamp = `${String(Math.floor(left / 60)).padStart(2, "0")}:${String(
+    left % 60,
+  ).padStart(2, "0")}`;
+  return (
+    <p className="checkpoint__auto">
+      {left > 0
+        ? t("不操作也没关系：{0} 后议会将自动进入联合建模。", stamp)
+        : t("正在自动继续，请稍候…")}
+    </p>
+  );
+}
 
 export function CheckpointGate({
   taskId,
@@ -111,6 +135,7 @@ export function CheckpointGate({
             {error}
           </p>
         ) : null}
+        <AutoResumeHint />
         <button
           type="button"
           className="button"

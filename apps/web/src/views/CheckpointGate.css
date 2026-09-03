@@ -70,6 +70,13 @@
   resize: vertical;
 }
 
+.checkpoint__auto {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
 .checkpoint__error {
   font-size: var(--text-small);
   color: var(--refuted);

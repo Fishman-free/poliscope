@@ -661,6 +661,9 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
     """
     task_id, _ = await _seed_queued_task(app_sessions)  # wall_clock_minutes=60
     fresh_task, _ = await _seed_queued_task(app_sessions)
+    # B7: a degraded run is a live run too; a worker killed while degraded is
+    # reclaimed instead of hanging in DEGRADED_RUNNING forever.
+    degraded_task, _ = await _seed_queued_task(app_sessions)
     await claim_queued_tasks(app_sessions, limit=10)
     assert await _status(app_sessions, fresh_task) == TaskStatus.RUNNING
 
@@ -671,9 +674,20 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
             .where(ResearchTaskModel.task_id == task_id)
             .values(updated_at=func.now() - text("interval '4 hours'"))
         )
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == degraded_task)
+            .values(
+                status=TaskStatus.DEGRADED_RUNNING,
+                updated_at=func.now() - text("interval '4 hours'"),
+            )
+        )
         await session.commit()
 
-    assert await recover_stale_running(app_sessions) == 1
+    assert await recover_stale_running(app_sessions) == 2
+    assert (
+        await _status(app_sessions, degraded_task) == TaskStatus.QUEUED
+    )
     assert await _status(app_sessions, task_id) == TaskStatus.QUEUED
     # A fresh claim must be left alone.
     assert await _status(app_sessions, fresh_task) == TaskStatus.RUNNING
@@ -683,7 +697,7 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
 
 
 def test_council_input_grace_configuration_is_bounded_and_validated() -> None:
-    assert _council_input_grace_seconds({}) == 120.0
+    assert _council_input_grace_seconds({}) == 300.0
     assert _council_input_grace_seconds(
         {"POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS": "45"}
     ) == 45.0

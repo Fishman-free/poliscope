@@ -138,6 +138,13 @@ class CouncilCheckpoint(ContractModel):
     # Evidence Gate stage, Claim adoption path, or DissentCertificate/
     # DebateCapsule construction.
     guidance: str | None = None
+    # B7 crash-safe council: True only for the checkpoint written when a run
+    # halts at the fixed BLINDSPOT_BOUNTY -> JOINT_MODELING human gate. The
+    # per-phase checkpoints the worker commits while running towards the gate
+    # carry False, so a worker killed before the gate (and reclaimed to QUEUED)
+    # halts at the gate again on resume instead of running straight through
+    # JOINT_MODELING without a human ever being offered the steer.
+    gate_reached: bool = False
 
 
 class CouncilPhaseSnapshot(ContractModel):

@@ -499,9 +499,11 @@ async def test_quarantined_output_never_becomes_a_seat_judgment(
     assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
     # The calls still happened and are still audited; only the output was refused.
     # Round-9 seat retry: a quarantined schema sets last_error, so every seat is
-    # asked a second time before being reported absent (2x the seat calls).
+    # asked up to MAX_SEAT_ATTEMPTS times before being reported absent.
     # (+1: the report synthesizer's paper call is refused the same way.)
-    assert len(gateway.calls) == 7 * 7 * 2 + 1
+    from packages.council.rounds.registry import MAX_SEAT_ATTEMPTS
+
+    assert len(gateway.calls) == 7 * 7 * MAX_SEAT_ATTEMPTS + 1
 
 
 async def test_captured_reasoning_becomes_a_process_only_ledger_event(

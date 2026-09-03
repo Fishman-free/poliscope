@@ -75,49 +75,70 @@ _EVOLUTION_EVENT_TYPES = (
 )
 
 
-async def _latest_event_payload(
+async def _latest_payloads(
     session: AsyncSession,
     task_id: UUID,
-    event_type: str,
-) -> FrozenDict[str, object] | None:
-    """The most recent ledger event of one type, as its payload, or None.
+    event_types: tuple[str, ...],
+) -> dict[str, FrozenDict[str, object] | None]:
+    """The most recent ledger event of each requested type, in ONE query.
 
-    Used for the conditioned consensus (CONSENSUS_DRAFTED) and the final
-    paper (FINAL_PAPER_DRAFTED): both are single-document ledger entries the
-    panels want verbatim, not aggregated.
+    History-session latency fix: the conditioned consensus (CONSENSUS_DRAFTED)
+    and the final paper (FINAL_PAPER_DRAFTED) used to cost one round trip each,
+    and the consensus was fetched twice (snapshot + adjudication). One ordered
+    scan keeps the first row per type -- that row is its latest payload.
     """
     result = await session.execute(
         select(ScientificEventModel)
         .where(
             ScientificEventModel.task_id == task_id,
-            ScientificEventModel.event_type == event_type,
+            ScientificEventModel.event_type.in_(event_types),
         )
-        .order_by(ScientificEventModel.sequence.desc())
-        .limit(1)
+        .order_by(
+            ScientificEventModel.event_type,
+            ScientificEventModel.sequence.desc(),
+        )
     )
-    row = result.scalar_one_or_none()
-    if row is None:
-        return None
-    return FrozenDict(dict(row.payload))
+    latest: dict[str, FrozenDict[str, object]] = {}
+    for row in result.scalars():
+        if row.event_type not in latest:
+            latest[row.event_type] = FrozenDict(dict(row.payload))
+    return {event_type: latest.get(event_type) for event_type in event_types}
 
 
-async def _nodes_of_type(
+# The three node families that get their own workspace panel. They are
+# fetched together so opening a history session does not pay three sequential
+# graph-node scans (history-session latency fix).
+_PANEL_NODE_TYPES = (
+    BLINDSPOT_NODE_TYPE,
+    DISCRIMINATING_STUDY_NODE_TYPE,
+    DISSENT_CERTIFICATE_NODE_TYPE,
+)
+
+
+async def _panel_nodes(
     session: AsyncSession,
     task_id: UUID,
-    node_type: str,
-) -> tuple[FrozenDict[str, object], ...]:
+) -> dict[str, tuple[FrozenDict[str, object], ...]]:
     result = await session.execute(
         select(GraphNodeModel)
         .where(
             GraphNodeModel.task_id == task_id,
-            GraphNodeModel.node_type == node_type,
+            GraphNodeModel.node_type.in_(_PANEL_NODE_TYPES),
         )
         .order_by(GraphNodeModel.created_at)
     )
-    return tuple(
-        FrozenDict({"id": str(row.id), "status": row.status, **dict(row.payload)})
-        for row in result.scalars()
-    )
+    grouped: dict[str, list[FrozenDict[str, object]]] = {
+        node_type: [] for node_type in _PANEL_NODE_TYPES
+    }
+    for row in result.scalars():
+        grouped[row.node_type].append(
+            FrozenDict(
+                {"id": str(row.id), "status": row.status, **dict(row.payload)}
+            )
+        )
+    return {
+        node_type: tuple(rows) for node_type, rows in grouped.items()
+    }
 
 
 async def _graph(session: AsyncSession, task_id: UUID) -> FrozenDict[str, object]:
@@ -232,6 +253,8 @@ async def _adjudication_decided_keys(
 async def _adjudication(
     session: AsyncSession,
     task_id: UUID,
+    *,
+    consensus: FrozenDict[str, object] | None = None,
 ) -> FrozenDict[str, object]:
     """B6: pending merge candidates + quarantined nodes, with their reasons.
 
@@ -242,7 +265,12 @@ async def _adjudication(
     already carrying a RESEARCHER_ADJUDICATION is marked resolved.
     """
     decided = await _adjudication_decided_keys(session, task_id)
-    consensus = await _latest_event_payload(session, task_id, CONSENSUS_DRAFTED)
+    if consensus is None:
+        consensus = (
+            await _latest_payloads(
+                session, task_id, (CONSENSUS_DRAFTED,)
+            )
+        )[CONSENSUS_DRAFTED]
     raw_candidates = (
         consensus.get("merge_candidates", ()) if consensus is not None else ()
     )
@@ -262,22 +290,34 @@ async def _adjudication(
         for item in candidate_items
     )
 
-    quarantined_events = await session.scalars(
-        select(ScientificEventModel).where(
-            ScientificEventModel.task_id == task_id,
-            ScientificEventModel.status == STATUS_QUARANTINED,
+    quarantined_event_rows = list(
+        await session.scalars(
+            select(ScientificEventModel).where(
+                ScientificEventModel.task_id == task_id,
+                ScientificEventModel.status == STATUS_QUARANTINED,
+            )
         )
     )
-    quarantined: list[FrozenDict[str, object]] = []
-    for event in quarantined_events:
-        audit = await session.scalar(
+    # N+1 fix: one batched ADMISSION-audit lookup for every quarantined
+    # event instead of one round trip per event (history-session latency).
+    admission_audits: dict[UUID, EventAuditModel] = {}
+    if quarantined_event_rows:
+        audit_rows = await session.scalars(
             select(EventAuditModel)
             .where(
-                EventAuditModel.event_id == event.id,
+                EventAuditModel.event_id.in_(
+                    [event.id for event in quarantined_event_rows]
+                ),
                 EventAuditModel.gate_stage == "ADMISSION",
             )
-            .order_by(EventAuditModel.created_at.desc())
+            .order_by(EventAuditModel.created_at)
         )
+        for audit_row in audit_rows:
+            # ascending order + overwrite keeps the newest audit per event
+            admission_audits[audit_row.event_id] = audit_row
+    quarantined: list[FrozenDict[str, object]] = []
+    for event in quarantined_event_rows:
+        audit = admission_audits.get(event.id)
         raw_reasons = audit.reasons.get("reasons") if audit is not None else None
         reasons = (
             tuple(str(item) for item in raw_reasons)
@@ -319,7 +359,25 @@ async def _seats(
     thought, which is why nothing here reads a model's raw response text
     beyond the same self-reported strings the round itself already emitted.
     """
-    events = await SqlEventLedger(session).list_since(task_id)
+    # History-session latency fix: the council panel reads only four
+    # seat event families; list_since() scanned the WHOLE ledger and hauled
+    # paper drafts / consensus blobs into memory on every workspace open.
+    seat_result = await session.execute(
+        select(ScientificEventModel)
+        .where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.event_type.in_(
+                (
+                    PRECOMMITMENT_SEALED,
+                    CHALLENGE_RAISED,
+                    FINAL_JUDGMENT,
+                    SEAT_UNAVAILABLE,
+                )
+            ),
+        )
+        .order_by(ScientificEventModel.sequence)
+    )
+    events = list(seat_result.scalars())
     precommitments: dict[str, dict[str, object]] = {}
     challenges: dict[str, list[dict[str, object]]] = defaultdict(list)
     final_judgments: dict[str, dict[str, object]] = {}
@@ -478,30 +536,37 @@ async def _assemble_snapshot(
             if share_created_at is not None
             else None
         )
+    # History-session latency fix: the three panel node families load
+    # in one query, and the two single-document payloads load together; the
+    # consensus fetched here is reused by _adjudication instead of re-read.
+    panel_nodes = await _panel_nodes(session, task_id)
+    latest_payloads = await _latest_payloads(
+        session,
+        task_id,
+        (FINAL_PAPER_DRAFTED, CONSENSUS_DRAFTED),
+    )
     snapshot = WorkspaceSnapshot(
         task=FrozenDict(task_payload),
         brief=FrozenDict(brief),
         seats=await _seats(session, task_id),
         graph=await _graph(session, task_id),
-        blindspots=await _nodes_of_type(session, task_id, BLINDSPOT_NODE_TYPE),
-        discriminating_studies=await _nodes_of_type(
-            session, task_id, DISCRIMINATING_STUDY_NODE_TYPE
-        ),
-        dissents=await _nodes_of_type(
-            session, task_id, DISSENT_CERTIFICATE_NODE_TYPE
-        ),
+        blindspots=panel_nodes[BLINDSPOT_NODE_TYPE],
+        discriminating_studies=panel_nodes[DISCRIMINATING_STUDY_NODE_TYPE],
+        dissents=panel_nodes[DISSENT_CERTIFICATE_NODE_TYPE],
         evolution=await _evolution(session, task_id),
         paper_count=paper_count,
         independent_cluster_count=cluster_count,
         lineage=lineage,
-        adjudication=await _adjudication(session, task_id),
+        adjudication=await _adjudication(
+            session,
+            task_id,
+            consensus=latest_payloads[CONSENSUS_DRAFTED],
+        ),
         usage=None if usage is None else FrozenDict(usage),
         workspace_version=version,
         safety_notice=SafetyNotice(),
-        paper=await _latest_event_payload(session, task_id, FINAL_PAPER_DRAFTED),
-        consensus=await _latest_event_payload(
-            session, task_id, CONSENSUS_DRAFTED
-        ),
+        paper=latest_payloads[FINAL_PAPER_DRAFTED],
+        consensus=latest_payloads[CONSENSUS_DRAFTED],
     )
     if not public:
         return snapshot

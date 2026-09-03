@@ -44,7 +44,11 @@ from packages.epistemo.contracts import (
     TaskPhase,
     TaskStatus,
 )
-from packages.epistemo.orchestrator import CouncilOrchestrator, TaskRunReport
+from packages.epistemo.orchestrator import (
+    CouncilOrchestrator,
+    SeatRunRecord,
+    TaskRunReport,
+)
 from packages.evidence.ledger import EventConflict
 from packages.evidence.lifecycle import QuarantinedNode
 from packages.evidence.models import EventAuditModel, ScientificEventModel
@@ -550,8 +554,32 @@ async def _deliberate_impl(
             on_flush=None if process is None else process.flush,
             cancel_check=lambda: repository.check_cancel_request(task_id),
         )
+    async def _persist_running_checkpoint(
+        running: CouncilCheckpoint,
+        phase_seat_runs: tuple[SeatRunRecord, ...],
+    ) -> None:
+        # B7 crash-safe council: commit after every finished phase while the
+        # task stays claimed. The phase's ledger events, its council_rounds/
+        # scientist_runs audit rows and the running checkpoint become durable
+        # together, so a worker killed mid-council resumes at the next phase
+        # instead of re-running (and re-billing) every completed phase. The
+        # Evidence Graph is untouched -- projection still runs once, after the
+        # terminal status commits.
+        if phase_seat_runs:
+            await _persist_one_phase(
+                session,
+                task_id,
+                running.run_phases[-1],
+                phase_seat_runs,
+            )
+        await repository.set_checkpoint(
+            task_id, running.model_dump(mode="json")
+        )
+        await session.commit()
+
     orchestrator = CouncilOrchestrator(
         ledger=SqlEventLedger(session),
+        on_phase_checkpoint=_persist_running_checkpoint,
         budget=budget,
         deliberator=deliberator,
         # Round-10 「停止研究」: the researcher's stop request lives in
@@ -665,39 +693,41 @@ async def _deliberate_impl(
                     "a resumed paper review has no captured paper understanding"
                 )
 
-    if checkpoint is None:
-        report = await orchestrator.run(
-            task_id=task_id,
-            question=task.question,
-            confirmed_claims=await _confirmed_claim_ids(session, task_id),
-            claim_statements=claim_statements,
-            quarantined=await _quarantined_nodes(session, task_id),
-            pdf_object_ids=_pdf_object_ids(task),
-            user_dois=_user_dois(task),
-            knowledge_documents=await _knowledge_documents(session, task),
-            knowledge_search=_knowledge_searcher(session, task),
-            researcher_skills=skills,
-            output_language=output_language,
-            paper_understanding=paper_understanding,
-            stop_before=TaskPhase.JOINT_MODELING,
-        )
-    else:
-        report = await orchestrator.run(
-            task_id=task_id,
-            question=task.question,
-            confirmed_claims=await _confirmed_claim_ids(session, task_id),
-            claim_statements=claim_statements,
-            quarantined=await _quarantined_nodes(session, task_id),
-            pdf_object_ids=_pdf_object_ids(task),
-            user_dois=_user_dois(task),
-            knowledge_documents=await _knowledge_documents(session, task),
-            knowledge_search=_knowledge_searcher(session, task),
-            researcher_skills=skills,
-            output_language=output_language,
-            paper_understanding=paper_understanding,
-            resume_from=checkpoint,
-            council_guidance=checkpoint.guidance,
-        )
+    # B7: decide which pass this is from the checkpoint alone.
+    # * no checkpoint -> first pass, halt at the human gate;
+    # * checkpoint that already reached the gate (guidance submitted or the
+    #   grace-period auto-continue) -> run the remaining phases to terminal;
+    # * checkpoint from a crash BEFORE the gate (gate_reached False and
+    #   JOINT_MODELING never ran) -> resume but halt at the gate again, so a
+    #   killed worker can never bypass the researcher's steer opportunity.
+    past_gate = checkpoint is not None and (
+        checkpoint.gate_reached
+        or TaskPhase.JOINT_MODELING in checkpoint.run_phases
+    )
+    resume_guidance = (
+        checkpoint.guidance if checkpoint is not None and past_gate else None
+    )
+    report = await orchestrator.run(
+        task_id=task_id,
+        question=task.question,
+        confirmed_claims=await _confirmed_claim_ids(session, task_id),
+        claim_statements=claim_statements,
+        quarantined=await _quarantined_nodes(session, task_id),
+        pdf_object_ids=_pdf_object_ids(task),
+        user_dois=_user_dois(task),
+        knowledge_documents=await _knowledge_documents(session, task),
+        knowledge_search=_knowledge_searcher(session, task),
+        researcher_skills=skills,
+        output_language=output_language,
+        paper_understanding=paper_understanding,
+        stop_before=(
+            None if past_gate else TaskPhase.JOINT_MODELING
+        ),
+        resume_from=checkpoint,
+        council_guidance=(
+            resume_guidance
+        ),
+    )
 
     # Per-seat attendance audit (round-9): persist which seats ran in which
     # phases, how many attempts each took, and why the absent ones are absent.
@@ -772,80 +802,90 @@ async def _persist_council_runs(
     retry audit, and the seats' structured actions already live on the ledger
     (JSONB payload, no 64-char truncation).
     """
-    if not report.phases_run:
-        return
-    now = datetime.now(UTC)
     for phase in report.phases_run:
-        round_id = uuid5(
-            NAMESPACE_URL, f"poliscope/council-round/{task_id}/{phase.value}"
-        )
-        phase_records = [
+        phase_records = tuple(
             record for record in report.seat_runs if record.phase is phase
-        ]
-        started_at = (
-            phase_records[0].started_at if phase_records else now
         )
-        completed_at = (
-            phase_records[0].completed_at if phase_records else now
+        await _persist_one_phase(session, task_id, phase, phase_records)
+
+
+async def _persist_one_phase(
+    session: AsyncSession,
+    task_id: UUID,
+    phase: TaskPhase,
+    phase_records: tuple[SeatRunRecord, ...],
+) -> None:
+    """Upsert one phase's council_rounds/scientist_runs audit rows.
+
+    Extracted from :func:`_persist_council_runs` so the B7 per-phase
+    checkpoint hook can persist attendance incrementally: a worker killed
+    after committing a phase leaves that phase's audit trail durable too.
+    Deterministic upsert keys make the end-of-run re-write a harmless no-op.
+    """
+    now = datetime.now(UTC)
+    round_id = uuid5(
+        NAMESPACE_URL, f"poliscope/council-round/{task_id}/{phase.value}"
+    )
+    started_at = phase_records[0].started_at if phase_records else now
+    completed_at = phase_records[0].completed_at if phase_records else now
+    phase_index = PHASE_SEQUENCE.index(phase)
+    next_phase = (
+        PHASE_SEQUENCE[phase_index + 1].value
+        if phase_index + 1 < len(PHASE_SEQUENCE)
+        else None
+    )
+    await session.execute(
+        pg_insert(CouncilRoundModel)
+        .values(
+            id=round_id,
+            task_id=task_id,
+            phase=phase.value,
+            status="completed",
+            started_at=started_at,
+            completed_at=completed_at,
+            next_phase=next_phase,
         )
-        phase_index = PHASE_SEQUENCE.index(phase)
-        next_phase = (
-            PHASE_SEQUENCE[phase_index + 1].value
-            if phase_index + 1 < len(PHASE_SEQUENCE)
-            else None
+        .on_conflict_do_update(
+            index_elements=[CouncilRoundModel.id],
+            set_={
+                "status": "completed",
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "next_phase": next_phase,
+            },
+        )
+    )
+    for record in phase_records:
+        error_code = (
+            str(record.error_code)[:64] if record.error_code else None
         )
         await session.execute(
-            pg_insert(CouncilRoundModel)
+            pg_insert(ScientistRunModel)
             .values(
-                id=round_id,
-                task_id=task_id,
-                phase=phase.value,
-                status="completed",
-                started_at=started_at,
-                completed_at=completed_at,
-                next_phase=next_phase,
+                id=uuid5(
+                    NAMESPACE_URL,
+                    f"poliscope/scientist-run/{task_id}/{phase.value}/"
+                    f"{record.seat.value}",
+                ),
+                round_id=round_id,
+                seat=record.seat.value,
+                status=record.status,
+                started_at=record.started_at or now,
+                completed_at=record.completed_at or now,
+                error_code=error_code,
+                attempts=record.attempts,
             )
             .on_conflict_do_update(
-                index_elements=[CouncilRoundModel.id],
+                constraint="uq_scientist_run_seat",
                 set_={
-                    "status": "completed",
-                    "started_at": started_at,
-                    "completed_at": completed_at,
-                    "next_phase": next_phase,
+                    "status": record.status,
+                    "started_at": record.started_at or now,
+                    "completed_at": record.completed_at or now,
+                    "error_code": error_code,
+                    "attempts": record.attempts,
                 },
             )
         )
-        for record in phase_records:
-            error_code = (
-                str(record.error_code)[:64] if record.error_code else None
-            )
-            await session.execute(
-                pg_insert(ScientistRunModel)
-                .values(
-                    id=uuid5(
-                        NAMESPACE_URL,
-                        f"poliscope/scientist-run/{task_id}/{phase.value}/"
-                        f"{record.seat.value}",
-                    ),
-                    round_id=round_id,
-                    seat=record.seat.value,
-                    status=record.status,
-                    started_at=record.started_at or now,
-                    completed_at=record.completed_at or now,
-                    error_code=error_code,
-                    attempts=record.attempts,
-                )
-                .on_conflict_do_update(
-                    constraint="uq_scientist_run_seat",
-                    set_={
-                        "status": record.status,
-                        "started_at": record.started_at or now,
-                        "completed_at": record.completed_at or now,
-                        "error_code": error_code,
-                        "attempts": record.attempts,
-                    },
-                )
-            )
 
 
 async def _mark_failed(
