@@ -475,3 +475,31 @@
   font-size: var(--text-small);
   color: var(--app-ink-3, var(--ink-3));
 }
+
+/* Durable fallback seat cards (checkpoint resume / replay tail gap): the
+   seven scientists must never visually vanish when the process stream has
+   no live slice yet. Slightly muted to read as standing state, not live
+   deliberation. */
+.live__seat--durable {
+  background: var(--surface-0);
+}
+
+.live__seat--durable .live__seat-head {
+  background: var(--surface-0);
+}
+
+.live__seat-durable {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  list-style: none;
+}
+
+.live__seat-durable li {
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.live__seat-durable li + li {
+  margin-top: 2px;
+}

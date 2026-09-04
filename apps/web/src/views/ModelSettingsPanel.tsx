@@ -369,6 +369,13 @@ export function ModelSettingsPanel() {
               )}
             </p>
           ) : null}
+          {/* 免费体验兜底通道：部署方额度耗尽或端点失效时，研究者能直接
+              邮件提醒开发者补充额度，而不是只面对一个不可用的按钮。 */}
+          <p className="settings__trial-contact">
+            {t("如果免费体验功能无法使用，请邮件联系开发者邮箱")}
+            <a href="mailto:2025201699@ruc.edu.cn">2025201699@ruc.edu.cn</a>
+            {t("提醒开发者补充额度")}
+          </p>
         </div>
       ) : null}
     </Panel>

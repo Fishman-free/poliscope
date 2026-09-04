@@ -21,7 +21,7 @@ import type {
   Seat,
   SeatSummary,
 } from "../api/types";
-import { SEAT_LABELS } from "../api/types";
+import { SEATS, SEAT_LABELS } from "../api/types";
 import { Empty } from "../components/primitives";
 import { t } from "../i18n";
 import {
@@ -287,6 +287,37 @@ function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
 /** 一个席位连续无进展多久后提示「可能卡住」（秒）。阈值与后端模型调用
  * 总 deadline（240s）+ 重试余量对齐：超过 300s 而仍在 running，说明
  * 调用链已越过所有正常超时，即将被 watchdog 中断。 */
+/** 过程流里没有该席位的实时片段时，用 snapshot 里的持久席位摘要兜底，
+ *  让「断点续研后七位科学家整体消失」不再发生：实时输出缺席 ≠ 席位不存在。
+ *  返回状态徽标文案与样式基调（复用 live__seat-idle/live__seat-absent）。 */
+function durablePill(
+  summary: SeatSummary | null,
+  status: string | undefined,
+  currentPhase: string | null,
+): { label: string; tone: "idle" | "done" | "absent" } {
+  const terminal =
+    status === "COMPLETED" ||
+    status === "COMPLETED_WITH_GAPS" ||
+    status === "FAILED" ||
+    status === "CANCELLED";
+  if (status === "QUEUED") return { label: t("排队中"), tone: "idle" };
+  if (status === "AWAITING_COUNCIL_INPUT")
+    return { label: t("等待方向性引导"), tone: "idle" };
+  if (
+    currentPhase &&
+    summary?.unavailable_phases.some((phase) => phase === currentPhase)
+  )
+    return { label: t("本阶段缺席"), tone: "absent" };
+  if (terminal) {
+    if (summary?.final_judgment) return { label: t("已完成复判"), tone: "done" };
+    if (summary?.precommitment) return { label: t("已提交预承诺"), tone: "done" };
+    if (summary && summary.unavailable_phases.length > 0)
+      return { label: t("全程缺席"), tone: "absent" };
+    return { label: t("无席位输出"), tone: "absent" };
+  }
+  return { label: t("等待本阶段输出…"), tone: "idle" };
+}
+
 const SEAT_STUCK_WARN_SECONDS = 60;
 const SEAT_STUCK_CRITICAL_SECONDS = 300;
 
@@ -444,6 +475,31 @@ export function LiveView({
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
   const streams = useMemo(() => seatStreams(processEvents), [processEvents]);
+  // 断点续研/重连后过程流可能暂时没有 seat_deliberation：用 snapshot 的持久
+  // 席位摘要兜底渲染七张卡片，实时片段一到就自动升级为流式卡片。
+  const phaseStarted = current !== null || done.size > 0;
+  const durableById = useMemo(() => {
+    const map = new Map<string, SeatSummary>();
+    for (const summary of seats ?? []) map.set(summary.seat, summary);
+    return map;
+  }, [seats]);
+  const liveSeatIds = useMemo(
+    () => SEATS.filter((seat) => streams[seat] !== undefined),
+    [streams],
+  );
+  const fallbackSeatIds = useMemo(
+    () =>
+      SEATS.filter(
+        (seat) =>
+          streams[seat] === undefined &&
+          status !== "QUEUED" &&
+          (phaseStarted || durableById.has(seat)),
+      ),
+    // phaseStarted/status/durableById are derived per render; streams is the
+    // reactive driver. eslint disabled below to keep this memo self-contained.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [streams, seats, status, current, done.size],
+  );
   // 每秒重渲染一次，让「思考中… 已等待 Ns」与检索卡片的秒数走动。只在
   // 还有席位 running 或有检索 pending 时启动定时器，空闲时不空转。
   const [, setTick] = useState(0);
@@ -640,10 +696,10 @@ export function LiveView({
                 下方，一行多列铺开，而不是挤在右侧小栏里）。 */}
             <div className="live__main">
               <section className="live__seats" aria-label={t("席位运行状态")}>
-                {Object.entries(streams).length === 0 ? (
-                  <Empty>{t("还没有席位开始运行。")}</Empty>
-                ) : (
-                  Object.entries(streams).map(([seat, entry]) => (
+                {liveSeatIds.map((seat) => {
+                  const entry = streams[seat];
+                  if (!entry) return null;
+                  return (
                     <div key={seat} className="live__seat">
                       <div className="live__seat-head">
                         <span className="live__seat-name">
@@ -697,8 +753,70 @@ export function LiveView({
                         </p>
                       ) : null}
                     </div>
-                  ))
-                )}
+                  );
+                })}
+                {/* 持久兜底卡片：过程流暂时没有该席位片段（断点续跑重连、
+                    重放尾部不含 seat_deliberation）时，席位也不会从议会消失。 */}
+                {fallbackSeatIds.map((seat) => {
+                  const summary = durableById.get(seat) ?? null;
+                  const pill = durablePill(summary, status, current);
+                  const notes: string[] = [];
+                  if (summary?.precommitment?.confidence != null)
+                    notes.push(
+                      t("预承诺置信度 {0}", summary.precommitment.confidence),
+                    );
+                  if (summary && summary.challenges_raised.length > 0)
+                    notes.push(t("已提出 {0} 项质询", summary.challenges_raised.length));
+                  if (summary?.final_judgment) notes.push(t("已提交最终复判"));
+                  if (summary && summary.unavailable_phases.length > 0) {
+                    const phaseLabels = PHASES.filter((phase) =>
+                      summary.unavailable_phases.includes(phase.id),
+                    ).map((phase) => t(phase.label));
+                    notes.push(t("缺席阶段：{0}", phaseLabels.join("、")));
+                  }
+                  return (
+                    <div
+                      key={`durable-${seat}`}
+                      className="live__seat live__seat--durable"
+                    >
+                      <div className="live__seat-head">
+                        <span className="live__seat-name">
+                          {SEAT_LABELS[seat as Seat] ?? seat}
+                        </span>
+                        {current ? (
+                          <span className="live__seat-phase mono">{current}</span>
+                        ) : null}
+                        <span
+                          className={
+                            pill.tone === "absent"
+                              ? "live__seat-running live__seat-absent"
+                              : "live__seat-idle"
+                          }
+                        >
+                          {pill.label}
+                        </span>
+                      </div>
+                      {notes.length > 0 ? (
+                        <ul className="live__seat-durable">
+                          {notes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {liveSeatIds.length === 0 && fallbackSeatIds.length === 0 ? (
+                  phaseStarted ? (
+                    <Empty>
+                      {t(
+                        "议会正在运行，席位实时输出即将出现；已完成阶段的结论可在「研究简报」查看。",
+                      )}
+                    </Empty>
+                  ) : (
+                    <Empty>{t("还没有席位开始运行。")}</Empty>
+                  )
+                ) : null}
               </section>
 
               <section className="live__tools" aria-label={t("检索与文献")}>

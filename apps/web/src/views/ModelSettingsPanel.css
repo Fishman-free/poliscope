@@ -166,3 +166,21 @@
   font-size: var(--text-micro);
   color: var(--ink-3);
 }
+
+/* 免费体验兜底联系行：比说明文字再小半级、低视觉权重，但邮箱可点。 */
+.settings__trial-contact {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-micro);
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.settings__trial-contact a {
+  color: var(--accent, #2f6fed);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.settings__trial-contact a:hover {
+  text-decoration: underline;
+}

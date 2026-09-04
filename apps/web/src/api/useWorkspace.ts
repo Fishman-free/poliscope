@@ -185,14 +185,22 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
     // Terminal: keep the collected events on screen (audit trail), but do not
     // subscribe -- the cleanup below already closed the stream when the
     // status flipped. A re-research flips the status back out of the set and
-    // this effect re-subscribes: a fresh EventSource replays the ledger from
-    // sequence 0, which refills the just-cleared list.
+    // this effect re-subscribes. Same-task resubscription (self-heal rebuild,
+    // checkpoint re-research) KEEPS the events it already has: a fresh
+    // EventSource replays the ledger from sequence 0, and overlap is merged
+    // by workspace_version instead of first blanking the phase timeline and
+    // audit trail (only a real task switch clears, in the effect above).
     if (terminal) return;
-    setEvents([]);
     const close = subscribe(
       taskId,
       (event) => {
-        setEvents((current) => [...current, event]);
+        setEvents((current) =>
+          current.some((entry) => entry.workspace_version === event.workspace_version)
+            ? current
+            : [...current, event].sort(
+                (a, b) => a.workspace_version - b.workspace_version,
+              ),
+        );
         window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => void refresh(), REFRESH_DEBOUNCE_MS);
       },
@@ -217,12 +225,16 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   // PROCESS_EVENT_CAP -- the combination is what keeps the tab responsive
   // after a long background period (the old per-frame O(N) path froze it).
   useEffect(() => {
-    if (!taskId) {
-      setProcessEvents([]);
-      return;
-    }
+    if (!taskId) return;
     if (terminal) return;
-    setProcessEvents([]);
+    // Same-task resubscription (a self-heal streamNonce rebuild, or a
+    // checkpoint re-research flipping terminal back to QUEUED) must NOT wipe
+    // the trace it already holds: the replay tail is bounded and can briefly
+    // contain no seat_deliberation, and a wiped trace collapsed the whole
+    // seven-seat live view to "no seats running" until the next model call
+    // -- the production "断点续研后科学家输出全部消失" freeze. Clearing on a
+    // real task switch belongs to the taskId effect above; here replayed
+    // frames are merged by server seq and kept sorted.
     const seen = new Set<number>();
     const buffer: ProcessEvent[] = [];
     let flushTimer = 0;
@@ -231,7 +243,10 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
       if (buffer.length === 0) return;
       const batch = buffer.splice(0, buffer.length);
       setProcessEvents((current) => {
-        const next = [...current, ...batch];
+        const known = new Set(current.map((entry) => entry.seq));
+        const fresh = batch.filter((entry) => !known.has(entry.seq));
+        if (fresh.length === 0) return current;
+        const next = [...current, ...fresh].sort((a, b) => a.seq - b.seq);
         return next.length > PROCESS_EVENT_CAP
           ? next.slice(next.length - PROCESS_EVENT_CAP)
           : next;

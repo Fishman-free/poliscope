@@ -267,7 +267,9 @@
   align-items: baseline;
   gap: 8px;
   min-width: 0;
-  max-width: 62ch;
+  /* 问题文本自适应填满操作按钮（停止/重新研究）左侧的全部宽度，
+     不再以固定 62ch 把长问题挤成左侧窄栏、右侧大片留白。 */
+  flex: 1 1 auto;
 }
 
 .app__title-copy h1 {
@@ -278,6 +280,12 @@
   line-height: 1.18;
   letter-spacing: -0.022em;
   color: var(--app-ink);
+  /* h1 独占一整行并吃满 title-copy 宽度（右边界恰在操作按钮左侧），
+     状态徽标自然换行到下一行。 */
+  flex: 0 0 100%;
+  width: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* 次级 gap 徽标：仍属 title copy，视觉权重低于主状态徽标。用 operational
