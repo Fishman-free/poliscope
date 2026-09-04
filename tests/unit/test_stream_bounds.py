@@ -250,6 +250,11 @@ async def test_process_stream_caps_reconnect_replay_to_recent_rows(
         async def latest_seq(self, task_id: object) -> int:
             return 12_000
 
+        async def list_structural_before(
+            self, task_id: object, before_seq: int, limit: int = 3000
+        ) -> list[object]:
+            return []
+
         async def list_since(
             self, task_id: object, after_seq: int, limit: int = 500
         ) -> list[object]:
@@ -380,3 +385,108 @@ async def test_latest_seq_returns_newest_row() -> None:
     repo = ProcessStreamRepository(_ScalarSession(41))  # type: ignore[arg-type]
     assert await repo.latest_seq(uuid4()) == 41
     assert await repo.next_seq(uuid4()) == 42
+
+
+async def test_process_stream_replays_structural_anchors_outside_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anchors older than the heavy tail window are replayed first.
+
+    Reproduces the production bug: two seats keep streaming token deltas past
+    5000 rows, the early-finishing seats' seat_deliberation/model_done anchors
+    scroll out of the tail, and after reconnect their cards never open.
+    """
+    calls: list[tuple[str, int]] = []
+
+    class ProcRepo:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def latest_seq(self, task_id: object) -> int:
+            return 12_000
+
+        async def list_structural_before(
+            self, task_id: object, before_seq: int, limit: int = 3000
+        ) -> list[object]:
+            calls.append(("anchors", before_seq))
+            return [
+                _row(50, "seat_deliberation"),
+                _row(60, "model_done"),
+            ]
+
+        async def list_since(
+            self, task_id: object, after_seq: int, limit: int = 500
+        ) -> list[object]:
+            calls.append(("tail", after_seq))
+            if after_seq >= 12_000:
+                return []
+            return [_row(11_999, "model_token"), _row(12_000, "model_token")]
+
+    class Repo:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def get_task(self, task_id: object) -> SimpleNamespace:
+            return SimpleNamespace(status="RUNNING")
+
+    monkeypatch.setattr(stream_module, "ProcessStreamRepository", ProcRepo)
+    monkeypatch.setattr(stream_module, "ResearchRepository", Repo)
+    monkeypatch.setattr(stream_module, "POLL_INTERVAL_SECONDS", 0)
+
+    frames = await _drain(
+        _process_events(
+            _state(),  # type: ignore[arg-type]
+            uuid4(),
+            _FakeRequest(disconnect_after=1),  # type: ignore[arg-type]
+        )
+    )
+    # Anchor query uses the same tail cursor, then the tail streams after it.
+    assert calls[0] == ("anchors", 12_000 - MAX_PROCESS_REPLAY_ROWS)
+    assert ("tail", 12_000 - MAX_PROCESS_REPLAY_ROWS) in calls
+    process_frames = [frame for frame in frames if "event: process" in frame]
+    # Anchors come first, in ascending seq, then the heavy tail.
+    assert "id: p50" in process_frames[0]
+    assert "id: p60" in process_frames[1]
+    assert "id: p11999" in process_frames[2]
+    assert "id: p12000" in process_frames[3]
+
+
+async def test_process_stream_small_trace_skips_anchor_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the whole trace fits the tail window there is nothing to anchor."""
+
+    class ProcRepo:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def latest_seq(self, task_id: object) -> int:
+            return 42
+
+        async def list_structural_before(self, *args: object) -> list[object]:
+            raise AssertionError("must not query anchors when tail covers all")
+
+        async def list_since(
+            self, task_id: object, after_seq: int, limit: int = 500
+        ) -> list[object]:
+            return []
+
+    class Repo:
+        def __init__(self, session: object) -> None:
+            pass
+
+        async def get_task(self, task_id: object) -> SimpleNamespace:
+            return SimpleNamespace(status="RUNNING")
+
+    monkeypatch.setattr(stream_module, "ProcessStreamRepository", ProcRepo)
+    monkeypatch.setattr(stream_module, "ResearchRepository", Repo)
+    monkeypatch.setattr(stream_module, "POLL_INTERVAL_SECONDS", 0)
+
+    frames = await _drain(
+        _process_events(
+            _state(),  # type: ignore[arg-type]
+            uuid4(),
+            _FakeRequest(disconnect_after=1),  # type: ignore[arg-type]
+        )
+    )
+    assert frames == [KEEPALIVE_FRAME]

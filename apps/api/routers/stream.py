@@ -71,6 +71,14 @@ TERMINAL_TASK_STATUSES = frozenset(
 # accepted cosmetic trade for bounded replay work.
 MAX_PROCESS_REPLAY_ROWS = 5000
 
+# Structural anchors (seat_deliberation/model_done/seat_absent/tool_call/
+# tool_result) replayed IN ADDITION to the heavy tail above. They are sparse
+# and small, but without them a reconnect after a long phase loses the early
+# seats' deliberation anchors -- their cards never open on the live view and
+# the council looks half-empty (production bug, 2026-09-04). Bounded so a
+# pathological tool-heavy run still cannot replay without limit.
+MAX_STRUCTURAL_REPLAY_ROWS = 3000
+
 
 def parse_last_event_id(raw: str | None) -> int:
     """Interpret the resume header, tolerating a client that sends nonsense.
@@ -210,11 +218,28 @@ async def _process_events(
     # first event of every task. The (re)connect replay is then bounded to
     # the newest MAX_PROCESS_REPLAY_ROWS rows: replaying the whole trace of a
     # long task on every reconnect stalled the API for every user.
+    #
+    # That heavy tail can scroll past the sparse structural anchors (a seat
+    # that finished early while two others kept streaming thousands of token
+    # rows): replay those anchors separately first, so every seat card opens
+    # after reconnect even when its token text is outside the tail.
     cursor = -1
     async with state.session_factory() as session:
-        latest = await ProcessStreamRepository(session).latest_seq(task_id)
-    if latest > MAX_PROCESS_REPLAY_ROWS:
-        cursor = latest - MAX_PROCESS_REPLAY_ROWS
+        repo = ProcessStreamRepository(session)
+        latest = await repo.latest_seq(task_id)
+        if latest > MAX_PROCESS_REPLAY_ROWS:
+            cursor = latest - MAX_PROCESS_REPLAY_ROWS
+            anchor_rows = await repo.list_structural_before(
+                task_id, cursor, MAX_STRUCTURAL_REPLAY_ROWS
+            )
+        else:
+            anchor_rows = []
+    for row in anchor_rows:
+        body = json.dumps(
+            {"seq": row.seq, "kind": row.kind, "payload": row.payload},
+            ensure_ascii=False,
+        )
+        yield f"event: process\nid: p{row.seq}\ndata: {body}\n\n"
     while True:
         if await request.is_disconnected():
             return

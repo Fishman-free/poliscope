@@ -39,6 +39,32 @@ const TERMINAL_STATUSES = new Set([
  * unresponsive fix). */
 const PROCESS_EVENT_CAP = 5000;
 
+/** High-volume, droppable process kinds (token deltas and heartbeats). The
+ * sparse structural kinds (seat_deliberation/model_done/seat_absent/
+ * tool_call/tool_result) are what open/close seat and tool cards: when the
+ * in-memory window trims to the newest PROCESS_EVENT_CAP rows, those anchors
+ * must be retained regardless of age, otherwise still-running seats' token
+ * deltas evict already-finished seats' deliberation anchors and their cards
+ * collapse to (or stay on) the empty fallback -- the production bug where
+ * only one scientist remained after a background-tab thaw. */
+const HEAVY_PROCESS_KINDS = new Set([
+  "model_reasoning",
+  "model_token",
+  "seat_working",
+]);
+
+/** Keep the newest ``PROCESS_EVENT_CAP`` rows wholesale, plus every structural
+ * anchor older than that window. Input must be seq-sorted; output stays
+ * sorted. Structural volume is bounded (a handful per seat per phase). */
+function capProcessEvents(events: ProcessEvent[]): ProcessEvent[] {
+  if (events.length <= PROCESS_EVENT_CAP) return events;
+  const tail = events.slice(events.length - PROCESS_EVENT_CAP);
+  const older = events
+    .slice(0, events.length - PROCESS_EVENT_CAP)
+    .filter((event) => !HEAVY_PROCESS_KINDS.has(event.kind));
+  return [...older, ...tail];
+}
+
 /** Flush cadence for process events: incoming frames collect in a buffer and
  * land in state at most every 250 ms, so a thawing tab's burst of thousands
  * of replayed frames produces a handful of renders instead of one render per
@@ -247,9 +273,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
         const fresh = batch.filter((entry) => !known.has(entry.seq));
         if (fresh.length === 0) return current;
         const next = [...current, ...fresh].sort((a, b) => a.seq - b.seq);
-        return next.length > PROCESS_EVENT_CAP
-          ? next.slice(next.length - PROCESS_EVENT_CAP)
-          : next;
+        return capProcessEvents(next);
       });
     };
     const close = subscribeProcess(

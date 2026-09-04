@@ -51,6 +51,19 @@ FLUSH_AT = 40
 CLOSING_KINDS = frozenset({"model_done", "seat_absent"})
 MAX_CLOSING_RETRIES = 2
 
+# Sparse, load-bearing structural rows, as opposed to the high-volume token
+# deltas/heartbeats. The live view opens a seat's card only after seeing
+# ``seat_deliberation`` and closes it on ``model_done``/``seat_absent``; the
+# tool cards pair ``tool_call`` with ``tool_result``. When the replay window
+# is the newest N rows, the heavy token tail can push these anchors out -- the
+# reconnecting client then never opens the early-finishing seats' cards
+# (production bug: after a background-tab thaw only the still-streaming seats
+# render). Structural rows are tiny (a handful per seat per phase plus tool
+# calls), so replay keeps them even when they sit before the heavy tail.
+STRUCTURAL_KINDS = frozenset(
+    {"seat_deliberation", "model_done", "seat_absent", "tool_call", "tool_result"}
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ProcessEventRow:
@@ -97,6 +110,39 @@ class ProcessStreamRepository:
                 payload=payload,
             )
         )
+
+    async def list_structural_before(
+        self,
+        task_id: UUID,
+        before_seq: int,
+        limit: int = 3000,
+    ) -> list[ProcessEventRow]:
+        """Structural rows at or before ``before_seq`` (ascending seq).
+
+        The process replay tail bounds heavy token rows; this method returns
+        the sparse anchors (deliberation start/done/absent, tool call/result)
+        that the tail window may have scrolled past, so a reconnecting client
+        can still open every seat card and tool card. Returns the newest
+        ``limit`` such rows, ordered ascending to match ``list_since``.
+        """
+        if before_seq < 0 or limit <= 0:
+            return []
+        rows = (
+            await self._session.scalars(
+                select(ProcessStreamModel)
+                .where(
+                    ProcessStreamModel.task_id == task_id,
+                    ProcessStreamModel.seq <= before_seq,
+                    ProcessStreamModel.kind.in_(STRUCTURAL_KINDS),
+                )
+                .order_by(ProcessStreamModel.seq.desc())
+                .limit(limit)
+            )
+        ).all()
+        return [
+            ProcessEventRow(seq=row.seq, kind=row.kind, payload=dict(row.payload))
+            for row in reversed(rows)
+        ]
 
     async def list_since(
         self, task_id: UUID, after_seq: int, limit: int = 500

@@ -150,3 +150,32 @@ async def test_token_batch_is_dropped_without_retry(
     repo = ProcessStreamRepository(app_session)
     assert await repo.list_since(seeded_task, -1) == []
     await app_session.rollback()
+
+async def test_list_structural_before_keeps_only_anchors_ascending(
+    app_session: AsyncSession,
+    app_sessions: async_sessionmaker[AsyncSession],
+    seeded_task: UUID,
+) -> None:
+    """Replay anchors: structural rows at/before the tail cursor survive even
+    though heavy token rows at the same positions do not (production bug:
+    early-finishing seats' cards vanished after a background-tab thaw)."""
+    await _commit_seeded_task(app_session)
+    writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=100)
+    # seq 0: anchor; seq 1-3: heavy tokens; seq 4: closing anchor.
+    writer.emit("seat_deliberation", {"seat": "theory_builder", "phase": "P"})
+    writer.emit("model_token", {"text": "a"})
+    writer.emit("model_reasoning", {"text": "b"})
+    writer.emit("seat_working", {"seat": "theory_builder", "elapsed": 1})
+    writer.emit("model_done", {"seat": "theory_builder", "phase": "P"})
+    await writer.close()
+
+    repo = ProcessStreamRepository(app_session)
+    rows = await repo.list_structural_before(seeded_task, 4)
+    assert [(row.seq, row.kind) for row in rows] == [
+        (0, "seat_deliberation"),
+        (4, "model_done"),
+    ]
+    # Strict bound: rows AFTER the cursor are excluded; negative cursor -> none.
+    assert [row.seq for row in await repo.list_structural_before(seeded_task, 3)] == [0]
+    assert await repo.list_structural_before(seeded_task, -1) == []
+    await app_session.rollback()

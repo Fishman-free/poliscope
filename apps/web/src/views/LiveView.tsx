@@ -238,6 +238,16 @@ function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
       absentReason: string;
     }
   > = {};
+  // 仅凭席位事件即可懒开 slice 的种类：当 seat_deliberation 锚点被重放
+  // 窗口挤出（旧构建/超长 token 流）时，第一个到达的席位事件也能把卡片
+  // 救回来，席位不会因为锚点丢失而永久消失。
+  const recoverable = new Set([
+    "model_reasoning",
+    "model_token",
+    "model_done",
+    "seat_absent",
+    "seat_working",
+  ]);
   for (const event of processEvents) {
     const payload = event.payload as Record<string, unknown>;
     const seat = typeof payload.seat === "string" ? payload.seat : null;
@@ -252,23 +262,37 @@ function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
         absent: false,
         absentReason: "",
       };
-    } else if (seat && current[seat]) {
-      const text = typeof payload.text === "string" ? payload.text : "";
-      if (event.kind === "model_reasoning" || event.kind === "model_token") {
-        if (text) current[seat].parts.push(text);
-      } else if (event.kind === "model_done") {
-        current[seat].running = false;
-      } else if (event.kind === "seat_working") {
-        const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
-        current[seat].elapsed = elapsed;
-      } else if (event.kind === "seat_absent") {
-        // 思考结束但没有产出：模型调用失败（缺席）或被研究者停止。关闭
-        // 本段思考 —— 没有这个事件，前端会永远显示「思考中… 已等待
-        // Ns」（round-15 生产故障）。
-        current[seat].running = false;
-        current[seat].absent = true;
-        current[seat].absentReason = String(payload.reason ?? "");
-      }
+      continue;
+    }
+    if (!seat) continue;
+    if (!current[seat]) {
+      if (!recoverable.has(event.kind)) continue;
+      current[seat] = {
+        phase: typeof payload.phase === "string" ? payload.phase : "",
+        parts: [],
+        running: event.kind !== "model_done" && event.kind !== "seat_absent",
+        elapsed: 0,
+        absent: event.kind === "seat_absent",
+        absentReason:
+          event.kind === "seat_absent" ? String(payload.reason ?? "") : "",
+      };
+    }
+    const slice = current[seat];
+    const text = typeof payload.text === "string" ? payload.text : "";
+    if (event.kind === "model_reasoning" || event.kind === "model_token") {
+      if (text) slice.parts.push(text);
+    } else if (event.kind === "model_done") {
+      slice.running = false;
+    } else if (event.kind === "seat_working") {
+      const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
+      slice.elapsed = elapsed;
+    } else if (event.kind === "seat_absent") {
+      // 思考结束但没有产出：模型调用失败（缺席）或被研究者停止。关闭
+      // 本段思考 —— 没有这个事件，前端会永远显示「思考中… 已等待
+      // Ns」（round-15 生产故障）。
+      slice.running = false;
+      slice.absent = true;
+      slice.absentReason = String(payload.reason ?? "");
     }
   }
   for (const [seat, entry] of Object.entries(current)) {
@@ -483,20 +507,16 @@ export function LiveView({
     for (const summary of seats ?? []) map.set(summary.seat, summary);
     return map;
   }, [seats]);
-  const liveSeatIds = useMemo(
-    () => SEATS.filter((seat) => streams[seat] !== undefined),
-    [streams],
-  );
-  const fallbackSeatIds = useMemo(
+  // 七张席位卡按固定顺序排列：有实时片段就渲染流式卡，否则渲染持久兜底
+  // 卡，实时片段一到自动原位升级 —— 卡片不再重排、不再整列消失。
+  const visibleSeatIds = useMemo(
     () =>
       SEATS.filter(
         (seat) =>
-          streams[seat] === undefined &&
-          status !== "QUEUED" &&
-          (phaseStarted || durableById.has(seat)),
+          streams[seat] !== undefined ||
+          (status !== "QUEUED" &&
+            (phaseStarted || durableById.has(seat))),
       ),
-    // phaseStarted/status/durableById are derived per render; streams is the
-    // reactive driver. eslint disabled below to keep this memo self-contained.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [streams, seats, status, current, done.size],
   );
@@ -696,68 +716,67 @@ export function LiveView({
                 下方，一行多列铺开，而不是挤在右侧小栏里）。 */}
             <div className="live__main">
               <section className="live__seats" aria-label={t("席位运行状态")}>
-                {liveSeatIds.map((seat) => {
+                {visibleSeatIds.map((seat) => {
                   const entry = streams[seat];
-                  if (!entry) return null;
-                  return (
-                    <div key={seat} className="live__seat">
-                      <div className="live__seat-head">
-                        <span className="live__seat-name">
-                          {SEAT_LABELS[seat as Seat] ?? seat}
-                        </span>
-                        {entry.phase ? (
-                          <span className="live__seat-phase mono">{entry.phase}</span>
-                        ) : null}
-                        {entry.running ? (
-                          <span
-                            className={
-                              entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
-                                ? "live__seat-running live__seat-running--critical"
-                                : entry.elapsed >= SEAT_STUCK_WARN_SECONDS
-                                  ? "live__seat-running live__seat-running--slow"
-                                  : "live__seat-running"
-                            }
-                          >
-                            {entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
-                              ? t("模型长时间无响应（已等待 {0}s），系统将自动中断", entry.elapsed)
-                              : t("思考中… 已等待 {0}s", entry.elapsed)}
+                  if (entry) {
+                    return (
+                      <div key={seat} className="live__seat">
+                        <div className="live__seat-head">
+                          <span className="live__seat-name">
+                            {SEAT_LABELS[seat as Seat] ?? seat}
                           </span>
-                        ) : entry.absent ? (
-                          /* round-15：思考结束但没有产出（调用失败或被停止）。
-                             原因悬停可见，与账本 SEAT_UNAVAILABLE 语义一致 ——
-                             缺席必须可审计，不能只是「已完成」或永远「思考中」。 */
-                          <span
-                            className="live__seat-running live__seat-absent"
-                            title={entry.absentReason || undefined}
-                          >
-                            {t("缺席")}
-                          </span>
-                        ) : (
-                          <span className="live__seat-idle">{t("已完成")}</span>
-                        )}
-                      </div>
-                      {/* round-12 恢复：流式思考过程。过程数据，非正式证据——
-                         正式结论以 Research Brief 与最终论文为准。 */}
-                      {entry.text ? (
-                        <div
-                          className="live__seat-stream"
-                          ref={(node) => {
-                            streamRefs.current[seat] = node;
-                          }}
-                        >
-                          <p className="live__seat-stream-text">{entry.text}</p>
+                          {entry.phase ? (
+                            <span className="live__seat-phase mono">{entry.phase}</span>
+                          ) : null}
+                          {entry.running ? (
+                            <span
+                              className={
+                                entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
+                                  ? "live__seat-running live__seat-running--critical"
+                                  : entry.elapsed >= SEAT_STUCK_WARN_SECONDS
+                                    ? "live__seat-running live__seat-running--slow"
+                                    : "live__seat-running"
+                              }
+                            >
+                              {entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
+                                ? t("模型长时间无响应（已等待 {0}s），系统将自动中断", entry.elapsed)
+                                : t("思考中… 已等待 {0}s", entry.elapsed)}
+                            </span>
+                          ) : entry.absent ? (
+                            /* round-15：思考结束但没有产出（调用失败或被停止）。
+                               原因悬停可见，与账本 SEAT_UNAVAILABLE 语义一致。 */
+                            <span
+                              className="live__seat-running live__seat-absent"
+                              title={entry.absentReason || undefined}
+                            >
+                              {t("缺席")}
+                            </span>
+                          ) : (
+                            <span className="live__seat-idle">{t("已完成")}</span>
+                          )}
                         </div>
-                      ) : entry.running ? (
-                        <p className="live__seat-stream live__seat-stream--empty">
-                          {t("（尚无输出）")}
-                        </p>
-                      ) : null}
-                    </div>
-                  );
-                })}
-                {/* 持久兜底卡片：过程流暂时没有该席位片段（断点续跑重连、
-                    重放尾部不含 seat_deliberation）时，席位也不会从议会消失。 */}
-                {fallbackSeatIds.map((seat) => {
+                        {/* round-12 恢复：流式思考过程。过程数据，非正式证据——
+                           正式结论以 Research Brief 与最终论文为准。 */}
+                        {entry.text ? (
+                          <div
+                            className="live__seat-stream"
+                            ref={(node) => {
+                              streamRefs.current[seat] = node;
+                            }}
+                          >
+                            <p className="live__seat-stream-text">{entry.text}</p>
+                          </div>
+                        ) : entry.running ? (
+                          <p className="live__seat-stream live__seat-stream--empty">
+                            {t("（尚无输出）")}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  }
+                  // 持久兜底卡片：过程流暂时没有该席位片段（断点续跑重连、
+                  // 重放尾部不含锚点）时，席位也固定在自己的位置上，不会消失
+                  // 或重排；实时片段一到即在原位升级为流式卡。
                   const summary = durableById.get(seat) ?? null;
                   const pill = durablePill(summary, status, current);
                   const notes: string[] = [];
@@ -806,7 +825,7 @@ export function LiveView({
                     </div>
                   );
                 })}
-                {liveSeatIds.length === 0 && fallbackSeatIds.length === 0 ? (
+                {visibleSeatIds.length === 0 ? (
                   phaseStarted ? (
                     <Empty>
                       {t(
