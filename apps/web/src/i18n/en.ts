@@ -722,4 +722,8 @@ export const en: Record<string, string> = {
   "Poliscope 争议证据地图": "Poliscope controversy evidence map",
   "不操作也没关系：{0} 后议会将自动进入联合建模。": "You can also do nothing: the council automatically proceeds to joint modeling in {0}.",
   "正在自动继续，请稍候…": "Resuming automatically, please wait…",
+  "这个视图在渲染时出错了": "This view hit a rendering error",
+  "任务数据没有丢失。可以先尝试重新渲染，或刷新页面；若反复出现，请切换到其他标签页并把这段错误反馈给开发者。": "Your task data is intact. Try re-rendering, or reload the page. If it keeps happening, switch to another tab and send this error message to the developer.",
+  "重新渲染": "Re-render",
+  "刷新页面": "Reload page",
 };

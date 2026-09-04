@@ -23,6 +23,7 @@ import type { ResearchBrief, TaskSummary } from "./api/types";
 import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
 import { ReResearchDialog } from "./components/ReResearchDialog";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Spinner, TaskStatusBadge } from "./components/primitives";
 import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "./i18n";
 import { AccountMenu } from "./views/AccountMenu";
@@ -699,7 +700,8 @@ export function App() {
               setAuth("authed");
             }}
             initialMode={
-              new URLSearchParams(window.location.search).get("mode") === "register"
+              new URLSearchParams(window.location.search).get("mode") === "register" &&
+              !new URLSearchParams(window.location.search).get("task")
                 ? "register"
                 : "login"
             }
@@ -942,6 +944,9 @@ export function App() {
                       entrance animation in App.css replays every time instead
                       of only on first load -- see .app__panel there. */}
                   <div className="app__panel" key={tab}>
+                    {/* 单个视图渲染崩溃只落在自己的边界内，不再白屏整个
+                        工作台；key 随 tab 重置，切换标签即恢复。 */}
+                    <ErrorBoundary key={`view-boundary-${tab}`}>
                     {tab === "live" ? (
                       <LiveView
                         events={events}
@@ -1015,6 +1020,7 @@ export function App() {
                     {tab === "annotations" && taskId ? (
                       <AnnotationView taskId={taskId} snapshot={snapshot} />
                     ) : null}
+                    </ErrorBoundary>
                   </div>
                 </>
               ) : null}
