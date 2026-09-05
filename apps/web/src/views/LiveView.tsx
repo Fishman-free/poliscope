@@ -296,9 +296,17 @@ function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
     }
   }
   for (const [seat, entry] of Object.entries(current)) {
+    const joined = entry.parts.join("");
     result[seat] = {
       phase: entry.phase,
-      text: entry.parts.join(""),
+      // Bound the rendered thinking text: a long phase streamed tens of
+      // thousands of token deltas; an unbounded string turned into one giant
+      // DOM node was itself enough to jank/freeze the pane. Keep the newest
+      // slice, which is what the live card shows while streaming.
+      text:
+        joined.length > SEAT_TEXT_RENDER_CAP
+          ? joined.slice(joined.length - SEAT_TEXT_RENDER_CAP)
+          : joined,
       running: entry.running,
       elapsed: entry.elapsed,
       absent: entry.absent,
@@ -307,6 +315,9 @@ function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
   }
   return result;
 }
+
+/** Max characters of one seat's live thinking rendered in its card. */
+const SEAT_TEXT_RENDER_CAP = 24_000;
 
 /** 一个席位连续无进展多久后提示「可能卡住」（秒）。阈值与后端模型调用
  * 总 deadline（240s）+ 重试余量对齐：超过 300s 而仍在 running，说明

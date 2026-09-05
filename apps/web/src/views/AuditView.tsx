@@ -104,6 +104,9 @@ function summarise(event: LedgerEvent): string {
   return parts.join(" · ");
 }
 
+/** Max audit rows mounted as DOM (newest first). */
+const AUDIT_RENDER_CAP = 500;
+
 export function AuditView({
   events,
   streamOpen,
@@ -124,6 +127,13 @@ export function AuditView({
   const refusalCount = ordered.filter((event) =>
     REFUSALS.has(event.kind),
   ).length;
+  // Render cap: a long, re-run task can carry thousands of ledger rows;
+  // mounting them all as DOM nodes froze the audit tab. Show the newest
+  // AUDIT_RENDER_CAP (the ledger itself keeps the full history server-side).
+  const visibleShown =
+    shown.length > AUDIT_RENDER_CAP
+      ? shown.slice(shown.length - AUDIT_RENDER_CAP)
+      : shown;
 
   return (
     <Panel
@@ -157,8 +167,18 @@ export function AuditView({
             : t("尚未收到事件。任务可能仍在队列中。")}
         </Empty>
       ) : (
+        <>
+        {shown.length > visibleShown.length ? (
+          <p className="audit__truncated" role="status">
+            {t(
+              "事件较多，仅渲染最新 {0} 条（共 {1} 条，完整记录保存在服务端事件账本）。",
+              AUDIT_RENDER_CAP,
+              shown.length,
+            )}
+          </p>
+        ) : null}
         <ol className="audit__list">
-          {shown.map((event) => (
+          {visibleShown.map((event) => (
             <li
               key={`${event.workspace_version}-${event.event_id}`}
               className={
@@ -178,6 +198,7 @@ export function AuditView({
             </li>
           ))}
         </ol>
+        </>
       )}
     </Panel>
   );

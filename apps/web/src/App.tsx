@@ -911,7 +911,16 @@ export function App() {
               </div>
 
               {load === "loading" && !snapshot ? (
-                <Spinner label={t("正在载入工作台快照…")} />
+                <div className="app__loading">
+                  <Spinner label={t("正在载入工作台快照…")} />
+                  <button
+                    type="button"
+                    className="app__loading-back"
+                    onClick={handleNewResearch}
+                  >
+                    {t("打开时间过长？返回任务列表")}
+                  </button>
+                </div>
               ) : null}
 
               {load === "error" ? (
@@ -923,6 +932,22 @@ export function App() {
                       "这不是「没有证据」，而是「读不到证据」。请确认 API 正在运行且 task_id 正确。",
                     )}
                   </p>
+                  <div className="app__error-actions">
+                    <button
+                      type="button"
+                      className="app__error-retry"
+                      onClick={() => void refresh()}
+                    >
+                      {t("重试")}
+                    </button>
+                    <button
+                      type="button"
+                      className="app__error-back"
+                      onClick={handleNewResearch}
+                    >
+                      {t("返回任务列表")}
+                    </button>
+                  </div>
                 </div>
               ) : null}
 

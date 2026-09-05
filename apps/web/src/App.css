@@ -615,6 +615,61 @@
   color: var(--app-ink-3);
 }
 
+/* Loading escape + error recovery actions: a wedged history open must always
+   leave the researcher a way out (never a dead "载入中…" trap). */
+.app__loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) 0;
+}
+
+.app__loading-back,
+.app__error-retry,
+.app__error-back {
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-2);
+  font-size: var(--text-small);
+  cursor: pointer;
+}
+
+.app__loading-back {
+  border: 1px solid var(--app-hairline);
+  background: transparent;
+  color: var(--app-ink-3);
+}
+
+.app__loading-back:hover {
+  color: var(--app-ink);
+  border-color: var(--app-ink-3);
+}
+
+.app__error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.app__error-retry {
+  border: 1px solid var(--app-ink);
+  background: var(--app-ink);
+  color: var(--app-surface);
+}
+
+.app__error-back {
+  border: 1px solid var(--app-hairline);
+  background: transparent;
+  color: var(--app-ink-2);
+}
+
+.app__error-back:hover {
+  border-color: var(--app-ink-3);
+  color: var(--app-ink);
+}
+
 /* Responsive. 1100: sidebar stacks under the main column (above). 768: tabs
  * lose their hints and padding tightens. 390: task head goes single-column,
  * actions go full-width with 44px targets, tabs scroll horizontally, and

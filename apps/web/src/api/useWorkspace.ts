@@ -39,6 +39,27 @@ const TERMINAL_STATUSES = new Set([
  * unresponsive fix). */
 const PROCESS_EVENT_CAP = 5000;
 
+/** Hard ceiling on the older structural anchors kept alongside the heavy
+ * tail, so even a tool-pathological run cannot grow processEvents without
+ * limit. */
+const PROCESS_ANCHOR_CAP = 3000;
+
+/** Ledger (audit) events kept in memory. The SSE replays the WHOLE task
+ * history on every open -- a task re-run several times can carry thousands of
+ * rows. The audit view reads newest-first, so keeping the newest N is the
+ * bounded trade; the server ledger itself remains the full source of truth. */
+const LEDGER_EVENT_CAP = 4000;
+
+/** Ledger frames are coalesced on this cadence, exactly like process frames:
+ * one state update (and one render) per burst instead of one per replayed row
+ * (the per-frame O(N) merge × N rows is what hard-froze a history open). */
+const LEDGER_FLUSH_MS = 250;
+
+/** A history open whose first snapshot has not arrived in this long is
+ * declared failed: the user gets an error panel with retry / back-to-list
+ * actions instead of an eternal "载入中…" with a dead main thread. */
+const INITIAL_LOAD_TIMEOUT_MS = 30_000;
+
 /** High-volume, droppable process kinds (token deltas and heartbeats). The
  * sparse structural kinds (seat_deliberation/model_done/seat_absent/
  * tool_call/tool_result) are what open/close seat and tool cards: when the
@@ -62,7 +83,18 @@ function capProcessEvents(events: ProcessEvent[]): ProcessEvent[] {
   const older = events
     .slice(0, events.length - PROCESS_EVENT_CAP)
     .filter((event) => !HEAVY_PROCESS_KINDS.has(event.kind));
-  return [...older, ...tail];
+  const anchors =
+    older.length > PROCESS_ANCHOR_CAP
+      ? older.slice(older.length - PROCESS_ANCHOR_CAP)
+      : older;
+  return [...anchors, ...tail];
+}
+
+/** Keep the newest LEDGER_EVENT_CAP ledger rows; input is seq-sorted. */
+function capLedgerEvents(events: LedgerEvent[]): LedgerEvent[] {
+  return events.length <= LEDGER_EVENT_CAP
+    ? events
+    : events.slice(events.length - LEDGER_EVENT_CAP);
 }
 
 /** Flush cadence for process events: incoming frames collect in a buffer and
@@ -108,6 +140,9 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   // The latest refresh's controller. A newer refresh() aborts it, so a stale
   // fetch never lands its snapshot over a fresher one.
   const controllerRef = useRef<AbortController | null>(null);
+  // Latest committed snapshot, readable inside callbacks without making them
+  // re-create on every snapshot change (refresh's initial-load timeout path).
+  const snapshotRef = useRef<WorkspaceSnapshot | null>(null);
   const timer = useRef<number | undefined>(undefined);
   // Throttle stream rebuilds: an unreachable server must not turn CLOSED ->
   // rebuild -> CLOSED into a tight request loop.
@@ -132,20 +167,41 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
+    const isInitial = snapshotRef.current === null;
     setLoad((current) => (current === "ready" ? current : "loading"));
+    // A history open must never hang forever: when no snapshot exists yet,
+    // bound the fetch itself (a wedged/slow server) in addition to the
+    // load-state watchdog below. Insurance-poll refreshes of an already ready
+    // workspace stay unbounded.
+    let timedOut = false;
+    const timeoutHandle = isInitial
+      ? window.setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+        }, INITIAL_LOAD_TIMEOUT_MS)
+      : 0;
     return fetchWorkspace(taskId, controller.signal)
       .then((next) => {
         if (controller.signal.aborted) return true;
+        window.clearTimeout(timeoutHandle);
+        snapshotRef.current = next;
         setSnapshot(next);
         setError(null);
         setLoad("ready");
         return true;
       })
       .catch((cause: unknown) => {
+        window.clearTimeout(timeoutHandle);
         // An aborted fetch was superseded by a newer refresh; that one owns
         // the outcome, so settle silently instead of double-reporting.
-        if (controller.signal.aborted) return true;
-        setError(cause instanceof ApiError ? cause.message : String(cause));
+        if (controller.signal.aborted && !timedOut) return true;
+        setError(
+          timedOut
+            ? `载入超时：服务器在 ${INITIAL_LOAD_TIMEOUT_MS / 1000} 秒内没有返回工作台快照。可以重试，或返回任务列表。`
+            : cause instanceof ApiError
+              ? cause.message
+              : String(cause),
+        );
         setLoad("error");
         return false;
       });
@@ -156,12 +212,31 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   // one loads, which reads as a frozen/long-waiting history open) and show
   // the loading branch until the first snapshot of the new task arrives.
   useEffect(() => {
+    snapshotRef.current = null;
     setSnapshot(null);
     setEvents([]);
     setProcessEvents([]);
     setError(null);
     setLoad(taskId ? "loading" : "idle");
   }, [taskId]);
+
+  // Load-state watchdog: even if the fetch promise itself never settles (a
+  // frozen event loop behind it, a proxy holding the connection), a history
+  // open still flips to the error panel -- with retry / back-to-list actions
+  // -- instead of trapping the researcher on "载入中…" with no way out.
+  useEffect(() => {
+    if (!taskId || load !== "loading" || snapshotRef.current !== null) return;
+    const handle = window.setTimeout(() => {
+      // The effect (and this timer) only exist while load is "loading" with
+      // no snapshot; a successful load flips load and the cleanup clears the
+      // timer, so a firing timer means the open really is stuck.
+      setError(
+        `载入超时：工作台在 ${INITIAL_LOAD_TIMEOUT_MS / 1000} 秒内未能就绪。可以重试，或返回任务列表后重新进入。`,
+      );
+      setLoad("error");
+    }, INITIAL_LOAD_TIMEOUT_MS + 2_000);
+    return () => window.clearTimeout(handle);
+  }, [taskId, load]);
 
   // Initial load, and a fresh load whenever the task changes.
   useEffect(() => {
@@ -217,16 +292,34 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
     // by workspace_version instead of first blanking the phase timeline and
     // audit trail (only a real task switch clears, in the effect above).
     if (terminal) return;
+    // A history open replays the WHOLE ledger from sequence 0. Coalesce the
+    // burst into one merge/sort/render per LEDGER_FLUSH_MS instead of one per
+    // frame -- the old per-frame O(N) merge over a few thousand replayed rows
+    // is what hard-froze the tab at "载入中…".
+    const ledgerBuffer: LedgerEvent[] = [];
+    let ledgerTimer = 0;
+    const flushLedger = () => {
+      ledgerTimer = 0;
+      if (ledgerBuffer.length === 0) return;
+      const batch = ledgerBuffer.splice(0, ledgerBuffer.length);
+      setEvents((current) => {
+        const known = new Set(current.map((entry) => entry.workspace_version));
+        const fresh = batch.filter(
+          (entry) => !known.has(entry.workspace_version),
+        );
+        if (fresh.length === 0) return current;
+        const merged = [...current, ...fresh];
+        merged.sort((a, b) => a.workspace_version - b.workspace_version);
+        return capLedgerEvents(merged);
+      });
+    };
     const close = subscribe(
       taskId,
       (event) => {
-        setEvents((current) =>
-          current.some((entry) => entry.workspace_version === event.workspace_version)
-            ? current
-            : [...current, event].sort(
-                (a, b) => a.workspace_version - b.workspace_version,
-              ),
-        );
+        ledgerBuffer.push(event);
+        if (ledgerTimer === 0) {
+          ledgerTimer = window.setTimeout(flushLedger, LEDGER_FLUSH_MS);
+        }
         window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => void refresh(), REFRESH_DEBOUNCE_MS);
       },
@@ -239,6 +332,8 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
     );
     return () => {
       window.clearTimeout(timer.current);
+      if (ledgerTimer !== 0) window.clearTimeout(ledgerTimer);
+      flushLedger();
       close();
       setStream("closed");
     };

@@ -27,6 +27,12 @@
   margin-bottom: var(--space-4);
 }
 
+.audit__truncated {
+  font-size: var(--text-small);
+  color: var(--ink-3);
+  margin: 0 0 var(--space-3);
+}
+
 .audit__dot {
   width: 8px;
   height: 8px;
