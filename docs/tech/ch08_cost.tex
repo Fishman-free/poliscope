@@ -1,0 +1,49 @@
+% ===================== 第 8 章 =====================
+\section{token 经济学：七人全程参与如何不烧钱}
+
+七席全程参与天然比单 Agent 昂贵。Poliscope 的选择不是「动态省略席位」——任何一次省略都是在赌这个角色这次用不上，而盲点恰恰长在被省略的视角里。成本控制由八层机制共同完成，表~\ref{tab:cost} 先给全景。
+
+\begin{table}[ht]
+\centering\small
+\caption{八层成本控制机制与落点}
+\label{tab:cost}
+\begin{tabularx}{\linewidth}{@{}L{3.4cm} L{3.6cm} X@{}}
+\toprule
+\rowcolor{accent}
+\tblhead 机制 & \tblhead 控制点 & \tblhead 实现位置 \\
+\midrule
+发言预算       & 每轮每席至多一个主动作、一个质询、一个回应，无新信息即 PASS & 各轮处理器收集逻辑 \\
+新颖性门控     & 语义去重命中则不调用强推理、不写集体图 & 证据门 DEDUPLICATION \\
+分层模型       & 强判断用强模型，机械操作用轻量模型 & \code{deliberation.py::PHASE\_MODEL\_CLASSES} \\
+共享检索缓存   & 七席证据需求合并去重，一篇论文只下载/解析/验证一次 & 查询规划器 + 统一候选池 \\
+调用审计       & 每次模型/工具调用记录 token、费用、延迟、重试 & 审计装饰器网关 \\
+四维预算       & 时长、费用、工具次数、来源数同时设限，花前检查 & \code{epistemo/budget.py} \\
+阶段 deadline  & 整轮 15 分钟、单席重试至多 2 次，超时记缺席不陪跑 & Worker 收集器 \\
+召回预算       & 每席召回 800 字符，保骨架不重放转录 & \code{council\_memory.py} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{分层模型调用：把强模型用在判断上}
+
+\code{PHASE\_MODEL\_CLASSES} 按阶段分配模型档位：预承诺、交叉质询、盲点悬赏、最终复判四个「判断质量决定结果」的阶段使用强推理档；取证、证据交换、联合建模使用中档模型。部署时通过 \code{POLISCOPE\_MODEL\_NAME\_STRONG\_REASONING / \_MEDIUM / \_LIGHTWEIGHT} 分别指定，留空时按「任务自带配置 $\rightarrow$ 部署默认 $\rightarrow$ 轻量兜底」顺序回退。档位与阶段的绑定关系进代码、不进提示词，避免模型自己决定用哪个模型。
+
+\subsection{共享检索缓存：合并的是成本，不是视角}
+
+七席各自提出证据需求后，查询规划器对检索意图做合并去重，检索器批量执行，结果进入统一候选池。同一篇论文的 PDF 只下载一次、文本只解析一次、DOI 只验证一次、元数据统一缓存；各席仍按自己的视角读取不同字段与片段。认知多样性发生在阅读与质询环节，检索环节没有理由为相同关键词付七次钱。
+
+\subsection{每一笔成本都可解释}
+
+所有模型调用经过 \code{AuditedModelGateway} 装饰器，\code{models/audit.py} 把 input/output token、费用、延迟、重试次数与结构化输出修复状态逐笔落库；工具调用由 \code{AuditedToolGateway} 同等待遇。研究者在界面上能看到钱花在了哪个阶段、哪个席位，成本数据本身也是第 10 章「每个有效盲点成本」指标的来源。
+
+\subsection{四维预算：耗尽时报告缺口，不伪造完整}
+
+\code{BudgetTracker} 同时追踪总时长、模型费用、工具调用数与来源数四个维度，每个消费者在扣减前检查剩余。预算耗尽抛 \code{BudgetExhausted}，任务以 \code{COMPLETED\_WITH\_GAPS} 收尾，未完成的证据槽位逐条列出。预算不足是一种需要被看见的系统状态，而不是让模型悄悄写满结论的理由。
+
+\subsection{阶段级 deadline 与超时回退}
+
+整轮收集默认 15 分钟上限，单席至多重试 2 次；模型网关自身采用「流式 240 秒 $\rightarrow$ 非流式 300 秒」的回退链，结构化输出修复至多 1 次，修复失败的输出被隔离，绝不写入正式图。一个席位挂起时，其余六席的工作不被绑架。
+
+\subsection{免费体验与 BYOK：成本选择权在研究者}
+
+系统同时支持部署方承担费用与研究者自带密钥（BYOK，任务级 \code{model\_config}）。免费体验通道走通义千问兼容端点，\textbf{每个账户限用一次}（\code{FREE\_TRIAL\_LIMIT = 1}），在确认主张时以单行原子操作扣减，并发请求无法双重消耗额度。密钥只存服务器与任务行，任何读取端点都不回显，不进仓库、日志与前端；研究者自己的端点在保存前必须通过一次 10 秒连通性探测，误把控制台门户当 API 端点的情况会被当场拒绝并给出修正提示。

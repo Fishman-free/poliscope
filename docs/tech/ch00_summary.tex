@@ -1,0 +1,44 @@
+% ===================== 执行摘要 =====================
+\thispagestyle{fancy}
+{\sffamily\bfseries\fontsize{20}{24}\selectfont\color{ink} 执行摘要\par}
+\vspace{0.5em}
+\noindent{\color{linegray}\rule{\linewidth}{1pt}}
+\vspace{1em}
+
+大型语言模型让「输入问题、自动产出研究综述」变得触手可及，但在存在争议的科研问题上，标准深度研究管线有三个文风优化无法修复的缺陷：\textbf{单一视角}——管线里没有测量学家，自报告偏差就无人指出；\textbf{重复即共识的错觉}——多个智能体读到同一份错误摘要，共享的错误会被包装成「被反复验证」；\textbf{总结器拍平异议}——最后一步「大家基本同意」抹掉了争议研究最该保留的少数意见与证伪条件。
+
+\medskip
+Poliscope 面向计算社会科学争议问题（首版领域：数字行为、社交媒体与心理健康），给出的回答是 \textbf{EpistemoBrain}：一套由七名专业化 AI 科学家、三层科研记忆和双图证据治理组成的研究组织方法，以及它的完整开源实现。本文档说明这套方法的机制、工程实现、评测证据与已知边界。
+
+\subsection*{\sffamily\color{accentdk}三条核心创新}
+
+\begin{enumerate}[leftmargin=1.6em, itemsep=4pt, topsep=4pt]
+\item \textbf{七人科学议会（Council Protocol）。}七个固定席位按八阶段协议工作，只允许提交八类结构化科研动作；协议明确禁止多数投票裁决科研真理，最终产物是保留具名异议与证伪条件的条件化共识，而不是「6:1 通过」。
+\item \textbf{双图证据治理（Dual-Graph Governance）。}过程图与证据图物理分离，所有正式修改先进入追加写、幂等、可重放的科学事件账本，再由数据库层唯一有权限的图投影器写入证据图。过程材料在结构上不可能自动升级为证据。
+\item \textbf{可证伪的实现与评测。}系统以模块化单体完整落地（14 个内部包、4 个应用、43 个数据库迁移、1187 项自动化测试），并配套 ForesightBlindspot 时间切片评测协议：五条能力递增基线、六项单机制消融，真实模型上的对照结果与其失败边界一并公开。
+\end{enumerate}
+
+\subsection*{\sffamily\color{accentdk}关键事实}
+
+\vspace{0.4em}
+\begin{tcolorbox}[colback=white, colframe=linegray, boxrule=0.8pt, arc=2pt, left=8pt,right=8pt,top=6pt,bottom=6pt]
+\sffamily\small
+\begin{tabularx}{\dimexpr\linewidth-2pt\relax}{@{}L{3.1cm} X L{3.1cm} X@{}}
+\thd{方法名} & EpistemoBrain & \thd{科学家席位} & 7 个，全程参与 \\
+\thd{协议阶段} & 8 个，顺序状态机 & \thd{正式证据节点} & 10 类、12 类关系边 \\
+\thd{证据门} & 6 阶段 + 三层审计 & \thd{证据分级} & A–D 四级，B 级不得独撑因果结论 \\
+\thd{后端技术栈} & Python 3.12 / FastAPI / PostgreSQL & \thd{前端} & React + TypeScript + React Flow \\
+\thd{学术数据源} & OpenAlex、Crossref、Unpaywall、Semantic Scholar & \thd{模型接入} & 任意 OpenAI 兼容端点，支持 BYOK \\
+\thd{自动化测试} & 1187 项（单元 / 集成 / Golden / E2E） & \thd{许可证} & MIT \\
+\end{tabularx}
+\end{tcolorbox}
+
+\vspace{0.6em}
+\begin{principlebox}
+\boxtag{\color{accentdk}一句话立场}
+可靠的盲点发现首先是一个\textbf{组织与治理问题}，而不是一个 Prompt 问题：异议要靠结构保留，证据要靠结构审计，「过程不等于证据」要靠结构强制。
+\end{principlebox}
+
+\vspace{0.4em}
+{\sffamily\footnotesize\color{muted}
+阅读指引：第 1–2 章建立问题与方法；第 3–9 章是机制与工程，可按兴趣跳读；第 10 章给出评测证据；第 11 章是产品与部署；第 12 章集中陈述已知局限与路线图。文内所有实现陈述均可对照 \code{packages/} 与 \code{apps/} 下源码核验。}

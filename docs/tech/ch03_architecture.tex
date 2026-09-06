@@ -1,61 +1,93 @@
-% ===== 第 3 章：系统架构总览 =====
+% ===================== 第 3 章 =====================
 \section{系统架构总览}
 
-\subsection{模块化单体}
+\subsection{模块化单体：一个进程内的清晰边界}
 
-Poliscope 采用模块化单体（modular monolith）+ 异步 Worker，首版刻意不做微服务拆分——这是 YAGNI 约束的直接结果：MVP 只实现能证明「EpistemoBrain 比普通研究智能体更可靠地发现高价值科研盲点」这一主张的功能，微服务拆分不在其中。仓库按职责划分模块：
+Poliscope 采用模块化单体加异步 Worker，首版不做微服务拆分。这是刻意的范围控制：MVP 只需要证明「这套组织结构比普通研究智能体更能发现高价值盲点」，拆分服务对此没有贡献，反而会引入分布式一致性问题。模块边界在代码层强制执行——跨模块只允许通过明确的 Pydantic 契约与应用服务通信，不能直接操作对方的数据表。
 
-\begin{table}[h]
-\centering
-\small
-\begin{tabular}{@{}ll@{}}
+\begin{table}[ht]
+\centering\small
+\caption{14 个内部包的职责划分（\code{packages/}）}
+\label{tab:modules}
+\begin{tabularx}{\linewidth}{@{}L{3.1cm}X@{}}
 \toprule
-\textbf{模块} & \textbf{职责} \\
+\rowcolor{accent}
+\tblhead 模块 & \tblhead 职责 \\
 \midrule
-\texttt{packages/kernel} & 冻结契约（\texttt{ContractModel}/\texttt{FrozenDict}）、数据库、配置、权限常量；被所有模块依赖，不依赖任何业务模块 \\
-\texttt{packages/council} & 7 个席位、结构化动作、8 个轮次、轮次注册表、席位--网关桥 \\
-\texttt{packages/epistemo} & 编排器、状态机、预算、停止条件、恢复 \\
-\texttt{packages/memory} & MemoBrain 适配器、席位私有记忆、Process Graph、证据投影 \\
-\texttt{packages/evidence} & 事件账本、证据门、图投影器、谱系、独立性、辩证折叠 \\
-\texttt{packages/papers} & 取证服务、候选池、查询规划、解析、Paper Packet \\
-\texttt{packages/models} & 模型网关（审计装饰器 + 录制回放） \\
-\texttt{packages/tools} & 工具网关、四个学术数据源适配器 \\
-\texttt{packages/reports} & Research Brief 组装、Markdown / JSON 渲染、导出脱敏 \\
-\texttt{packages/research} & 研究契约、主张原子化、任务仓储与应用服务 \\
-\texttt{packages/evaluation} & ForesightBlindspot 基准语料与验收矩阵 \\
+\code{kernel}      & 冻结契约、数据库会话、配置与权限常量；被所有模块依赖，自身不依赖业务模块 \\
+\code{council}     & 七席位规格、结构化动作、八阶段注册表、席位与网关的桥接 \\
+\code{epistemo}    & 编排器、显式状态机、预算追踪、停止条件、断点恢复 \\
+\code{memory}      & MemoBrain 适配器、席位私有记忆、过程图与折叠 \\
+\code{evidence}    & 事件账本、证据门、图投影器、谱系、独立性、辩证折叠 \\
+\code{papers}      & 查询规划、多源候选发现、规范化、全文解析、发现抽取 \\
+\code{models}      & 统一模型网关、成本审计、录制回放、免费体验额度 \\
+\code{tools}       & 统一工具网关与四个学术数据源适配器 \\
+\code{research}    & 研究契约、主张原子化、任务仓储与应用服务 \\
+\code{reports}     & Research Brief 与最终论文组装、Markdown/JSON 双格式、导出脱敏 \\
+\code{evaluation}  & ForesightBlindspot 语料、基线/消融接线、语义裁判、标注一致性 \\
+\code{accounts}    & 注册登录、邮箱验证码、PBKDF2 口令、bearer 会话 \\
+\code{knowledge}   & 个人知识库：多格式解析、全文检索、跨任务复用 \\
+\code{skills}      & 从 GitHub 安装研究者技能（SKILL.md），按任务注入议会提示词 \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-应用层四个入口共享同一套后端契约：\texttt{apps/api}（FastAPI）、\texttt{apps/worker}（任务认领与议会执行）、\texttt{apps/cli}（纯 HTTP 客户端，不 import \texttt{packages}）、\texttt{apps/web}（React 证据工作台）。CLI 是纯 HTTP 客户端是一条硬约束——任何第二条直接进入研究服务的代码路径都会绕过证据门。
+应用层四个入口共享同一套后端契约：\code{apps/api}（FastAPI HTTP 层）、\code{apps/worker}（任务认领与议会执行）、\code{apps/web}（React 证据工作台）、\code{apps/cli}（纯 HTTP 客户端）。CLI 被硬性禁止 import 任何 \code{packages}——第二条直连研究服务的路径，就是一条绕过证据门的路径。
 
 \subsection{一次研究的生命周期}
 
-一次研究从研究者提交 \texttt{Research Contract} 开始：
-
-\begin{enumerate}
-\item \textbf{建任务}：研究者提交问题、范围、预算、可选知识库与 PDF。系统原子化出建议的原子主张（\texttt{suggested\_claims}），任务停在 \texttt{AWAITING\_CLAIM\_CONFIRMATION}——研究者控制方向，系统不自作主张开跑。
-\item \textbf{确认主张}：研究者勾选要调查的主张，任务入队（\texttt{QUEUED}）。被放弃的主张标记为 \texttt{DISCARDED} 而非删除（审计）。
-\item \textbf{Worker 认领}：\texttt{SELECT ... FOR UPDATE SKIP LOCKED} 从队列认领，多开安全。
-\item \textbf{议会执行}：7 席 $\times$ 8 阶段跑完一次未提交事务。每一轮每一席通过 \texttt{GatewayDeliberator} 与模型网关交互，输出结构化科研动作，追加到科学事件账本。
-\item \textbf{图投影}：投影器以第二身份、第二事务消费账本事件，过证据门，写入证据图。
-\item \textbf{报告}：任务终态从图、账本、任务行组装 Research Brief 与最终论文。
+\begin{enumerate}[leftmargin=1.6em, itemsep=3pt]
+\item \textbf{建任务。}研究者提交问题、范围、预算与可选的知识库、PDF、技能；系统原子化出建议主张，任务停在 \code{AWAITING\_CLAIM\_CONFIRMATION}，研究者不确认就不开跑。
+\item \textbf{确认主张。}研究者勾选要调查的原子主张后任务入队；被放弃的主张标记为 \code{DISCARDED} 而非删除。
+\item \textbf{Worker 认领。}用 \code{SELECT ... FOR UPDATE SKIP LOCKED} 从 PostgreSQL 队列认领，多个 Worker 并发安全；崩溃遗留的 \code{RUNNING} 由 \code{recover\_stale\_running} 回收。
+\item \textbf{议会执行。}七席乘八阶段在一次数据库事务内跑完，每席经统一网关与模型交互，结构化动作追加进事件账本。
+\item \textbf{图投影。}投影器以第二个数据库身份、第二个事务消费账本事件，过证据门后写入证据图。
+\item \textbf{报告。}终态时从证据图、账本与任务行组装 Research Brief 和最终论文，报告阶段不调用模型产生新判断。
 \end{enumerate}
 
-\subsection{为什么拆两个事务、两个身份}
+\subsection{架构全景}
 
-「投影器是证据图唯一写入者」如果只写在文档里，就只是一句愿望。Poliscope 用数据库权限把它变成事实：应用身份（\texttt{poliscope\_app}）在数据库层没有写证据图表的权限；投影器身份（\texttt{poliscope\_projector}）在数据库层没有写账本的权限。两边都无法伪造对方的数据。这个隔离由迁移与 \texttt{packages/kernel/privileges.py} 实现，并有 10 个集成测试用例逐条验证（\texttt{test\_graph\_write\_isolation.py}）。
-
-\begin{figure}[h]
+\begin{figure}[ht]
 \centering
-\fbox{\parbox{0.9\columnwidth}{\centering\vspace{1.5em}
-研究者 $\rightarrow$ Council (7 seats $\times$ 8 phases)
-$\rightarrow$ Event Ledger $\rightarrow$ Evidence Gate
-$\rightarrow$ Graph Projector $\rightarrow$ Evidence Graph
-$\rightarrow$ Blindspot bounties $\rightarrow$ Council (loop)\vspace{1.5em}}}
-\caption{EpistemoBrain 架构：议会、账本、证据门、投影器与认识论路由形成闭环。过程记忆（左，每席 MemoBrain）与正式证据图（右）物理分离。}
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[node distance=2.6mm and 6mm]
+  \node[ndd, minimum width=30mm] (web) {Web 工作台 / CLI};
+  \node[nd, below=of web, minimum width=30mm] (api) {FastAPI 应用层（apps/api）};
+  \node[nda, below=of api, minimum width=30mm] (worker) {Worker：七席 × 八阶段议会};
+  % left rail
+  \node[nd, left=11mm of worker, minimum width=24mm] (mg) {模型网关\newline\tiny 分层模型 · 审计};
+  \node[nd, below=of mg, minimum width=24mm] (tg) {工具网关\newline\tiny 四大学术源};
+  % center chain
+  \node[nd, below=of worker, minimum width=30mm] (ledger) {科学事件账本（追加写 · 幂等）};
+  \node[nd, below=of ledger, minimum width=30mm] (gate) {六阶段证据门};
+  \node[ndd, below=of gate, minimum width=30mm] (proj) {Graph Projector（唯一写入者）};
+  \node[nda, below=of proj, minimum width=30mm] (graph) {证据图（10 类节点 / 12 类边）};
+  % right rail
+  \node[nd, right=11mm of ledger, minimum width=24mm] (proc) {过程图 + 三层记忆\newline\tiny Flush/Fold/Recall};
+  \node[nd, below=of proc, minimum width=24mm] (bs) {盲点悬赏\newline\tiny 回流再调查};
+  \draw[flow] (web)--(api); \draw[flow] (api)--(worker);
+  \draw[flow] (worker)--(ledger); \draw[flow] (ledger)--(gate);
+  \draw[flow] (gate)--(proj); \draw[flow] (proj)--(graph);
+  \draw[flowg] (worker)--(mg); \draw[flowg] (worker)--(tg);
+  \draw[flowg] (worker)--(proc);
+  \draw[flow] (graph)--(bs); \draw[flowg] (bs.north) to[bend left=18] (worker.east);
+\end{tikzpicture}}
+\caption{系统架构：应用、议会、账本、证据门、投影器构成主干；模型/工具网关是唯一外部出口；过程图与证据图分居两侧，盲点回流驱动增量调查。}
+\label{fig:arch}
 \end{figure}
 
-\subsection{为什么队列在 PostgreSQL 而不是 Redis}
+\subsection{两个事务、两个数据库身份}
 
-认领任务和更新状态在同一个事务里，Worker 崩溃时锁自动释放。用 Redis 会多出一个可能与数据库不一致的「谁在跑」的真相来源。Poliscope 首版没有任何组件依赖 Redis 做缓存或广播——加一个没人用的服务违反 YAGNI 约束。这一取舍记录在 \texttt{apps/worker/main.py} 的模块文档中。
+「投影器是证据图唯一写入者」如果只写在文档里，就只是愿望。Poliscope 在 PostgreSQL 角色层把它变成硬事实：
+
+\begin{itemize}[leftmargin=1.6em, itemsep=3pt]
+\item 应用身份 \code{poliscope\_app} 可以追加账本、读取证据图，但对证据图表没有 \code{INSERT/UPDATE/TRUNCATE} 权限；
+\item 投影器身份 \code{poliscope\_projector} 可以写图、推进事件状态，但不能改写既有事件 payload，且没有 \code{DELETE}（会话删除是唯一的迁移级例外，见第 9.7 节）；
+\item 两个身份都不能 \code{TRUNCATE}。
+\end{itemize}
+
+Worker 因此把一次运行拆成两个事务：议会事务以应用身份提交动作，投影事务以投影器身份落图。集成测试 \code{test\_graph\_write\_isolation.py} 逐条断言应用身份写图会被数据库直接拒绝——这不是代码自律，是数据库事实。
+
+\subsection{为什么队列建在 PostgreSQL 而不是 Redis}
+
+任务认领与状态更新必须在同一个事务里完成，Worker 崩溃时行锁随事务自动释放，不会留下「谁在跑」的悬空状态。引入 Redis 等于多一个可能与数据库不一致的真相来源，而首版没有任何组件需要 Redis 做缓存或广播。少一个服务，就少一类故障与一份运维成本。

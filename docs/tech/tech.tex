@@ -1,87 +1,228 @@
 % =============================================================================
-% Poliscope 技术白皮书 -- 完整中文版
-% 编译：xelatex tech.tex（两遍）
+% Poliscope 技术白皮书（第二版）
+% 编译：xelatex tech.tex（连续两遍以生成目录与交叉引用）
 % =============================================================================
 \documentclass[11pt]{ctexart}
 
-% --- 页面与字体 ---
-\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.8cm, right=2.8cm]{geometry}
-\usepackage[T1]{fontenc}
+% ---------- 页面 ----------
+\usepackage[a4paper, top=2.5cm, bottom=2.4cm, left=2.6cm, right=2.6cm]{geometry}
 \usepackage{microtype}
-\usepackage{booktabs}
+\usepackage[table]{xcolor}
+\usepackage{fontspec}
 \usepackage{amsmath}
 \usepackage{amssymb}
-\usepackage{graphicx}
-\usepackage[table]{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
 \usepackage{enumitem}
-\usepackage{listings}
+\usepackage{needspace}
+\usepackage{caption}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, shapes.geometric, fit, backgrounds, calc}
 \usepackage{titlesec}
-\usepackage[colorlinks=true, linkcolor=blue, urlcolor=blue]{hyperref}
+\usepackage{tocloft}
 \usepackage{fancyhdr}
+\usepackage[colorlinks=true, linkcolor=accent, urlcolor=accent, citecolor=accent]{hyperref}
 
-% --- 代码风格 ---
-\lstset{
-  basicstyle=\ttfamily\footnotesize,
-  keywordstyle=\color{blue},
-  commentstyle=\color{gray},
-  stringstyle=\color{red},
-  breaklines=true,
-  frame=single,
-  columns=flexible,
-  xleftmargin=1em,
-  aboveskip=0.8em,
-  belowskip=0.8em,
-}
+% ---------- 设计令牌：配色 ----------
+\definecolor{ink}{HTML}{17202B}        % 主文字 / 标题
+\definecolor{ink2}{HTML}{3C4756}       % 次级文字
+\definecolor{muted}{HTML}{6A7482}      % 弱化文字
+\definecolor{accent}{HTML}{1F5C99}     % 唯一主强调色（钢蓝）
+\definecolor{accentdk}{HTML}{174674}   % 强调色加深
+\definecolor{tint}{HTML}{EBF2F9}       % 强调色浅底
+\definecolor{panel}{HTML}{F5F7FA}      % 面板浅底
+\definecolor{linegray}{HTML}{D7DEE7}   % 发丝线
+\definecolor{okgreen}{HTML}{2E7D5B}
+\definecolor{tintgreen}{HTML}{EAF4EF}
+\definecolor{warnamber}{HTML}{9A6B16}
+\definecolor{tintamber}{HTML}{FAF4E6}
+\definecolor{riskred}{HTML}{A63D3A}
+\definecolor{coverbg}{HTML}{11151B}    % 封面近黑
+\definecolor{coverrule}{HTML}{3A4656}
 
-% --- 页眉页脚 ---
-\pagestyle{fancy}
-\fancyhf{}
-\fancyhead[L]{\small Poliscope 技术白皮书}
-\fancyhead[R]{\small\thepage}
-\renewcommand{\headrulewidth}{0.4pt}
+% ---------- 字体 ----------
+\setmainfont{TeX Gyre Heros}[Scale=0.96]
+\setmonofont{TeX Gyre Cursor}[Scale=0.92]
+\setCJKmainfont{Microsoft YaHei}[BoldFont={Microsoft YaHei Bold}]
+\setCJKsansfont{Microsoft YaHei}[BoldFont={Microsoft YaHei Bold}]
+\linespread{1.22}\selectfont
+\color{ink}
+\setlength{\emergencystretch}{3em}\tolerance=1400\hbadness=2000
 
-% --- 小节标题格式 ---
-\titleformat{\section}{\Large\bfseries}{\thesection}{1em}{}
-\titleformat{\subsection}{\large\bfseries}{\thesubsection}{1em}{}
-\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{1em}{}
+% ---------- 标题样式 ----------
+\titleformat{\section}
+  {\sffamily\bfseries\fontsize{17}{22}\selectfont\color{ink}}
+  {\colorbox{accent}{\color{white}\enspace\thesection\enspace}}{0.7em}
+  {}
+  [\vspace{2pt}{\color{linegray}\titlerule[1pt]}]
+\titlespacing*{\section}{0pt}{1.5em}{0.9em}
+
+\titleformat{\subsection}
+  {\sffamily\bfseries\fontsize{12.5}{16}\selectfont\color{ink}}
+  {\textcolor{accent}{\rule[0.12em]{0.52em}{0.52em}}}{0.6em}
+  {}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.45em}
+
+\titleformat{\subsubsection}
+  {\sffamily\bfseries\fontsize{11}{14}\selectfont\color{ink2}}
+  {}{0em}{}
+\titlespacing*{\subsubsection}{0pt}{0.9em}{0.3em}
 
 \setcounter{tocdepth}{2}
 
+% ---------- 目录 ----------
+\renewcommand{\cftsecfont}{\sffamily\bfseries\color{ink}}
+\renewcommand{\cftsecpagefont}{\sffamily\bfseries\color{ink}}
+\renewcommand{\cftsubsecfont}{\sffamily\color{ink2}}
+\renewcommand{\cftsubsecpagefont}{\sffamily\color{ink2}}
+\renewcommand{\cftsecdotsep}{\cftdotsep}
+\renewcommand{\cftsecleader}{\sffamily\color{muted}\cftdotfill{\cftdotsep}}
+\renewcommand{\cftsubsecleader}{\sffamily\color{muted}\cftdotfill{\cftdotsep}}
+\setlength{\cftbeforesecskip}{5pt}
+
+% ---------- 页眉页脚 ----------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\sffamily\footnotesize\color{muted}Poliscope 技术白皮书}
+\fancyhead[R]{\sffamily\footnotesize\color{muted}\thepage}
+\renewcommand{\headrulewidth}{0.6pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{linegray}\leaders\hrule height \headrulewidth\hfill}}
+\setlength{\headheight}{14pt}
+
+% ---------- 内容盒子 ----------
+\newtcolorbox{principlebox}[1][]{
+  colback=tint, colframe=accent, boxrule=0pt, leftrule=3pt,
+  arc=1.5pt, outer arc=1.5pt, left=10pt, right=10pt, top=8pt, bottom=8pt,
+  fonttitle=\sffamily\bfseries, coltitle=white,
+  breakable, #1}
+\newtcolorbox{mechbox}[1][]{
+  colback=panel, colframe=linegray, boxrule=0pt, leftrule=3pt,
+  arc=1.2pt, outer arc=1.2pt, left=10pt, right=10pt, top=7pt, bottom=7pt,
+  breakable, #1}
+\newtcolorbox{honestbox}[1][]{
+  colback=tintamber, colframe=warnamber, boxrule=0pt, leftrule=3pt,
+  arc=1.2pt, outer arc=1.2pt, left=10pt, right=10pt, top=7pt, bottom=7pt,
+  breakable, #1}
+\newtcolorbox{findingbox}[1][]{
+  colback=tintgreen, colframe=okgreen, boxrule=0pt, leftrule=3pt,
+  arc=1.2pt, outer arc=1.2pt, left=10pt, right=10pt, top=7pt, bottom=7pt,
+  breakable, #1}
+
+% 统一的小标签
+\newcommand{\boxtag}[1]{{\sffamily\bfseries\footnotesize #1}\par\vspace{2pt}}
+
+% ---------- 表格 ----------
+\captionsetup{font={small,sf}, labelfont={bf,sf}, labelsep=quad}
+\newcommand{\thd}[1]{{\sffamily\bfseries #1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\renewcommand{\arraystretch}{1.32}
+\newcommand{\tblhead}{\color{white}\sffamily\bfseries}
+
+% ---------- 代码 ----------
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\footnotesize\color{ink},
+  keywordstyle=\sffamily\bfseries\color{accentdk},
+  commentstyle=\itshape\color{muted},
+  stringstyle=\color{accentdk},
+  numberstyle=\tiny\color{muted},
+  breaklines=true,
+  frame=none,
+  backgroundcolor=\color{panel},
+  columns=flexible,
+  xleftmargin=8pt, xrightmargin=8pt,
+  aboveskip=0.7em, belowskip=0.7em,
+  showstringspaces=false,
+  tabsize=2,
+}
+\lstdefinelanguage{ps}{morekeywords={def,return,if,else,elif,for,in,not,and,or,None,True,False,class,import,from,try,except,raise,with,as,while,lambda}}
+
+% ---------- TikZ 共享样式 ----------
+\tikzset{
+  nd/.style={rounded corners=2.5pt, draw=linegray, line width=0.7pt,
+    fill=white, text=ink, font=\sffamily\scriptsize, align=center,
+    inner sep=4.5pt, minimum height=2.2em},
+  nda/.style={nd, draw=accent, fill=tint, text=accentdk, font=\sffamily\bfseries\scriptsize},
+  ndd/.style={nd, fill=ink, text=white, draw=ink, font=\sffamily\bfseries\scriptsize},
+  flow/.style={-{Stealth[length=2.2mm]}, line width=0.8pt, color=accent},
+  flowg/.style={-{Stealth[length=2.2mm]}, line width=0.7pt, color=muted, dashed},
+  lbl/.style={font=\sffamily\tiny\color{muted}, align=center},
+}
+
+% ---------- 通用小命令 ----------
+\newcommand{\code}[1]{{\ttfamily\footnotesize #1}}
+\newcommand{\seat}[1]{{\ttfamily\footnotesize #1}}
+
 \begin{document}
 
-% ===== 封面 =====
+% ============================== 封面 ==============================
 \begin{titlepage}
-\centering
-\vspace*{3cm}
-{\Huge\bfseries Poliscope\par}
-\vspace{1cm}
-{\LARGE\bfseries 技术白皮书\par}
-\vspace{1.5cm}
-{\Large\bfseries EpistemoBrain：七人科学议会、双图证据治理与\par 计算社会科学盲点发现智能体\par}
-\vspace{2cm}
-{\large 版本 1.0 \quad 2026 年 8 月\par}
-\vspace{3cm}
-{\large 对应系统论文：\par
-《EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence
-Governance for Auditable Scientific Blindspot Discovery》\par
-（见 \texttt{docs/paper/epistemobrain.pdf}）\par}
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+  \fill[coverbg] (current page.south west) rectangle (current page.north east);
+  % 顶部标识带
+  \draw[coverrule, line width=0.8pt] ([xshift=2.6cm,yshift=-2.6cm]current page.north west)
+    -- ([xshift=-2.6cm,yshift=-2.6cm]current page.north east);
+  \node[anchor=west, text=white, font=\sffamily\bfseries\footnotesize]
+    at ([xshift=2.6cm,yshift=-2.28cm]current page.north west) {POLISCOPE\enspace\textcolor{muted}{\textbar}\enspace\textcolor{muted}{研究智能体技术文件}};
+  % 底部信息带
+  \draw[coverrule, line width=0.8pt] ([xshift=2.6cm,yshift=3.05cm]current page.south west)
+    -- ([xshift=-2.6cm,yshift=2.9cm]current page.south east);
+\end{tikzpicture}
+
+\vspace*{3.2cm}
+{\sffamily\color{white}\fontsize{46}{50}\selectfont\bfseries Poliscope\par}
+\vspace{0.55cm}
+{\sffamily\color{white!85}\fontsize{20}{26}\selectfont 技术白皮书\par}
+\vspace{0.35cm}
+\textcolor{accent}{\rule{4.2cm}{2.4pt}}\par
+\vspace{1.1cm}
+{\sffamily\color{white!92}\fontsize{15.5}{24}\selectfont\bfseries
+EpistemoBrain：七人科学议会、双图证据治理\\与计算社会科学盲点发现智能体\par}
+\vspace{0.9cm}
+{\sffamily\color{white!60}\fontsize{10.5}{16}\selectfont
+七名 AI 科学家独立取证、交叉质询、专门寻找反例，\\
+产出结论与局限并排、证据可溯源、异议不删除的争议证据地图。\par}
+
 \vfill
+\begin{tikzpicture}[remember picture, overlay]
+  \node[anchor=south west, text=white!55, font=\sffamily\footnotesize]
+    at ([xshift=2.6cm,yshift=2.45cm]current page.south west)
+    {版本 2.0\quad\textbar\quad2026 年 9 月\quad\textbar\quad MIT License};
+  \node[anchor=south west, text=white!55, font=\sffamily\footnotesize]
+    at ([xshift=2.6cm,yshift=1.78cm]current page.south west)
+    {源码仓库：github.com/Fishman-free/poliscope\quad\textbar\quad 在线实例：poliscope.tech};
+  \node[anchor=south west, text=white!55, font=\sffamily\footnotesize]
+    at ([xshift=2.6cm,yshift=1.11cm]current page.south west)
+    {配套学术论文：EpistemoBrain（ACL Findings 2026 格式，源码见 docs/paper/）};
+\end{tikzpicture}
 \end{titlepage}
 
-\tableofcontents
-\newpage
+% ============================== 摘要 ==============================
+\input{ch00_summary}
 
-% ===== 正文分章 =====
+% ============================== 目录 ==============================
+\clearpage
+\renewcommand{\cfttoctitlefont}{\sffamily\bfseries\fontsize{20}{24}\selectfont\color{ink}}
+\renewcommand{\cftaftertoctitle}{\par\vspace{0.2em}{\color{linegray}\rule{\linewidth}{1pt}}\par\vspace{0.6em}}
+\tableofcontents
+\clearpage
+
+% ============================== 正文 ==============================
 \input{ch01_intro}
-\input{ch02_epistemobrain}
+\input{ch02_method}
 \input{ch03_architecture}
 \input{ch04_council}
 \input{ch05_memory}
 \input{ch06_dualgraph}
 \input{ch07_evidence}
-\input{ch08_tokens}
+\input{ch08_cost}
 \input{ch09_reliability}
 \input{ch10_evaluation}
 \input{ch11_engineering}
+\input{ch12_limits}
+\input{ch13_appendix}
 
 \end{document}

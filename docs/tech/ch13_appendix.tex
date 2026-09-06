@@ -1,0 +1,70 @@
+% ===================== 附录 =====================
+\appendix
+\section{附录：正式证据图词汇表与模块速查}
+
+\subsection*{A.1\quad 证据图正式节点（10 类）}
+
+\begin{tcolorbox}[colback=panel, colframe=linegray, boxrule=0.6pt, arc=2pt, fontupper=\ttfamily\small]
+ResearchQuestion\quad Claim\quad Source\quad StudyFinding\quad Construct\\
+Context\quad Blindspot\quad DebateCapsule\quad DiscriminatingStudy\quad DissentCertificate
+\end{tcolorbox}
+
+\subsection*{A.2\quad 证据图正式边（12 类）}
+
+\begin{tcolorbox}[colback=panel, colframe=linegray, boxrule=0.6pt, arc=2pt, fontupper=\ttfamily\small]
+SUPPORTS\quad REFUTES\quad QUALIFIES\quad CONTRADICTS\quad CONFOUNDS\quad MEDIATES\\
+MODERATES\quad OPERATIONALIZES\quad DERIVED\_FROM\quad APPLIES\_IN\quad EXPOSES\quad TESTS
+\end{tcolorbox}
+
+每条边携带 source、target、strength、rationale、scope、created\_by、reviewed\_by、status，自身也是可审计对象。
+
+\needspace{6em}\subsection*{A.3\quad 结构化科研动作词汇表}
+
+\par\small\noindent
+\begin{tabularx}{\linewidth}{@{}L{3.0cm} X@{}}
+\toprule
+\rowcolor{accent}
+\tblhead 动作 & \tblhead 语义 \\
+\midrule
+PROPOSE   & 提出新主张、盲点或机制假设 \\
+SUPPORT   & 以证据引用支持某节点 \\
+CHALLENGE & 质询某节点，须给出攻击点与证据 \\
+QUALIFY   & 为结论补充适用边界或条件 \\
+FORK      & 标记需要分岔讨论的竞争解释 \\
+REQUEST   & 请求补充证据或澄清 \\
+REVISE    & 修正自身此前动作 \\
+DISSENT   & 保留具名异议，生成异议证书素材 \\
+\midrule
+DEFEND / REVISE / NARROW / WITHDRAW & 收到质询后的四种合法回应（外加 DISSENT）\\
+\bottomrule
+\end{tabularx}
+
+
+\needspace{8em}\subsection*{A.4\quad 关键配置项速查}
+
+\par\small\noindent
+\begin{tabularx}{\linewidth}{@{}L{6.2cm} L{3.2cm} X@{}}
+\toprule
+\rowcolor{accent}
+\tblhead 配置 / 常量 & \tblhead 默认值 & \tblhead 含义 \\
+\midrule
+\code{POLISCOPE\_COUNCIL\_INPUT\_GRACE\_SECONDS} & 300 秒（下限 30） & 人类引导检查点宽限，届满自动续跑 \\
+\code{FREE\_TRIAL\_LIMIT} & 1 次/账户 & 免费体验额度，确认主张时原子扣减 \\
+\code{DEFAULT\_RECALL\_BUDGET} & 800 字符 & 单席召回预算，保科研骨架 \\
+\code{\_COLLECT\_DEADLINE\_SECONDS} & 900 秒 & 单轮席位收集上限 \\
+\code{MAX\_SEAT\_ATTEMPTS} & 2 & 单席模型调用重试上限 \\
+\code{MAX\_SCHEMA\_REPAIR\_ATTEMPTS} & 1 & 结构化输出修复次数上限 \\
+模型调用超时 & 流式 240 秒 / 非流式 300 秒 & 先流式、失败回退非流式 \\
+账本 / 过程流客户端上限 & 4000 / 5000 帧 & 有界重放，批量合并渲染 \\
+\bottomrule
+\end{tabularx}
+
+
+\subsection*{A.5\quad 在线资源}
+
+\begin{itemize}[leftmargin=1.6em, itemsep=2pt]
+\item 源码仓库：\url{https://github.com/Fishman-free/poliscope}（MIT License）
+\item 公开实例：\url{https://poliscope.tech}
+\item 配套学术论文：\code{docs/paper/epistemobrain.tex}（ACL Findings 格式源文件）
+\item 正式设计规格：\code{docs/superpowers/specs/2026-07-31-poliscope-design.md}
+\end{itemize}

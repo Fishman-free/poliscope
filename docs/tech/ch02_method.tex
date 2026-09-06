@@ -1,0 +1,78 @@
+% ===================== 第 2 章 =====================
+\section{EpistemoBrain 方法总览}
+
+EpistemoBrain 是 Poliscope 的核心方法，回答一个问题：\textbf{一套多智能体研究系统要满足什么组织结构，才能让「被质疑过的结论」可追溯、让少数意见活下来、让过程材料冒充不了证据。}本章先给出整体轮廓，后续章节再逐层展开机制。
+
+\subsection{三根支柱}
+
+整套方法由三根支柱构成，分别对应「谁在研究」「靠什么记得」「什么算证据」。
+
+\begin{enumerate}[leftmargin=1.6em, itemsep=5pt]
+\item \textbf{七人科学议会（Council Protocol）}回答「谁在研究」。七个固定席位各有独立角色规格、私人状态、私人记忆与证据排序权重，按八阶段协议用结构化动作互相质询。多视角不靠人多，靠每个视角被制度化地挑战。详见第 4 章。
+\item \textbf{三层记忆（Three-Layer Memory）}回答「靠什么记得」。私人记忆、集体执行记忆、争议证据地图逐层收敛，并形成「过程产生证据、证据暴露盲点、盲点驱动下一轮调查」的闭环。集体记忆不是存档柜，它参与决定下一轮查什么。详见第 5 章。
+\item \textbf{双图证据治理（Dual-Graph Governance）}回答「什么算证据」。过程图与证据图物理分离，中间隔着追加写的事件账本、六阶段证据门和唯一投影器。详见第 6、7 章。
+\end{enumerate}
+
+\subsection{一次研究的认识论循环}
+
+三根支柱在一次真实任务中串成一条八阶段循环（图~\ref{fig:loop}）。每个阶段都对应一个它专门防止的失败：预承诺防锚定，专业取证防空谈，证据交换防重复阅读，交叉质询防隐藏假设，盲点悬赏把无人触碰的缺口显式化，联合建模防多数票冒充共识，最终复判防信念漂移后无人记账，报告阶段只做组装、不再产生新判断。
+
+\begin{figure}[ht]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[node distance=1.0mm and 3.5mm]
+  \node[nda] (p1) {1 独立预承诺};
+  \node[nd, right=of p1] (p2) {2 专业取证};
+  \node[nd, right=of p2] (p3) {3 证据交换};
+  \node[nd, right=of p3] (p4) {4 交叉质询};
+  \node[nda, below=of p4] (p5) {5 盲点悬赏};
+  \node[nd, left=of p5] (p6) {6 联合建模};
+  \node[nd, left=of p6] (p7) {7 最终复判};
+  \node[ndd, left=of p7] (p8) {8 报告组装};
+  \draw[flow] (p1)--(p2); \draw[flow] (p2)--(p3); \draw[flow] (p3)--(p4);
+  \draw[flow] (p4)--(p5); \draw[flow] (p5)--(p6); \draw[flow] (p6)--(p7); \draw[flow] (p7)--(p8);
+  \draw[flowg] (p5.south) to[bend right=22] node[lbl,pos=0.5]{缺口生成新调查任务} (p2.south);
+\end{tikzpicture}}
+\caption{EpistemoBrain 认识论循环：蓝色为两个「判断封存」关键点；第 5 阶段的盲点可回流到第 2 阶段形成增量调查。}
+\label{fig:loop}
+\end{figure}
+
+\subsection{三条认识论硬约束}
+
+\begin{mechbox}
+\boxtag{\color{ink2}不投票}
+禁止以多数投票裁决科研真理。即使多数席位支持，只要存在未解决的致命质询或缺乏证据引用，共识就被阻断；最终输出必须同时写出多数判断、具名异议、真正分歧点与解决分歧所需证据（第 4.4 节）。
+\end{mechbox}
+
+\begin{mechbox}
+\boxtag{\color{ink2}不匿名删除异议}
+被反驳、隔离或折叠的观点不做物理删除，只改状态并保留谱系；辩证折叠要求正反双方字段齐备，缺一方就拒绝折叠（第 6.7 节）。
+\end{mechbox}
+
+\begin{mechbox}
+\boxtag{\color{ink2}不把过程当证据}
+七名科学家没有证据图写权限；任何正式修改先写事件账本，由唯一投影器过证据门后落图。这条约束在数据库角色权限层强制，而非依赖代码自律（第 6.5、11.7 节）。
+\end{mechbox}
+
+\subsection{与两条主流路线的边界}
+
+Deep Research 优化「读得全」，固定多智能体辩论优化「吵得充分」，EpistemoBrain 优化「被质疑过的结论仍然可追溯」。表~\ref{tab:compare} 给出机制层面的对照，后文每一行都有对应章节落地。
+
+\begin{table}[ht]
+\centering\small
+\caption{EpistemoBrain 与两类常见研究智能体的机制对照}
+\label{tab:compare}
+\begin{tabularx}{\linewidth}{@{}L{2.5cm} XXX@{}}
+\toprule
+\rowcolor{accent}
+\tblhead 维度 & \tblhead Deep Research & \tblhead 固定多智能体辩论 & \tblhead EpistemoBrain \\
+\midrule
+多视角来源 & 单 Agent 换提示词 & 多 Agent 自由发言 & 7 席独立角色规格，结构化动作质询 \\
+异议去向 & 并入总结 & 多数意见胜出 & 具名异议证书，永久留图 \\
+记忆机制 & 上下文窗口 & 彼此独立、无共享 & 三层记忆，集体记忆调度下一轮 \\
+证据标准 & 引用存在即可 & 引用存在即可 & 六阶段证据门 + 因果越级拦截 \\
+证据写权限 & 无此概念 & 无此概念 & 数据库层唯一投影器 \\
+最终产物 & 流畅综述 & 辩论记录 & 结论与局限并排的可审计证据地图 \\
+\bottomrule
+\end{tabularx}
+\end{table}

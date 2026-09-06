@@ -1,71 +1,52 @@
-% ===== 第 6 章：双图架构与事件账本 =====
-\section{双图架构与事件账本}
+% ===================== 第 6 章 =====================
+\section{双图治理与科学事件账本}
 
-\subsection{为什么是两张图}
+\subsection{为什么必须是两张图}
 
-MemoBrain 的推理图回答「科学家是怎样完成这次研究的」，争议证据图回答「我们对这个研究问题目前知道什么」。两者不能混为一张图，否则：工具调用步骤与学术证据混在一起、Agent 的中间猜想被误认为事实、Fold 推理过程时误删证据、一篇论文中的多个研究发现无法精确表示、界面无法清晰展示争议结构。
+过程图回答「科学家是怎样完成这次研究的」，证据图回答「我们目前对这个问题知道什么」。合并成一张图会同时引发五类问题：工具调用步骤与学术证据混杂；Agent 的中间猜想被误读为事实；压缩推理过程时误删证据；一篇论文里的多个发现无法精确表示；界面无法清晰呈现争议结构。因此两张图在存储、权限与折叠规则上全部隔离。
 
-因此 Poliscope 采用\textbf{双图模型}：
+\begin{itemize}[leftmargin=1.6em, itemsep=3pt]
+\item \textbf{过程图 Process Graph}：任务、工具调用、失败路线、质询与决策，由记忆层管理，允许普通 Flush/Fold/Recall，节点永不自动成为正式证据。
+\item \textbf{证据图 Evidence Graph}：10 类正式节点、12 类正式边（速查表见附录 A），只存经过审计的知识，只有图投影器能写。
+\end{itemize}
 
-\begin{enumerate}
-\item \textbf{Process Graph}（过程图）：记录科学家的任务、工具调用、失败路线、质询、决策。由 MemoBrain 管理，允许普通 Flush/Fold/Recall。\emph{过程节点不会自动成为正式科研证据。}
-\item \textbf{Evidence Graph}（证据图）：10 种节点、12 种边，只存放经过审计的正式知识。只有 Graph Projector 能写。
+\subsection{科学事件账本：一切正式修改的唯一入口}
+
+七名科学家不得直接写证据图，所有正式修改必须先写入 \code{packages/evidence/sql\_ledger.py} 的 \code{SqlEventLedger}。账本设计了四条性质。
+
+\begin{enumerate}[leftmargin=1.6em, itemsep=3pt]
+\item \textbf{幂等、可重放。}唯一约束 \code{uq\_event\_idempotency} 加全序 \code{sequence}（\code{coalesce(max(sequence),0)+1}）。同一批事件重放任意次，结果相同。
+\item \textbf{冲突可见。}同一幂等键提交不同 payload 时抛 \code{EventConflict}，任何改写历史的尝试都无法静默通过。
+\item \textbf{并发串行化。}PostgreSQL 事务级咨询锁（\code{pg\_advisory\_xact\_lock}）保证并发提交不乱序。
+\item \textbf{过程事件不升级。}仅过程类事件允许 \code{on\_conflict="skip"}，正式事件不享受此通道。
 \end{enumerate}
 
-\subsection{证据图：首版正式节点}
+幂等键由阶段、席位与位置派生（\code{PhaseContext.key()}，含超长查询的哈希折叠——这是修复过真实生产事故的细节：把 \code{uuid4()} 放进 payload 的轮次会在重放时与自己的幂等键冲突，现有测试专门盯防这一回退）。
 
-\begin{verbatim}
-ResearchQuestion  Claim  Source  StudyFinding  Construct
-Context  Blindspot  DebateCapsule  DiscriminatingStudy  DissentCertificate
-\end{verbatim}
+\subsection{图投影器：证据图的唯一写入者}
 
-在 \texttt{packages/evidence/contracts.py:10-35} 定义。\texttt{DebateCapsule} 由联合建模阶段的 Dialectical Fold 产出，\texttt{DissentCertificate} 由最终复判阶段为持异议的席位产出——两者都是「异议不得被静默删除」原则的直接实现：被反驳、隔离或折叠的观点必须保持可追溯。
+\code{packages/evidence/sql\_projector.py} 的 \code{SqlGraphProjector} 顺序消费账本事件，机制包括：节点事件类型白名单（过程事件直接拒绝）；\code{node\_id\_for} 保证节点跨重放 id 稳定；写入边时对悬空目标抛 \code{ProjectionError}；checkpoint 单调不回退。投影器与应用身份的数据库权限划分已在第 3.4 节给出，此处不再重复。
 
-\subsection{证据图：首版正式边}
+\subsection{双图双向联动}
 
-\begin{verbatim}
-SUPPORTS  REFUTES  QUALIFIES  CONTRADICTS  CONFOUNDS  MEDIATES
-MODERATES  OPERATIONALIZES  DERIVED_FROM  APPLIES_IN  EXPOSES  TESTS
-\end{verbatim}
+\begin{figure}[ht]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[node distance=3mm and 10mm]
+  \node[nd, minimum width=34mm, minimum height=12mm] (proc) {\textbf{过程图}\newline\tiny 思考 · 检索 · 失败路线 · 质询};
+  \node[nda, right=of proc, minimum width=30mm, minimum height=12mm] (led) {\textbf{事件账本 + 证据门}\newline\tiny 追加写 · 幂等 · 六阶段审计};
+  \node[ndd, right=of led, minimum width=34mm, minimum height=12mm] (ev) {\textbf{证据图}\newline\tiny 主张 · 发现 · 来源 · 盲点};
+  \draw[flow] (proc.north) to[bend left=20] node[lbl,above]{① 结构化事件送审} (led.north);
+  \draw[flow] (led.north) to[bend left=20] node[lbl,above]{② 过审后投影落图} (ev.north);
+  \draw[flow] (ev.south) to[bend left=20] node[lbl,below]{③ 缺口生成盲点与新任务} (led.south);
+  \draw[flowg] (led.south) to[bend left=20] node[lbl,below]{④ 新任务回灌私人记忆} (proc.south);
+\end{tikzpicture}}
+\caption{双图联动：正向通道把过程提炼为证据，回流通道把证据缺口变成下一轮过程；两个方向都经过账本，没有旁路写入。}
+\label{fig:dualgraph}
+\end{figure}
 
-每条边也是可审计对象：source、target、strength、rationale、scope、created\_by、reviewed\_by、status。
+\textbf{正向（过程 $\rightarrow$ 证据）}：科学家完成「思考 $\rightarrow$ 检索 $\rightarrow$ 阅读 $\rightarrow$ 抽取发现 $\rightarrow$ 提交动作」整段过程，过程图全程记录，但只有结构化事件进入审计通道。\textbf{回流（证据 $\rightarrow$ 过程）}：证据图发现「支持某主张的七项发现全部来自自报告数据」这类缺口，生成 \code{Blindspot} 与新的调查任务，写入相关席位的私人记忆，开启增量调查。两条路径都经过账本，不存在绕过审计的写入。
 
-\subsection{科研事件账本（Scientific Event Ledger）}
+\subsection{被反驳的节点淡化，但永不消失}
 
-\textbf{7 名科学家不得直接写证据图。}所有正式修改必须先写入 \texttt{packages/evidence/sql\_ledger.py} 的 \texttt{SqlEventLedger}。关键机制：
-
-\begin{enumerate}
-\item \textbf{幂等可重放}：\texttt{uq\_event\_idempotency} 唯一约束 + 全序 \texttt{sequence}（\texttt{coalesce(max(sequence),0)+1}）。重跑一次是空操作。
-\item \textbf{审计防线}：同一幂等键、不同 payload 抛 \texttt{EventConflict}——防止任何改写历史的尝试被静默接受。
-\item \textbf{串行化}：\texttt{pg\_advisory\_xact\_lock} 保证并发无乱序。
-\item \textbf{过程事件不升级}：\texttt{on\_conflict="skip"} 仅用于 process-only 事件。
-\end{enumerate}
-
-幂等键由阶段 + 席位 + 位置派生（\texttt{PhaseContext.key()}，\texttt{registry.py:451-480}，含超长 query 的 hash 折叠——这是修复过真实生产事故的细节）。任何把 \texttt{uuid4()} 写进 payload 的轮次都会在重放时与自己的幂等键冲突，有测试专门盯这件事。
-
-\subsection{Graph Projector：唯一写入者}
-
-\texttt{packages/evidence/sql\_projector.py} 的 \texttt{SqlGraphProjector} 是证据图的唯一写入者。关键机制：
-
-\begin{enumerate}
-\item \textbf{NODE\_EVENT\_TYPES allowlist}：拒绝过程事件升级为证据。
-\item \textbf{node\_id\_for}：节点跨重放保持 id 稳定。
-\item \textbf{\_write\_edges}：对悬空目标抛 \texttt{ProjectionError}——不允许指向不存在节点的边。
-\item \textbf{checkpoint 单调不回退}。
-\end{enumerate}
-
-\textbf{双图隔离在数据库层强制}：\texttt{privileges.py} 中 app 角色对 graph 表仅 SELECT，投影器角色可 INSERT/UPDATE 但\emph{无 DELETE}（迁移 0019 仅对会话删除放行），账本表 app 角色仅 APPEND。集成测试 \texttt{test\_graph\_write\_isolation.py}（10 用例）逐条验证。
-
-\subsection{双图如何双向联动}
-
-\textbf{方向 1：过程图 $\rightarrow$ 证据图。}每次科学家完成一个 episode：思考 $\rightarrow$ 调用检索工具 $\rightarrow$ 阅读论文 $\rightarrow$ 提取研究发现 $\rightarrow$ 提交 SUPPORT 事件。Private MemoBrain 把整个过程记入 Process Graph，但只把结构化事件送入证据图验证管道。过程图保存「为什么搜索、搜了什么、失败了什么」，证据图保存「论文、具体发现、支持关系、适用边界、审核状态」。
-
-\textbf{方向 2：证据图 $\rightarrow$ 过程图。}证据图发现新盲点（例如「支持 C2 的 7 项研究发现全部使用自报告数据」），生成 \texttt{Blindspot}，然后创建新的过程任务 \texttt{ASSIGNMENT}，写入 7 席的 Private MemoBrain，开始新一轮推理。形成闭环：
-
-\begin{lstlisting}
-过程产生证据 -> 证据暴露盲点 -> 盲点产生新任务 -> 新任务产生新过程 -> 新过程更新证据
-\end{lstlisting}
-
-\subsection{被反驳、隔离、折叠的节点不物理删除}
-
-\texttt{SqlGraphProjector} 的 upsert 不删节点，只改 \texttt{status}。\texttt{DebateCapsule.\_\_post\_init\_\_}（\texttt{evidence/dialectical\_fold.py:22-34}）要求正反双方字段全非空，否则拒绝折叠。\texttt{DissentCertificate} 挂在事件本体上，防止报告摘要时丢失。前端 \texttt{MapView} 注释直述「dimmed, never hidden」——被反驳的节点淡化但永不消失。对应测试 \texttt{test\_dissent\_preservation.py}、\texttt{test\_dialectical\_fold.py}。
+投影器的 upsert 只改 \code{status}、不删行；辩证折叠要求正反双方字段全部非空，缺字段就拒绝折叠（\code{dialectical\_fold.py}）；异议证书挂在事件本体上，报告组装无法把它「总结没」。前端证据地图遵循同一条规则：被反驳节点淡化显示（dimmed, never hidden）。对应回归测试包括 \code{test\_dissent\_preservation.py} 与 \code{test\_dialectical\_fold.py}。
