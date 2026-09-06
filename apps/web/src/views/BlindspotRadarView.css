@@ -70,6 +70,22 @@
   stroke-width: 2.5;
 }
 
+.radar__ghost {
+  pointer-events: none;
+}
+
+.radar__leader {
+  stroke: var(--ink-3);
+  stroke-width: 0.75;
+  stroke-dasharray: 2 2;
+  opacity: 0.55;
+}
+
+.radar__ghost-dot {
+  fill: var(--ink-3);
+  opacity: 0.45;
+}
+
 .radar__side {
   display: flex;
   flex-direction: column;

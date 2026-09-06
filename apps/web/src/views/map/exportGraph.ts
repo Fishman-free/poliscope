@@ -1,14 +1,22 @@
 /** Zero-dependency evidence-map export: JSON, SVG and raster PNG.
  *
  * The formal graph comes from the server; the exported file additionally
- * carries the researcher's overlay (private notes, stickies, layout), and the
- * SVG/PNG render a faithful, print-readable snapshot of the current canvas --
- * dashed red for opposing relations, dotted blue for citation hops, so the
- * edge semantics survive greyscale just like on screen.
+ * carries the researcher's overlay (private notes, stickies, connectors,
+ * layout), and the SVG/PNG render a faithful, print-readable snapshot of the
+ * current canvas -- dashed red for opposing relations, dotted blue for
+ * citation hops, solid purple for the researcher's own connectors, so every
+ * edge semantics survives greyscale just like on screen. Sticky notes are
+ * painted with the same light fill, text colour and font the researcher
+ * chose, so an exported image contains the notes exactly as authored.
  */
 
 import type { EvidenceGraph } from "../../api/types";
-import type { MapOverlay, StickyNote } from "./overlayStore";
+import type {
+  MapOverlay,
+  StickyColor,
+  StickyFont,
+  StickyTextColor,
+} from "./overlayStore";
 
 export type NodeTone = "admitted" | "provisional" | "refuted" | "unknown";
 
@@ -20,14 +28,16 @@ export interface ExportNode {
   typeLabel: string;
   tone: NodeTone;
   kind: "evidence" | "sticky";
-  stickyColor?: StickyNote["color"];
+  stickyColor?: StickyColor;
+  textColor?: StickyTextColor;
+  font?: StickyFont;
 }
 
 export interface ExportEdge {
   source: string;
   target: string;
   label: string;
-  kind: "normal" | "opposing" | "cite";
+  kind: "normal" | "opposing" | "cite" | "user";
 }
 
 const NODE_W = 220;
@@ -44,12 +54,31 @@ const TONE_COLORS: Record<NodeTone, string> = {
   unknown: "#6e7781",
 };
 
-const STICKY_COLORS: Record<StickyNote["color"], { fill: string; bar: string }> =
-  {
-    amber: { fill: "#fff8e1", bar: "#d4a72c" },
-    blue: { fill: "#eef4ff", bar: "#0066cc" },
-    green: { fill: "#edf7ef", bar: "#1a7f37" },
-  };
+/** Light paper fills (high text contrast) + a matching soft border. */
+const STICKY_COLORS: Record<
+  StickyColor,
+  { fill: string; bar: string }
+> = {
+  yellow: { fill: "#fff7d6", bar: "#d4a72c" },
+  pink: { fill: "#ffe9f0", bar: "#d6618b" },
+  blue: { fill: "#e8f1ff", bar: "#3b82f6" },
+  green: { fill: "#e6f6e9", bar: "#1a7f37" },
+  purple: { fill: "#f1ebff", bar: "#7c5cbf" },
+  orange: { fill: "#ffeddf", bar: "#e07b39" },
+};
+
+const STICKY_TEXT_COLORS: Record<StickyTextColor, string> = {
+  ink: "#1d1d1f",
+  red: "#b3261e",
+  blue: "#1d4ed8",
+  green: "#166534",
+};
+
+const FONT_STACKS: Record<StickyFont, string> = {
+  sans: "system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif",
+  serif: "Georgia, 'Songti SC', 'SimSun', serif",
+  mono: "ui-monospace, 'Cascadia Mono', Consolas, monospace",
+};
 
 function escapeXml(value: string): string {
   return value
@@ -78,7 +107,7 @@ function wrapLines(text: string, maxUnits = 26): string[] {
     }
     lines.push(line || " ");
   }
-  return lines.slice(0, 6);
+  return lines.slice(0, 8);
 }
 
 function nodeHeight(label: string): number {
@@ -129,13 +158,17 @@ export function buildSvg(
         ? TONE_COLORS.refuted
         : edge.kind === "cite"
           ? "#0066cc"
-          : "#86868b";
+          : edge.kind === "user"
+            ? "#7c5cbf"
+            : "#86868b";
     const dash =
       edge.kind === "opposing"
         ? ' stroke-dasharray="6 4"'
         : edge.kind === "cite"
           ? ' stroke-dasharray="2 4"'
-          : "";
+          : edge.kind === "user"
+            ? ' stroke-width="2.2"'
+            : "";
     const midX = (x1 + x2) / 2;
     const midY = (y1 + y2) / 2 - 4;
     edgeSvg.push(
@@ -156,10 +189,17 @@ export function buildSvg(
     const h = heights.get(node.id) ?? 80;
     const x = node.x + ox;
     const y = node.y + oy;
+    const fontFamily =
+      node.kind === "sticky"
+        ? FONT_STACKS[node.font ?? "sans"]
+        : "system-ui, sans-serif";
     if (node.kind === "sticky") {
-      const paper = STICKY_COLORS[node.stickyColor ?? "amber"];
+      const paper = STICKY_COLORS[node.stickyColor ?? "yellow"];
       nodeSvg.push(
-        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${h.toFixed(1)}" rx="12" fill="${paper.fill}" stroke="${paper.bar}" stroke-opacity="0.45"/>`,
+        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${NODE_W}" height="${h.toFixed(1)}" rx="12" fill="${paper.fill}" stroke="${paper.bar}" stroke-opacity="0.55"/>`,
+      );
+      nodeSvg.push(
+        `<text x="${(x + PAD_X).toFixed(1)}" y="${(y + 15).toFixed(1)}" font-size="9" font-weight="600" fill="${paper.bar}" font-family="system-ui, sans-serif">研究者便签</text>`,
       );
     } else {
       const tone = TONE_COLORS[node.tone];
@@ -173,10 +213,14 @@ export function buildSvg(
         `<text x="${(x + PAD_X + 4).toFixed(1)}" y="${(y + 16).toFixed(1)}" font-size="9.5" font-weight="600" fill="${tone}" font-family="system-ui, sans-serif">${escapeXml(node.typeLabel)}</text>`,
       );
     }
+    const textFill =
+      node.kind === "sticky"
+        ? STICKY_TEXT_COLORS[node.textColor ?? "ink"]
+        : "#1d1d1f";
     const lines = wrapLines(node.label);
     lines.forEach((line, index) => {
       nodeSvg.push(
-        `<text x="${(x + PAD_X + (node.kind === "sticky" ? 0 : 4)).toFixed(1)}" y="${(y + HEADER_H + (index + 1) * LINE_H - 4).toFixed(1)}" font-size="11.5" fill="#1d1d1f" font-family="system-ui, sans-serif">${escapeXml(line)}</text>`,
+        `<text x="${(x + PAD_X + (node.kind === "sticky" ? 0 : 4)).toFixed(1)}" y="${(y + HEADER_H + (index + 1) * LINE_H - 4).toFixed(1)}" font-size="11.5" fill="${textFill}" font-family="${fontFamily}">${escapeXml(line)}</text>`,
       );
     });
   }
@@ -187,6 +231,7 @@ export function buildSvg(
     <marker id="arrow-normal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#86868b"/></marker>
     <marker id="arrow-opposing" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${TONE_COLORS.refuted}"/></marker>
     <marker id="arrow-cite" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#0066cc"/></marker>
+    <marker id="arrow-user" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7c5cbf"/></marker>
   </defs>
   <rect width="100%" height="100%" fill="#fbfbfd"/>
   <text x="${CANVAS_PAD}" y="28" font-size="14" font-weight="600" fill="#1d1d1f" font-family="system-ui, sans-serif">${escapeXml(title)}</text>
@@ -230,10 +275,10 @@ export function exportJsonFile(
   const payload = {
     exported_at: new Date().toISOString(),
     task_id: taskId,
-    schema: "poliscope.evidence_map_export.v1",
+    schema: "poliscope.evidence_map_export.v2",
     evidence_graph: graph,
     researcher_overlay: overlay,
-    note: "researcher_overlay 是研究者的私人备注与布局，不是正式证据；正式证据以 evidence_graph 为准。",
+    note: "researcher_overlay 是研究者的私人备注、便签、连线与布局，不是正式证据；正式证据以 evidence_graph 为准。",
   };
   download(
     new Blob([JSON.stringify(payload, null, 2)], {

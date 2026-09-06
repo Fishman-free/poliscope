@@ -150,7 +150,41 @@ def test_fallback_with_consensus_keeps_consensus_wording() -> None:
         "\n".join(section.paragraphs) for section in paper.sections
     )
     assert "证据指向弱正相关" in all_text
-    assert "交叉核验" in all_text
+    # Plain reader-facing lead-in (Bug 8: no process jargon in the body).
+    assert "总体判断" in all_text
+
+
+def test_fallback_body_avoids_internal_jargon() -> None:
+    """Bug 8 tracer: outside investigation_process the reader-facing paper
+    must not use the system's internal process vocabulary."""
+    consensus: dict[str, object] = {
+        "conditional_consensus": "证据指向弱正相关，但因果方向未决。",
+    }
+    judgments = (
+        ("causal_scientist", "相关可解释为反向因果 (confidence: 0.6) [DISSENT]"),
+    )
+    paper = _fallback_integrated_paper(
+        _brief(), consensus, "Q", judgments=judgments
+    )
+    body = "\n".join(
+        "\n".join(section.paragraphs) for section in paper.sections
+    )
+    banned = (
+        "原子主张",
+        "条件化共识",
+        "交叉核验",
+        "交叉质询",
+        "联合建模",
+        "审计轨迹",
+        "席位",
+        "议会",
+        "最终复判",
+        "预承诺",
+    )
+    for term in banned:
+        assert term not in body, f"internal jargon leaked into paper: {term}"
+    # The abstract must be self-contained and start from the question.
+    assert paper.abstract.startswith("研究问题：")
 
 
 def test_phase_coverage_summary() -> None:

@@ -232,22 +232,38 @@ async def _lineage(
     return FrozenDict(view)
 
 
-async def _adjudication_decided_keys(
+async def _adjudication_decisions(
     session: AsyncSession, task_id: UUID
-) -> set[str]:
-    """Candidate/node keys the researcher has already adjudicated."""
+) -> dict[str, list[dict[str, object]]]:
+    """Every RESEARCHER_ADJUDICATION row grouped by target_key, ledger order.
+
+    The web Research Tools view renders the full decision history (who
+    decided what, with what note) under each candidate/quarantined item, not
+    just a resolved boolean -- that contract is AdjudicationItem.decisions in
+    apps/web/src/api/types.ts.
+    """
     result = await session.execute(
-        select(ScientificEventModel).where(
+        select(ScientificEventModel)
+        .where(
             ScientificEventModel.task_id == task_id,
             ScientificEventModel.event_type == RESEARCHER_ADJUDICATION,
         )
+        .order_by(ScientificEventModel.sequence)
     )
-    decided: set[str] = set()
+    decisions: dict[str, list[dict[str, object]]] = {}
     for row in result.scalars():
         target = row.payload.get("target_key")
-        if isinstance(target, str):
-            decided.add(target)
-    return decided
+        if not isinstance(target, str):
+            continue
+        decided_by = row.payload.get("decided_by")
+        decisions.setdefault(target, []).append(
+            {
+                "decision": str(row.payload.get("decision", "")),
+                "note": str(row.payload.get("note", "") or ""),
+                "decided_by": decided_by if isinstance(decided_by, str) else None,
+            }
+        )
+    return decisions
 
 
 async def _adjudication(
@@ -261,10 +277,16 @@ async def _adjudication(
     Merge candidates are the CONSENSUS_DRAFTED ``merge_candidates`` (unresolved
     conflicts the joint round deliberately does *not* auto-merge). Quarantined
     nodes come from STATUS_QUARANTINED ledger events joined to their ADMISSION
-    audit reasons (the same read the worker's Resurrect path uses). Anything
-    already carrying a RESEARCHER_ADJUDICATION is marked resolved.
+    audit reasons (the same read the worker's Resurrect path uses).
+
+    Every row is shaped as the web contract AdjudicationItem
+    (key/kind/detail/resolved/decisions); before this fix the client read
+    ``item.decisions.length`` on rows that lacked ``decisions`` and the whole
+    Research Tools view crashed to its error boundary. Legacy keys
+    (description/node_id/event_type/sequence/reasons) are retained for other
+    consumers.
     """
-    decided = await _adjudication_decided_keys(session, task_id)
+    decisions_by_key = await _adjudication_decisions(session, task_id)
     if consensus is None:
         consensus = (
             await _latest_payloads(
@@ -283,8 +305,11 @@ async def _adjudication(
         FrozenDict(
             {
                 "key": str(item),
+                "kind": "merge_candidate",
+                "detail": str(item),
+                "resolved": str(item) in decisions_by_key,
+                "decisions": tuple(decisions_by_key.get(str(item), ())),
                 "description": str(item),
-                "resolved": str(item) in decided,
             }
         )
         for item in candidate_items
@@ -292,10 +317,12 @@ async def _adjudication(
 
     quarantined_event_rows = list(
         await session.scalars(
-            select(ScientificEventModel).where(
+            select(ScientificEventModel)
+            .where(
                 ScientificEventModel.task_id == task_id,
                 ScientificEventModel.status == STATUS_QUARANTINED,
             )
+            .order_by(ScientificEventModel.sequence)
         )
     )
     # N+1 fix: one batched ADMISSION-audit lookup for every quarantined
@@ -325,14 +352,19 @@ async def _adjudication(
             else ()
         )
         node_key = str(node_id_for(event))
+        reason_text = "; ".join(reasons) if reasons else "(no admission audit)"
         quarantined.append(
             FrozenDict(
                 {
+                    "key": node_key,
+                    "kind": "quarantined",
+                    "detail": f"{event.event_type}: {reason_text}",
+                    "resolved": node_key in decisions_by_key,
+                    "decisions": tuple(decisions_by_key.get(node_key, ())),
                     "node_id": node_key,
                     "event_type": event.event_type,
                     "sequence": event.sequence,
                     "reasons": reasons,
-                    "resolved": node_key in decided,
                 }
             )
         )
@@ -556,7 +588,10 @@ async def _assemble_snapshot(
         evolution=await _evolution(session, task_id),
         paper_count=paper_count,
         independent_cluster_count=cluster_count,
-        lineage=lineage,
+        # Evidence Lineage view was removed from the product; its build still
+        # supplies paper_count/independent_cluster_count above, but the full
+        # blob is no longer shipped to clients.
+        lineage=None,
         adjudication=await _adjudication(
             session,
             task_id,

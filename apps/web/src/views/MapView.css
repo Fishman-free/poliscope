@@ -326,25 +326,76 @@
   box-shadow: 0 0 0 2px var(--accent), var(--shadow-1);
 }
 
-.sticky-node--amber {
-  background: #fff8e1;
+.sticky-node--yellow {
+  background: #fff7d6;
+}
+.sticky-node--pink {
+  background: #ffe9f0;
 }
 .sticky-node--blue {
-  background: #eef4ff;
+  background: #e8f1ff;
 }
 .sticky-node--green {
-  background: #edf7ef;
+  background: #e6f6e9;
+}
+.sticky-node--purple {
+  background: #f1ebff;
+}
+.sticky-node--orange {
+  background: #ffeddf;
 }
 
 .sticky-node__bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 2px var(--space-2);
+  gap: 4px;
+  padding: 2px 4px 2px var(--space-2);
   font-size: 10px;
   font-weight: 600;
   color: var(--ink-3);
   letter-spacing: 0.03em;
+}
+
+.sticky-node__title {
+  flex-shrink: 0;
+}
+
+.sticky-node__swatch {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.sticky-node__color {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  padding: 0;
+  cursor: pointer;
+}
+
+.sticky-node__color--on {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sticky-node__color--yellow { background: #ffe89a; }
+.sticky-node__color--pink { background: #ffc2d6; }
+.sticky-node__color--blue { background: #b9d4ff; }
+.sticky-node__color--green { background: #b6e3bf; }
+.sticky-node__color--purple { background: #d4c4ff; }
+.sticky-node__color--orange { background: #ffcfa8; }
+
+.sticky-node__select {
+  appearance: none;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 10px;
+  color: var(--ink-2);
+  padding: 1px 4px;
+  cursor: pointer;
 }
 
 .sticky-node__delete {
@@ -371,15 +422,95 @@
   border: 0;
   background: transparent;
   resize: none;
-  font: inherit;
   font-size: var(--text-small);
   line-height: 1.5;
   color: var(--ink-1);
   padding: 0 var(--space-2) var(--space-2);
 }
 
+.sticky-node--font-sans .sticky-node__text {
+  font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.sticky-node--font-serif .sticky-node__text {
+  font-family: Georgia, "Songti SC", "SimSun", serif;
+}
+.sticky-node--font-mono .sticky-node__text {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.sticky-node__text--ink { color: #1d1d1f; }
+.sticky-node__text--red { color: #b3261e; }
+.sticky-node__text--blue { color: #1d4ed8; }
+.sticky-node__text--green { color: #166534; }
+
 .sticky-node__text:focus {
   outline: none;
+}
+
+/* ---- Connection handles (researcher-drawn arrows) ---- */
+.map-connect-handle {
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 2px solid #7c5cbf;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+.react-flow__node:hover .map-connect-handle,
+.map-connect-handle.connectingfrom {
+  opacity: 1;
+}
+
+/* ---- Sticky color palette popover + canvas hint ---- */
+.map__sticky-add {
+  position: relative;
+  display: flex;
+}
+
+.map__palette {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  background: var(--surface-0);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-3);
+}
+
+.map__palette-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+  padding: 0;
+}
+
+.map__palette-swatch:hover {
+  transform: scale(1.12);
+}
+
+.map__palette-swatch--yellow { background: #fff2b8; }
+.map__palette-swatch--pink { background: #ffd3e1; }
+.map__palette-swatch--blue { background: #c9deff; }
+.map__palette-swatch--green { background: #c4ebcd; }
+.map__palette-swatch--purple { background: #ddcfff; }
+.map__palette-swatch--orange { background: #ffd8b8; }
+
+.map__tool--danger {
+  color: var(--refuted);
+}
+
+.map__hint {
+  margin: 0;
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  line-height: 1.45;
 }
 
 /* ---- Edges ---- */
@@ -402,6 +533,21 @@
 
 .react-flow__edge.map-edge--opposing .react-flow__edge-path {
   stroke: var(--refuted);
+}
+
+.react-flow__edge.map-edge--user .react-flow__edge-path {
+  stroke: #7c5cbf;
+  stroke-width: 2.2;
+}
+
+.react-flow__edge.map-edge--user.selected .react-flow__edge-path {
+  stroke: #5b34b4;
+  stroke-width: 3;
+}
+
+.map__legend-edge--user {
+  border-top-color: #7c5cbf;
+  border-top-style: solid;
 }
 
 .react-flow__edge-text {

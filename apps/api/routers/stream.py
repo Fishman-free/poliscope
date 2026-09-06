@@ -21,7 +21,7 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from apps.api.dependencies import AppState, get_state
+from apps.api.dependencies import AppState, CurrentUserDep, SessionDep, get_state
 from apps.api.schemas import SSEEvent
 from packages.accounts.service import AuthService
 from packages.epistemo.contracts import TaskStatus
@@ -195,6 +195,40 @@ async def stream_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+MAX_LEDGER_REST_ROWS = 4000
+
+
+@router.get("/{task_id}/events")
+async def list_task_events(
+    task_id: UUID,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+) -> list[SSEEvent]:
+    """REST replay of a task's ledger for history/terminal tasks (the SSE
+    stream is the live path; a finished task never opens one, which used to
+    leave its Audit Trail permanently empty)."""
+    try:
+        await ResearchRepository(session).get_task(task_id, current_user.id)
+    except TaskNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"unknown task {task_id}",
+        ) from error
+    entries = await SqlEventLedger(session).list_since(task_id, 0)
+    if len(entries) > MAX_LEDGER_REST_ROWS:
+        entries = entries[-MAX_LEDGER_REST_ROWS:]
+    return [
+        SSEEvent(
+            event_id=str(entry.sequence),
+            task_id=str(task_id),
+            kind=entry.event_type,
+            workspace_version=entry.sequence,
+            payload=FrozenDict(entry.payload),
+        )
+        for entry in entries
+    ]
 
 
 async def _process_events(

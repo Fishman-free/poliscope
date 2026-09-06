@@ -137,6 +137,11 @@ export function AnnotationView({
 
   return (
     <div className="rt-columns">
+      {error ? (
+        <p className="rt-message rt-message--error" role="alert">
+          {error}
+        </p>
+      ) : null}
       <Panel
         title={t("新建人工标注批次")}
         subtitle={t("把盲点与已确认主张冻结为待标注项，供多名评分者独立判断。")}
@@ -258,8 +263,6 @@ export function AnnotationView({
           </div>
         </Panel>
       ) : null}
-
-      {error ? <p className="rt-message rt-message--error">{error}</p> : null}
     </div>
   );
 }

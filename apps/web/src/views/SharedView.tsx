@@ -3,8 +3,8 @@
  * Mounted at /shared/{token} WITHOUT authentication. The server has already
  * redacted the snapshot (no model settings, no usage, no share metadata, no
  * private process trace); this view only renders the public-safe surfaces:
- * question, Research Brief (conclusions beside limitations) and evidence
- * lineage. There is deliberately no follow-up, no model panel, no actions.
+ * question, Research Brief (conclusions beside limitations). There is
+ * deliberately no follow-up, no model panel, no actions.
  */
 
 import { useEffect, useState } from "react";
@@ -13,7 +13,6 @@ import { ApiError, fetchSharedSnapshot } from "../api/client";
 import type { WorkspaceSnapshot } from "../api/types";
 import { Spinner, TaskStatusBadge } from "../components/primitives";
 import { t } from "../i18n";
-import { LineageView } from "./LineageView";
 
 import "./SharedView.css";
 
@@ -130,10 +129,6 @@ export function SharedView({ token }: { token: string }) {
             </ul>
           )}
         </section>
-      </div>
-
-      <div className="shared__card">
-        <LineageView lineage={snapshot.lineage} />
       </div>
     </div>
   );

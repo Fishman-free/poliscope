@@ -107,12 +107,15 @@ function summarise(event: LedgerEvent): string {
 /** Max audit rows mounted as DOM (newest first). */
 const AUDIT_RENDER_CAP = 500;
 
+
 export function AuditView({
   events,
   streamOpen,
+  terminal = false,
 }: {
   events: LedgerEvent[];
   streamOpen: boolean;
+  terminal?: boolean;
 }) {
   const [refusalsOnly, setRefusalsOnly] = useState(false);
 
@@ -157,14 +160,18 @@ export function AuditView({
         />
         {streamOpen
           ? t("已连接事件流。断线重连时按账本序号续传，不会丢事件。")
-          : t("事件流未连接。下方为本次会话已收到的事件。")}
+          : terminal
+            ? t("任务已结束，实时事件流已关闭；下方为服务端保存的完整事件账本。")
+            : t("事件流连接中。下方为本次会话已收到的事件。")}
       </p>
 
       {shown.length === 0 ? (
         <Empty>
           {refusalsOnly
             ? t("本次会话未收到任何拒绝或缺席事件。")
-            : t("尚未收到事件。任务可能仍在队列中。")}
+            : terminal
+              ? t("服务端账本中没有该任务的事件记录；任务可能在产出事件前就失败或被取消。")
+              : t("尚未收到事件。任务可能仍在队列中。")}
         </Empty>
       ) : (
         <>

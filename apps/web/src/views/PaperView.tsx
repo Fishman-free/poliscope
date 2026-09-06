@@ -41,7 +41,7 @@ function ReviewReportView({
     <div className="paper">
       <Panel
         title={paper.title}
-        subtitle={t("论文审查报告 · 综合 agent 整合议会产出")}
+        subtitle={t("论文审查报告 · 系统汇总多方评审意见")}
         actions={
           <button type="button" className="button" onClick={onExport}>
             {t("下载报告 Markdown")}
@@ -223,11 +223,11 @@ export function PaperView({
     return (
       <Panel
         title={t("最终论文")}
-        subtitle={t("综合七位科学家立场与议会共识的整合论文。")}
+        subtitle={t("围绕研究问题汇总现有证据、主要分歧与总体结论的完整论文。")}
       >
         <Empty>
           {t(
-            "综合论文尚未生成。这通常意味着议会仍在进行、模型网关未配置，或综合生成失败——原因可在审计轨迹中查看。当前结论以 Research Brief 为准。",
+            "论文尚未生成。这通常意味着研究仍在进行、模型未配置，或生成失败，可在审计轨迹中查看原因。当前可先参考 Research Brief。",
           )}
         </Empty>
         <div className="paper__empty-actions">
@@ -247,7 +247,7 @@ export function PaperView({
     <div className="paper">
       <Panel
         title={paper.title}
-        subtitle={t("最终论文 · 综合 agent 整合议会产出")}
+        subtitle={t("最终论文 · 围绕研究问题的证据综合")}
         actions={
           <button type="button" className="button" onClick={onExport}>
             {t("下载论文 Markdown")}
@@ -257,7 +257,7 @@ export function PaperView({
         {paper.fallback ? (
           <p className="paper__fallback-note" role="status">
             {t(
-              "本文由系统依据议会产出模板整合（综合模型调用{0}）。整合结论完整，但行文为系统生成，建议结合 Research Brief 与审计轨迹复核。",
+              "本文由系统依据已收集的证据离线汇总（综合模型调用{0}）。结论完整，但行文为系统生成，建议结合 Research Brief 与审计轨迹复核。",
               paper.fallback_reason ? `未成功（${paper.fallback_reason}）` : "未成功",
             )}
           </p>
@@ -279,7 +279,7 @@ export function PaperView({
         ) : null}
       </Panel>
 
-      <Panel title={t("正文")} subtitle={t("综合 agent 对议会产出的整合叙述。")}>
+      <Panel title={t("正文")} subtitle={t("围绕问题展开的证据、分歧与结论。")}>
         {paper.sections.length === 0 ? (
           <Empty>{t("论文正文为空。")}</Empty>
         ) : (
@@ -334,7 +334,7 @@ export function PaperView({
       {paper.overall_conclusion ? (
         <Panel
           title={t("总体结论")}
-          subtitle={t("议会是否形成了总体观点，以及它依赖的证据。")}
+          subtitle={t("现有证据是否支持总体观点，以及它依赖的证据。")}
         >
           <p className="paper__conclusion">{paper.overall_conclusion}</p>
           {paper.conclusion_evidence && paper.conclusion_evidence.length > 0 ? (

@@ -163,29 +163,29 @@ def _fallback_integrated_paper(
         f"- {_as_str(item.payload.get('statement') or item.node_id)}"
         for item in brief.dissents
     ]
-    consensus_lines = _consensus_lines(consensus)
+    consensus_lines = _consensus_lines_zh(consensus)
 
     sections: list[PaperSection] = []
 
     background: list[str] = [
         f"研究问题：{question}",
         "",
-        "以下结论综合了所有已确认的原子主张、通过审计的证据发现与本次研究的条件化共识。",
+        "本文围绕研究问题，汇总已有证据支持的主要结论、研究之间的关键分歧，以及当前证据的局限。",
     ]
     if confirmed_lines:
         background.append("")
-        background.append("已确认的原子主张：")
+        background.append("已有证据支持的主要结论：")
         background.extend(confirmed_lines)
     sections.append(
-        PaperSection(heading="研究背景与已确认主张", paragraphs=tuple(background))
+        PaperSection(heading="研究背景", paragraphs=tuple(background))
     )
 
     if finding_lines:
         sections.append(
             PaperSection(
-                heading="已采纳发现",
+                heading="研究结果",
                 paragraphs=(
-                    "以下发现均已绑定可核验来源，其引文与证据质量经过审计：",
+                    "以下结果均有可核验的文献来源：",
                     *finding_lines,
                 ),
             )
@@ -193,21 +193,21 @@ def _fallback_integrated_paper(
 
     if consensus_lines:
         sections.append(
-            PaperSection(heading="条件化共识", paragraphs=tuple(consensus_lines))
+            PaperSection(heading="综合判断", paragraphs=tuple(consensus_lines))
         )
 
     controversy: list[str] = []
     if dissent_lines:
-        controversy.append("少数意见（异议保真，未静默删除）：")
+        controversy.append("少数不同意见（均如实保留，不并入主流结论）：")
         controversy.extend(dissent_lines)
     if blindspot_lines:
         controversy.append("")
-        controversy.append("已识别的盲点：")
+        controversy.append("现有研究尚未回答的问题：")
         controversy.extend(blindspot_lines)
     if not controversy:
-        controversy.append("未记录到少数异议或盲点。")
+        controversy.append("未记录到明显分歧或尚未回答的问题。")
     sections.append(
-        PaperSection(heading="争议、盲点与异议", paragraphs=tuple(controversy))
+        PaperSection(heading="分歧与尚未回答的问题", paragraphs=tuple(controversy))
     )
 
     # Round-12 「整合结论详细化」: the fallback must say just as clearly as
@@ -224,10 +224,10 @@ def _fallback_integrated_paper(
                 seat=seat,
                 position=str(judgment),
                 weakness=(
-                    "该观点对整体共识持异议；其反驳理由见审计轨迹中的质询与异议记录"
+                    "该观点与主流结论不同；其理由与相关争议见正文「分歧与尚未回答的问题」部分。"
                     if "DISSENT" in str(judgment)
-                    else "该观点的主要局限与反驳证据见审计轨迹中的质询与异议记录"
-                    "（确定性降级不重建论证细节）"
+                    else "该观点的主要局限与反面证据见正文「分歧与尚未回答的问题」部分"
+                    "（离线汇总，不展开论证细节）"
                 ),
                 supporting_evidence=tuple(),
             )
@@ -235,7 +235,7 @@ def _fallback_integrated_paper(
         )
     overall: list[str] = []
     if consensus_lines:
-        overall.append("研究各方在交叉核验后形成了如下条件化共识：")
+        overall.append("综合各方面证据，可以得到如下总体判断：")
         overall.extend(consensus_lines)
     else:
         overall.append("本次研究未形成统一结论。不同立场的观点、各自依赖的证据与局限如下：")
@@ -250,7 +250,7 @@ def _fallback_integrated_paper(
                 )
         else:
             overall.append(
-                "未记录到可供展开的立场；需结合审计轨迹中的独立复判与质询记录判断。"
+                "现有材料不足以展开任何明确立场；需要更多原始研究才能判断。"
             )
     sections.append(
         PaperSection(heading="总体结论", paragraphs=tuple(overall))
@@ -268,7 +268,7 @@ def _fallback_integrated_paper(
         if brief.unadmitted_events:
             gap_parts.append(f"{len(brief.unadmitted_events)} 项证据被证据门拒绝")
         limitations.append(
-            "；".join(gap_parts) + "。结论基于已完成部分，需结合审计轨迹复核。"
+            "；".join(gap_parts) + "。以下结论仅基于已完成的研究部分，需谨慎对待。"
         )
     if not consensus_lines and standpoints:
         # 未达成共识时：在结论与局限板块逐个列出每个立场的观点、证据与局限，
@@ -313,9 +313,31 @@ def _fallback_integrated_paper(
     # (the same statements the sections above already show, capped so the
     # field stays a summary, not a second copy of the paper).
     conclusion_evidence = tuple(finding_lines[:6])
+    # A self-contained plain-language abstract: question -> main findings ->
+    # key disagreements -> overall assessment. Internal process terms never
+    # appear here (the abstract is the part a general reader reads first).
+    abstract_parts = [f"研究问题：{question}。"]
+    if brief.confirmed_claims:
+        claim_summary = "；".join(
+            claim.statement for claim in brief.confirmed_claims[:3]
+        )
+        abstract_parts.append(f"现有证据主要支持：{claim_summary}。")
+    elif finding_lines:
+        abstract_parts.append(f"主要结果：{finding_lines[0].lstrip('- ')}。")
+    else:
+        abstract_parts.append("现有证据尚不足以形成明确结论。")
+    if dissent_lines:
+        disagreement = "；".join(
+            line.lstrip("- ") for line in dissent_lines[:2]
+        )
+        abstract_parts.append(f"主要分歧在于：{disagreement}。")
+    consensus_text = consensus.get("conditional_consensus")
+    if isinstance(consensus_text, str) and consensus_text:
+        abstract_parts.append(f"总体判断：{consensus_text}")
+    abstract = "".join(abstract_parts)[:400]
     return FinalPaper(
         title=title,
-        abstract="、".join(background[:3])[:200] or title,
+        abstract=abstract,
         sections=tuple(sections),
         references=references,
         limitations=tuple(limitations),
@@ -490,6 +512,26 @@ def _consensus_lines(consensus: dict[str, object]) -> list[str]:
     return lines
 
 
+def _consensus_lines_zh(consensus: dict[str, object]) -> list[str]:
+    """Chinese rendering of the synthesis material for the deterministic
+    fallback paper (``_consensus_lines`` stays English on purpose: it feeds
+    the English model prompt)."""
+    lines: list[str] = []
+    text = consensus.get("conditional_consensus")
+    if isinstance(text, str) and text:
+        lines.append(f"综合判断：{text}")
+    boundary = consensus.get("boundary_conditions")
+    if isinstance(boundary, list):
+        lines += [f"- 适用边界：{item}" for item in boundary]
+    conflicts = consensus.get("unresolved_conflicts")
+    if isinstance(conflicts, list):
+        lines += [f"- 尚未解决的分歧：{item}" for item in conflicts]
+    falsifiable = consensus.get("falsification_conditions")
+    if isinstance(falsifiable, list):
+        lines += [f"- 可被推翻的条件：{item}" for item in falsifiable]
+    return lines
+
+
 async def _load_consensus(session: AsyncSession, task_id: UUID) -> dict[str, object]:
     result = await session.execute(
         select(ScientificEventModel)
@@ -553,77 +595,98 @@ def _build_user_prompt(
     judgments: tuple[tuple[str, object], ...],
 ) -> str:
     lines = [
-        "Write the final research paper for the research run described below. ",
-        "Integrate the seven expert positions and the conditioned ",
-        "consensus into one document written for a reader of the field, not a ",
-        "report about the machinery that produced it. Ground every claim in the ",
-        "admitted findings and the confirmed claims; do not invent sources, ",
-        "numbers, or references that are not listed here. State uncertainties ",
-        "and limitations honestly -- a gap is a correct answer, a confident ",
-        "guess is not.",
+        "Write the final research paper for the research run described below.",
+        "The reader is an ordinary educated academic in the field who knows",
+        "NOTHING about the software system that produced the evidence. Write",
+        "for THAT reader: explain the QUESTION first, then what the evidence",
+        "says, where competent studies disagree, and what can be concluded.",
+        "Integrate the expert positions and the overall synthesis into one",
+        "coherent document. Ground every claim in the admitted findings and",
+        "confirmed claims listed below; never invent sources, numbers, or",
+        "references that are not listed here. State uncertainties and",
+        "limitations honestly -- a gap is a correct answer, a confident guess",
+        "is not.",
         "",
-        "WRITING VOICE: address the subject matter directly. Do NOT describe the ",
-        "research process in the conclusions ('the council met', 'seven seats ",
-        "precommitted', 'during joint modeling the seats agreed'). Instead state, ",
-        "for each substantive question the research set out to answer, what the ",
-        "evidence shows, how confident the evidence is, and what remains ",
-        "unknown. Process vocabulary (precommitment, cross-examination, ",
-        "joint modeling, seats, rounds) belongs only in investigation_process, ",
-        "never in the findings or the conclusions.",
+        "LANGUAGE RULE (critical): write plain, problem-oriented prose. The",
+        "internal vocabulary below is FORBIDDEN everywhere EXCEPT the",
+        "investigation_process field: 'atomic claim', 'claim bifurcation',",
+        "'dissent timeline', 'debate capsule', 'blindspot bounty', 'seat',",
+        "'council', 'precommitment/precommitted', 'conditioned consensus',",
+        "'joint modeling', 'cross-examination', 'evidence exchange', 'final",
+        "rejudgment', 'round/phase', and their Chinese equivalents",
+        "(原子主张, 主张分叉, 异议时间线, 争论胶囊, 盲点悬赏, 席位, 议会,",
+        "预承诺, 条件化共识, 联合建模, 交叉质询, 证据交换, 最终复判, 轮次).",
+        "Use ordinary academic wording instead, e.g. '现有证据支持……', '研究",
+        "之间在……上存在分歧', '这一问题尚缺乏研究', '综合现有证据可以认为……'.",
+        "Never describe machinery ('the experts met', 'the system",
+        "precommitted', 'during joint modeling') in the abstract, findings, or",
+        "conclusions; describe the scientific subject matter instead.",
         "",
-        "The paper MUST preserve the controversy, not blend it into one voice. ",
-        "In the standpoints field, write one entry per distinct scientific ",
-        "position that emerged -- group the experts by the position they hold ",
-        "rather than forcing one row per expert when several agree. For each ",
-        "position: state the position in full (not a slogan); name where it is ",
-        "weak or contested (weakness); list the admitted evidence that supports ",
-        "it (supporting_evidence -- quote the finding/claim statements below, ",
-        "never invent a source); and say how it differs from the other ",
-        "positions (disagreement).",
+        "ABSTRACT (highest priority): it must stand alone. A reader who reads",
+        "only the abstract must understand, in this order and in plain",
+        "language: (a) the real-world question and why it matters; (b) the",
+        "main findings the evidence supports; (c) the key point(s) on which",
+        "studies or positions disagree, and why; (d) the overall conclusion",
+        "and how confident we can be. No internal terms, no process",
+        "narration, no mention of seats/rounds/phases. 180-300 words.",
         "",
-        "CONCLUSIONS: state clearly whether the evidence supports an overall ",
-        "conclusion and what it is (overall_conclusion), and list the admitted ",
-        "evidence it rests on (conclusion_evidence). If NO overall conclusion ",
-        "was reached -- the sides disagree or the evidence is too weak -- say so ",
-        "explicitly, and in the conclusions-and-limitations section list EACH ",
-        "major position with its supporting evidence and its limitations as ",
-        "separate items, so a reader can see every viewpoint's evidence and ",
-        "limits without hunting through the audit trail. Never hide a minority ",
-        "position behind 'no consensus was reached'.",
-        "investigation_process must narrate how the research actually ran ",
-        "(what was retrieved, what was refused, which phases were absent or ",
-        "failed), naming absences, refusals, and unresolved conflicts as facts. ",
-        "Be detailed; do not collapse dissenting positions into the majority ",
-        "view.",
+        "The paper MUST preserve the controversy, not blend it into one voice.",
+        "In the standpoints field, write one entry per distinct scientific",
+        "position that emerged -- group experts holding the same position",
+        "rather than forcing one row per expert. For each position: state it in",
+        "full (not a slogan); name where it is weak or contested (weakness);",
+        "list the admitted evidence supporting it (supporting_evidence --",
+        "quote the finding/claim statements below, never invent a source); and",
+        "say how it differs from the other positions (disagreement).",
+        "",
+        "CONCLUSIONS: state clearly whether the evidence supports an overall",
+        "conclusion and what it is (overall_conclusion), and list the admitted",
+        "evidence it rests on (conclusion_evidence). If NO overall conclusion",
+        "was reached -- the sides disagree or the evidence is too weak -- say",
+        "so explicitly, and in the conclusions-and-limitations section list",
+        "EACH major position with its supporting evidence and its limitations",
+        "as separate items, so a reader can see every viewpoint's evidence and",
+        "limits without any process record. Never hide a minority position",
+        "behind 'no consensus was reached'.",
+        "",
+        "investigation_process is the ONLY field allowed to narrate how the",
+        "research ran (what was retrieved, what was refused, which steps were",
+        "absent or failed), and the ONLY field where the internal vocabulary",
+        "above may appear. Name absences, refusals and unresolved conflicts as",
+        "facts. Be detailed; do not collapse dissenting positions into the",
+        "majority view.",
         "",
     ]
     lines.extend(_material_brief_lines(brief))
     if consensus:
         lines.append("")
-        lines.append("### Conditioned consensus (from joint modeling)")
+        lines.append("### Overall synthesis material")
         lines.extend(_consensus_lines(consensus))
     if judgments:
         lines.append("")
-        lines.append("### Final judgments (seven seats, independent)")
+        lines.append("### Independent final positions (group by scientific view)")
         for seat, judgment in judgments:
             lines.append(f"- {seat}: {judgment}")
     lines.append("")
     lines.append(
-        "The paper's `sections` must cover, at minimum, and in this order: "
-        "(1) background and the confirmed atomic claims; "
-        "(2) method -- how the research was conducted (what was retrieved, "
-        "what was refused, which phases were absent or failed); "
-        "(3) findings, each with the admitted evidence it rests on; "
-        "(4) controversy, dissent, and unresolved conflicts, naming the "
-        "scientific position on each side (not the machinery); "
-        "(5) conditioned consensus and its boundary conditions; "
-        "(6) conclusions and limitations side by side -- and if no overall "
+        "The paper's `sections` must be problem-driven, in this order, with "
+        "ordinary academic headings (no internal vocabulary in headings): "
+        "(1) Background: the question, why it matters, and what existing "
+        "evidence already supports; "
+        "(2) Results: what the admitted evidence shows, each result with the "
+        "evidence it rests on -- keep this section concrete and detailed; "
+        "(3) Points of disagreement: where and why studies or positions "
+        "diverge, unresolved conflicts, and questions evidence cannot yet "
+        "answer; "
+        "(4) Overall assessment: what can be concluded and under what "
+        "conditions; "
+        "(5) Conclusions and limitations side by side -- if no overall "
         "conclusion was reached, list every major position here as its own "
-        "item with its supporting evidence and its limitations. "
+        "item with supporting evidence and limitations. "
         "`references` must cite the source ids/DOIs of the admitted findings; "
         "every `id` in references must be one of the finding/source ids "
-        "present in the materials above. `investigation_process` is a "
-        "factual timeline, not a restatement of the conclusion."
+        "present in the materials above. `investigation_process` is a factual "
+        "timeline and the only place process terms may appear."
     )
     return sanitize_export("\n".join(lines))
 
@@ -910,7 +973,7 @@ def _fallback_review_report(
             EvidenceGap(
                 claim_ref=None,
                 missing_evidence=reason_text,
-                suggested_evidence="恢复完整议会与报告综合后重新生成审查。",
+                suggested_evidence="恢复完整研究流程后重新生成审查。",
             ),
         )
     limitations = tuple(dict.fromkeys((*brief.limitations, reason_text)))
@@ -1114,7 +1177,13 @@ async def synthesize_paper(
             "scientist: you cast no judgment, you only integrate what "
             "the seven wrote. Every claim in the paper must trace to "
             "the materials you are given; never add new sources, "
-            "numbers, or conclusions.\n"
+            "numbers, or conclusions. Write for an ordinary academic "
+            "reader who knows nothing about this system: plain, "
+            "problem-oriented prose, no internal process jargon (seats, "
+            "rounds, precommitment, conditioned consensus, atomic claims) "
+            "anywhere except investigation_process; the abstract must "
+            "summarise question, findings, disagreements and conclusion by "
+            "itself.\n"
             f"{directive}\n"
             "Reply only with the requested schema."
         )

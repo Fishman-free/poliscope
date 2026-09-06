@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError, fetchWorkspace, subscribe, subscribeProcess } from "./client";
+import {
+  ApiError,
+  fetchLedgerEvents,
+  fetchWorkspace,
+  subscribe,
+  subscribeProcess,
+} from "./client";
 import type { LedgerEvent, ProcessEvent, WorkspaceSnapshot } from "./types";
 
 export type LoadState = "idle" | "loading" | "ready" | "error";
@@ -95,6 +101,30 @@ function capLedgerEvents(events: LedgerEvent[]): LedgerEvent[] {
   return events.length <= LEDGER_EVENT_CAP
     ? events
     : events.slice(events.length - LEDGER_EVENT_CAP);
+}
+
+/** One-shot REST replay of a finished task's full Scientific Event Ledger.
+ *
+ * A terminal task never opens an EventSource (nothing new can ever arrive);
+ * before this existed its Audit Trail stayed empty forever. The setter is
+ * passed in so the hook's capped, sorted state stays the single container. */
+function loadTerminalLedger(
+  taskId: string,
+  setEvents: (updater: (current: LedgerEvent[]) => LedgerEvent[]) => void,
+): void {
+  void fetchLedgerEvents(taskId)
+    .then((rows) => {
+      const sorted = [...rows].sort(
+        (a, b) => a.workspace_version - b.workspace_version,
+      );
+      // Replace (never merge): a real task switch already cleared events, so a
+      // late response from the previous task cannot leak into the new one.
+      setEvents(() => capLedgerEvents(sorted));
+    })
+    .catch(() => {
+      // A failed replay leaves the audit list empty rather than crashing the
+      // workspace; reopening the task or a snapshot refresh retries.
+    });
 }
 
 /** Flush cadence for process events: incoming frames collect in a buffer and
@@ -304,7 +334,13 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
     // EventSource replays the ledger from sequence 0, and overlap is merged
     // by workspace_version instead of first blanking the phase timeline and
     // audit trail (only a real task switch clears, in the effect above).
-    if (terminal) return;
+    if (terminal) {
+      // A finished/history task cannot receive anything new, so there is no
+      // EventSource to open; REST-replay the complete ledger once so its
+      // Audit Trail is populated (previously it was permanently empty).
+      loadTerminalLedger(taskId, setEvents);
+      return;
+    }
     // A history open replays the WHOLE ledger from sequence 0. Coalesce the
     // burst into one merge/sort/render per LEDGER_FLUSH_MS instead of one per
     // frame -- the old per-frame O(N) merge over a few thousand replayed rows

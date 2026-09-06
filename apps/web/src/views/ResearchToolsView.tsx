@@ -165,9 +165,9 @@ function AdjudicationSection({
               {item.resolved ? <Badge tone="admitted">{t("已裁决")}</Badge> : null}
             </header>
             <p className="rt-card__text">{item.detail}</p>
-            {item.decisions.length > 0 ? (
+            {(item.decisions?.length ?? 0) > 0 ? (
               <ul className="rt-decisions">
-                {item.decisions.map((decision, index) => (
+                {(item.decisions ?? []).map((decision, index) => (
                   <li key={index} className="mono">
                     {decision.decided_by ?? "?"}: {decision.decision}
                     {decision.note ? `（${decision.note}）` : ""}

@@ -926,6 +926,16 @@ export function subscribeProcess(
 
 // --- Research-tools endpoints (A1-A4 / B6 / C9-C10 / D12) -------------
 
+/** REST replay of a task's Scientific Event Ledger. Finished/history tasks
+ * never open an EventSource (nothing new can arrive), so without this fetch
+ * their Audit Trail stayed empty forever. Same SSEEvent-shaped rows. */
+export function fetchLedgerEvents(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<LedgerEvent[]> {
+  return getJson<LedgerEvent[]>(`/api/stream/${taskId}/events`, signal);
+}
+
 /** A2: mint (rotate) an unauthenticated read-only share token. */
 export function mintShareToken(taskId: string): Promise<{ share_token: string; created_at: string | null }> {
   return postJson(`/api/tasks/${taskId}/share`, {});

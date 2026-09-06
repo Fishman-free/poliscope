@@ -12,6 +12,12 @@
  * requires the system to admit what is unknown rather than silently
  * mis-locate it on the chart.
  *
+ * De-overlap: scored blindspots frequently share nearly identical scores, so
+ * their markers used to stack into one unclickable blob. A deterministic
+ * relaxation (radarLayout.ts) nudges overlapping markers apart by the
+ * smallest possible distance; a faint ghost dot and leader line keep marking
+ * the marker's true scored position, so the axes stay honest.
+ *
  * Inspector readability (round-6): a researcher clicking a dot gets the
  * blindspot *explained* -- what it is, how big its impact would be if it
  * were real, whether it can be investigated, and what happens if it is
@@ -42,6 +48,7 @@ import {
   humanizeText,
   replaceClaimUuids,
 } from "./claimLabels";
+import { deoverlapRadarPoints } from "./radarLayout";
 
 import "./BlindspotRadarView.css";
 
@@ -281,6 +288,28 @@ export function BlindspotRadarView({
     () => buildClaimLabels(claims, graph),
     [claims, graph],
   );
+  // De-overlap: markers whose scores coincide are nudged apart by a
+  // deterministic relaxation so every blindspot is separately visible and
+  // clickable. The ghost/leader rendering below keeps the true score visible.
+  const laid = useMemo(() => {
+    const points = plottable.map((entry) => ({
+      id: entry.node.id,
+      x: MARGIN + clamp01(entry.impact) * PLOT,
+      y: SIZE - MARGIN - clamp01(entry.investigability) * PLOT,
+      r: 5 + clamp01(entry.uncertainty) * 14,
+    }));
+    return deoverlapRadarPoints(points, {
+      minX: MARGIN,
+      maxX: SIZE - MARGIN,
+      minY: MARGIN,
+      maxY: SIZE - MARGIN,
+    });
+  }, [plottable]);
+  const laidById = useMemo(
+    () => new Map(laid.map((point) => [point.id, point])),
+    [laid],
+  );
+  const movedCount = laid.filter((point) => point.moved).length;
 
   if (blindspots.length === 0) {
     return (
@@ -297,7 +326,14 @@ export function BlindspotRadarView({
   return (
     <Panel
       title={t("盲点雷达")}
-      subtitle={t("横轴影响、纵轴可调查性，点的大小表示不确定性。● = 议会提名，◆ = 来源单一检查。")}
+      subtitle={
+        movedCount > 0
+          ? t(
+              "横轴影响、纵轴可调查性，点的大小表示不确定性。● = 议会提名，◆ = 来源单一检查。{0} 个重叠点已自动错开，小灰点与细线标出其真实评分位置。",
+              movedCount,
+            )
+          : t("横轴影响、纵轴可调查性，点的大小表示不确定性。● = 议会提名，◆ = 来源单一检查。")
+      }
     >
       <div className="radar">
         <svg
@@ -333,15 +369,32 @@ export function BlindspotRadarView({
             {t("可调查性 →")}
           </text>
 
-          {plottable.map(({ node, impact, uncertainty, investigability }) => {
-            const cx = MARGIN + clamp01(impact) * PLOT;
-            const cy = SIZE - MARGIN - clamp01(investigability) * PLOT;
+          {/* True scored positions for nudged markers: a faint ghost dot plus a
+              leader line, drawn UNDER the markers so the visible dot wins. */}
+          {laid
+            .filter((point) => point.moved)
+            .map((point) => (
+              <g key={`ghost-${point.id}`} className="radar__ghost" aria-hidden="true">
+                <line
+                  x1={point.x}
+                  y1={point.y}
+                  x2={point.dx}
+                  y2={point.dy}
+                  className="radar__leader"
+                />
+                <circle cx={point.x} cy={point.y} r={2.5} className="radar__ghost-dot" />
+              </g>
+            ))}
+
+          {plottable.map(({ node, uncertainty }) => {
+            const position = laidById.get(node.id);
+            const cx = position?.dx ?? 0;
+            const cy = position?.dy ?? 0;
             const r = 5 + clamp01(uncertainty) * 14;
-            const tone = toneForStatus(node.status);
             return (
               <g
                 key={node.id}
-                className={`radar__point radar__point--${tone}${
+                className={`radar__point radar__point--${toneForStatus(node.status)}${
                   selected?.id === node.id ? " radar__point--selected" : ""
                 }`}
                 onClick={() => setSelected(node)}

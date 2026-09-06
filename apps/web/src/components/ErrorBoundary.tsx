@@ -18,16 +18,21 @@ interface ErrorBoundaryProps {
 
 interface ErrorBoundaryState {
   error: Error | null;
+  /** Bumped on every "重新渲染" so the subtree is fully remounted, not just
+   * re-rendered: clearing the error alone re-runs render() with identical
+   * props/state, which throws again on the same data and made the button look
+   * dead. A fresh key resets every child's local state too. */
+  retryKey: number;
 }
 
 export class ErrorBoundary extends Component<
   ErrorBoundaryProps,
   ErrorBoundaryState
 > {
-  state: ErrorBoundaryState = { error: null };
+  state: ErrorBoundaryState = { error: null, retryKey: 0 };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
+    return { error, retryKey: 0 };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
@@ -38,7 +43,10 @@ export class ErrorBoundary extends Component<
   }
 
   private readonly retryRender = () => {
-    this.setState({ error: null });
+    this.setState((current) => ({
+      error: null,
+      retryKey: current.retryKey + 1,
+    }));
   };
 
   private readonly reloadPage = () => {
@@ -46,8 +54,15 @@ export class ErrorBoundary extends Component<
   };
 
   render() {
-    const { error } = this.state;
-    if (error === null) return this.props.children;
+    const { error, retryKey } = this.state;
+    if (error === null) {
+      // display:contents keeps this remount wrapper layout-transparent.
+      return (
+        <div key={retryKey} style={{ display: "contents" }}>
+          {this.props.children}
+        </div>
+      );
+    }
     return (
       <div className="error-boundary" role="alert">
         <strong className="error-boundary__title">

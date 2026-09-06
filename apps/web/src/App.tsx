@@ -36,7 +36,7 @@ import { CouncilView } from "./views/CouncilView";
 import { EvolutionView } from "./views/EvolutionView";
 import { AnnotationView } from "./views/AnnotationView";
 import { FollowUpView } from "./views/FollowUpView";
-import { LineageView } from "./views/LineageView";
+
 import { ResearchToolsView } from "./views/ResearchToolsView";
 import { SharedView } from "./views/SharedView";
 import { KnowledgeBaseView } from "./views/KnowledgeBaseView";
@@ -61,7 +61,7 @@ type Tab =
   | "paper"
   | "knowledge"
   | "followup"
-  | "lineage"
+
   | "tools"
   | "annotations";
 
@@ -82,7 +82,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "paper", label: "Final Paper", hint: "整合结论与参考文献" },
   { id: "knowledge", label: "Knowledge Base", hint: "长期记忆与检索" },
   { id: "followup", label: "Follow-up", hint: "完成后追问模型" },
-  { id: "lineage", label: "Evidence Lineage", hint: "来源独立性与证据簇" },
+
   { id: "tools", label: "Research Tools", hint: "成本、裁决、分享与时间旅行" },
   { id: "annotations", label: "Annotations", hint: "人工标注与评分者一致性" },
 ];
@@ -1018,7 +1018,16 @@ export function App() {
                       />
                     ) : null}
                     {tab === "audit" ? (
-                      <AuditView events={events} streamOpen={stream === "open"} />
+                      <AuditView
+                        events={events}
+                        streamOpen={stream === "open"}
+                        terminal={
+                          snapshot.task.status === "COMPLETED" ||
+                          snapshot.task.status === "COMPLETED_WITH_GAPS" ||
+                          snapshot.task.status === "FAILED" ||
+                          snapshot.task.status === "CANCELLED"
+                        }
+                      />
                     ) : null}
                     {tab === "paper" ? (
                       <PaperView
@@ -1031,9 +1040,8 @@ export function App() {
                     {tab === "followup" && taskId ? (
                       <FollowUpView taskId={taskId} status={snapshot.task.status} />
                     ) : null}
-                    {tab === "lineage" ? (
-                      <LineageView lineage={snapshot.lineage} />
-                    ) : null}
+
+
                     {tab === "tools" && taskId ? (
                       <ResearchToolsView
                         taskId={taskId}
