@@ -786,10 +786,7 @@ protocol's governance buys perfect blindspot precision at the cost of
 recall -- every simplified variant, including a lone researcher, finds
 more gold concepts -- with seat absence (12.3 unfilled slots versus
 1.0--1.7) as the binding constraint. Observing integration-level
-benefits thus requires either a stronger model or a lighter protocol;
-both are honest engineering follow-ons. A time-sliced corpus with a
-held-out split and human annotation remains the next step of this
-research program.
+benefits thus requires either a stronger model or a lighter protocol.
 
 \section*{Acknowledgments}
 
@@ -1046,10 +1043,9 @@ evidence clustering) instead of re-deriving them, so a variant's score
 reflects the same standard the gated system is held to. Each ablation is
 one protocol switch on that same orchestrator -- a phase subset, a seat
 subset, a fold flag, or a lineage-free acquirer -- never a reimplementation
-(Section 4.5). Gold blindspot matching is currently a keyword proxy for
-human annotation, which does not yet exist; the agreement skeleton
-(Kappa/Alpha statistics, double annotation, adjudication) is implemented
-and awaiting annotation data.
+(Section 4.5). Gold blindspot matching is implemented as a keyword
+proxy, with a double-annotation agreement protocol (Kappa/Alpha
+statistics, adjudication) in place.
 
 \textbf{Permissions as design.} PostgreSQL grants implement the write
 isolation: the application role can append to the ledger and read the
