@@ -14,15 +14,14 @@ https://aclanthology.org/2026.findings-acl.127/ ）的章节结构与文风撰�
 
 ## 作者信息（按要求填写）
 
-- 第一作者：**马珠淇**（中国人民大学 / Renmin University of China）
-- 通讯作者：**崔颢蓬**（清华大学 / Tsinghua University，†）
+- 第一作者：**马珠淇**（中国人民大学 / Renmin University of China）— 2025201699@ruc.edu.cn
+- 通讯作者：**崔颢蓬**（清华大学 / Tsinghua University，†）— chp25@mails.tsinghua.edu.cn
 
 投稿前需替换的占位内容（文件中已标注 `Placeholders to fill before
 submission`）：
 
-1. 作者邮箱（`\texttt{\{zhuqi.ma, haopeng.cui\}@example.edu}`）
-2. 开源仓库 DOI（论文引用 `Fishman-free/poliscope` 时建议补 DOI）
-3. 致谢与基金信息（可选）
+1. 开源仓库 DOI（论文引用 `Fishman-free/poliscope` 时建议补 DOI）
+2. 致谢与基金信息（可选）
 
 ## 编译
 
