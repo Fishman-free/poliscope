@@ -20,8 +20,9 @@ https://aclanthology.org/2026.findings-acl.127/ ）的章节结构与文风撰�
 投稿前需替换的占位内容（文件中已标注 `Placeholders to fill before
 submission`）：
 
-1. 开源仓库 DOI（论文引用 `Fishman-free/poliscope` 时建议补 DOI）
-2. 致谢与基金信息（可选）
+1. 致谢与基金信息（可选）
+
+仓库已通过 Zenodo 归档并获得 DOI：`10.5281/zenodo.22541350`（已写入论文 3.8 节）。
 
 ## 编译
 
