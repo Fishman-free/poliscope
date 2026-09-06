@@ -163,8 +163,8 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 | 三个数据库身份的权限隔离（迁移者 / 应用 / 投影器） | 集成测试断言应用身份写图会被数据库拒绝 |
 | 事件账本幂等与断线续传（SSE 按 `Last-Event-ID` 续传） | 集成测试 + 浏览器实测 53/53 事件 |
 | 证据门六阶段审核、A–D 分级、因果越级隔离 | 集成测试，关键项经变异测试自证 |
-| 十三个 CLI 子命令（含 `pause`/`resume`/`health`/`council-preview`/`council-guidance`/`login`/`register`/`logout`） | 逐条对真实 API 手工验证 |
-| 八个前端视图（Research Brief / Controversy Map / Audit Trail / Council / Blindspot Radar / Evolution View / 最终论文 / 知识库）+ 议会检查点面板 + 建任务/确认主张首屏 + 注册登录/账号隔离 + 模型设置 / Skills / 会话历史面板 | 真实数据 + 浏览器实测，无控制台错误 |
+| 十四个 CLI 子命令（含 `pause`/`resume`/`health`/`council-preview`/`council-guidance`/`login`/`register`/`logout`/`export-docs`） | 逐条对真实 API 手工验证 |
+| 十二个工作台标签（实时进展 / Research Brief / Controversy Map / Council / Blindspot Radar / Evolution View / Audit Trail / 最终论文 / 知识库 / 补充提问 / 研究工具 / 标注）+ 议会检查点面板 + 建任务/确认主张首屏 + 注册登录/账号隔离 + 模型设置 / Skills / 会话历史面板 | 真实数据 + 浏览器实测，无控制台错误 |
 | 全文获取 → 解析 → StudyFinding 抽取 → 引用锚点核验 | 单元测试（程序化生成 PDF fixture，无需网络）+ 集成测试断言 `DERIVED_FROM` 边真正出现在证据图上 |
 | 联合建模 → Dialectical Fold → `DebateCapsule`；最终复判 → 异议 → `DissentCertificate` | 单元测试覆盖两条产出路径与「无边界/无冲突则不折叠」「无异议目标则记未填槽位」两条弃权路径；集成测试断言完整任务运行后证据图上真的出现对应节点 |
 | **真实模型调用**（研究者自带 OpenAI 兼容端点：DeepSeek 等）跑通 7 席全程议会 → 条件化共识 → 最终论文合成 | 真实任务端到端（`COMPLETED_WITH_GAPS` 与 `COMPLETED` 两种终态各验证一次），论文含 19 篇带 DOI 的参考文献与 11 条局限；浏览器全标签页实测无控制台错误 |
@@ -177,6 +177,8 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 | **盲点雷达可读化**：点击盲点显示「这个盲点是什么」的通俗解释——statement 中 UUID 解析为可读主张标签、影响/可调查性/不确定性按评分区间翻译成刻度与「轻信的后果」；裸 JSON 收进折叠的「原始记录（可审计）」（CLAUDE.md 2） | E2E 断言 UUID 被替换为主张标签、无裸 JSON 直接展示、未评分盲点单独列出 |
 | Docker Compose 一键部署（postgres / migrate / api / worker / web / caddy） | `docker compose up --build` 后真实提交一个任务，走完整 CLI → API → Worker → 图投影路径，再经 Caddy → web 容器 nginx 反代验证 |
 | Claude Code / Codex Skill（薄封装：生成待确认 Contract → 调用 CLI），`login` 后即可访问已部署实例 | 手工跑通一次 `start`/`confirm-claims`/`watch`/`export` 全链路，见[Agent Skill 集成细节](#agent-skill-集成细节) |
+| **上游 MemoBrain 执行记忆（round-16）**：每位科学家一个 vendored 上游 MemoBrain 实例（依赖感知思想图，Apache-2.0，逐字节未改，见 `packages/memory/vendor/`）；记忆构建与 FOLD/FLUSH 管理走 Poliscope 模型网关（`MemoBrainPatch` / `MemoBrainFlushAndFold` schema 注册 + 审计入库），调用失败自动降级为原始片段、绝不拖垮轮次；快照/恢复往返保真 | 单元测试 `test_memobrain_adapter.py`（脚本化网关断言补丁进图、管理触发、降级与快照往返）；生产 worker 仅在网关为真实 OpenAI 兼容端点时启用（脚本化网关/无模型环境自动回退旧启发式适配器，评测基线语义不变） |
+| **SSE 有界与终态收敛 + 历史打开不再卡死**：账本流在任务终态/删除后重连立即结束（不再永久 keep-alive 僵尸连接）；过程流重放封顶最近 5000 行；前端批量合并（250ms）+ 内存封顶 + 终态主动关闭 EventSource + 快照到达前不订阅流（事件重放不再挤兑初始快照请求）；所有 JSON 请求 60s 超时、首次载入 30s 看门狗落到带「重试 / 返回任务列表」的错误面板 | 单元测试 `test_stream_bounds.py`；「后台挂起后页面无响应」「点击会话历史一直载入中」两个生产故障的根因修复闭环 |
 
 **真实凭证的现状（比早期版本更诚实的位置）：**
 
@@ -378,8 +380,17 @@ docker compose up -d --build        # 首次手动部署
 #    SERVER_SSH_KEY 该用户的 SSH 私钥（推荐 ed25519）
 ```
 
-之后每次 `git push origin main`，服务器自动更新。工作流用 `--ff-only` 而非 `reset --hard`：
+之后每次 push **代码**，服务器自动更新；**纯文档改动（`docs/**`、`**/*.md`、`.github/**`）被 `paths-ignore` 跳过，不触发重建**——改 README 不会让服务器冒构建风险，需要时用「Run workflow」按钮手动触发。工作流用 `--ff-only` 而非 `reset --hard`：
 如果服务器 checkout 意外偏离 `origin/main`，部署会显式失败并需要人工处理，而不是被自动化静默覆盖。
+
+**低内存服务器注意事项**（生产实例是 1.6G 内存 ECS，已踩过坑）：docker 构建（尤其 web 镜像的 `npm run build`，tsc + vite 峰值内存可超 1.5G）与运行中的六容器叠加，会把服务器拖到 SSH 与网站全部无响应。务必配置交换分区：
+
+```bash
+fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab   # 开机自启
+```
+
+构建卡死后的恢复顺序：`systemctl restart docker`（杀掉僵尸构建）→ `cd /opt/poliscope && docker compose up -d`（旧镜像秒级恢复站点）→ `docker compose build <service>`（只补未完成的**单个**镜像，压力最小）→ `docker compose up -d`。构建期间网站变慢/短暂卡顿是正常现象。
 
 **部署完成后的健康检查**（在服务器本机或浏览器中）：
 
@@ -565,8 +576,19 @@ Skill 场景可用 curl 直接调用该接口（见上表）。上传的字节�
 | `GET` | `/api/workspace/{id}` | 整个工作台快照（含 brief、图、计数、版本号、paper、consensus） |
 | `GET` | `/api/reports/{id}?format=json\|markdown` | Research Brief |
 | `GET` | `/api/reports/{id}/paper?format=json\|markdown` | 最终论文（任务终态后由账本事件组装；未生成时返回 `available: false` 与原因，永远 200） |
-| `GET` | `/api/stream/{id}` | SSE 事件流，支持 `Last-Event-ID` 续传 |
-| `GET` | `/api/stream/{id}/process` | SSE 过程流（token/工具调用/检索，从头重放 + 前端按 `seq` 去重） |
+| `GET` | `/api/stream/{id}` | SSE 事件流，支持 `Last-Event-ID` 续传；任务终态/删除后重连立即结束 |
+| `GET` | `/api/stream/{id}/process` | SSE 过程流（token/工具调用/检索，重放封顶最近 5000 行 + 前端按 `seq` 去重） |
+| `GET` | `/api/tasks` | 任务列表（会话历史） |
+| `DELETE` | `/api/tasks/{id}` | 删除会话（级联清理全部子记录——唯一的物理删除例外，见硬约束第 2 条） |
+| `POST` | `/api/tasks/{id}/cancel` | 停止研究 |
+| `POST` | `/api/tasks/{id}/re-research` / `rerun-fresh` | 重新研究（断点续跑 / 全新任务） |
+| `POST` | `/api/tasks/{id}/followup` / `followup/stream` | 完成后补充提问（含 SSE 流式回答） |
+| `POST` / `DELETE` | `/api/tasks/{id}/share` | 生成/撤销只读分享令牌；`GET /api/shared/{token}` 返回只读工作台快照 |
+| `POST` | `/api/tasks/{id}/replay`；`GET /api/tasks/{id}/compare/{other}` | 时间回溯（指定语料截止日重放）与双任务对比 |
+| `POST` | `/api/tasks/{id}/adjudicate` | 研究者裁决（合并候选等争议动力学收口） |
+| `POST` | `/api/tasks/{id}/save-to-knowledge` | 把任务结论存入知识库 |
+| `PUT` | `/api/tasks/{id}/model-override` | 任务级模型覆盖（对已创建任务换端点） |
+| `POST` / `GET` | `/api/tasks/{task_id}/annotation-batches`、`/api/annotation-batches/{id}`、`/labels` | 人工标注批次（评测体系） |
 
 工作台是**一个**端点而不是每个面板一个，这样 Research Brief、Controversy Map 和议会状态不可能显示三个不同时刻的状态。`workspace_version` 是快照对应的账本序号。
 
@@ -615,12 +637,14 @@ SSE 帧只有 `id:` 和 `data:`，没有 `event:` 行。原因是 SSE 的类型�
 
 网页版要让研究者实时看到模型在干什么（CLAUDE.md 第 11 条），而**正式账本绝不能被 token 噪声污染**。因此实时视图是两条独立流：
 
-1. **账本流**（`GET /api/stream/{task_id}`，SSE，Last-Event-ID 续传）：`PHASE_STARTED` / `PHASE_COMPLETED` 等正式事件，驱动 Live View 顶部的八阶段时间线（独立预承诺 → 报告生成，当前阶段高亮、完成打勾，运行中自动定位）。
-2. **过程流**（`GET /api/stream/{task_id}/process`，SSE，从头重放 + 前端按 `seq` 去重）：worker 实时写入的易逝过程数据——席位开始思考、模型推理片段（DeepSeek thinking 的 `reasoning_content`）、输出 token、DOI 解析与文献检索调用及其命中结果（含可点击的 `https://doi.org/…` 链接）。重连的客户端重读全量并按 `seq` 去重，不承诺断点精确续传。
+1. **账本流**（`GET /api/stream/{task_id}`，SSE，Last-Event-ID 续传）：`PHASE_STARTED` / `PHASE_COMPLETED` 等正式事件，驱动 Live View 顶部的八阶段时间线（独立预承诺 → 报告生成，当前阶段高亮、完成打勾，运行中自动定位）。任务到达终态（含 CANCELLED）或被删除后，重连会立即收到流结束（`TERMINAL_TASK_STATUSES`）而不是永久 keep-alive——僵尸连接曾是单机多标签页拖垮 API 的根因。
+2. **过程流**（`GET /api/stream/{task_id}/process`，SSE，重放 + 前端按 `seq` 去重）：worker 实时写入的易逝过程数据——席位开始思考、模型推理片段（DeepSeek thinking 的 `reasoning_content`）、输出 token、DOI 解析与文献检索调用及其命中结果（含可点击的 `https://doi.org/…` 链接）。重连重放**封顶最新 5000 行**（`MAX_PROCESS_REPLAY_ROWS`；全量重放曾在每次重连时把单 worker 事件循环拖垮、连带所有用户的请求排队），不承诺断点精确续传。
 
 **过程流数据层**：`packages/evidence/process_stream.py`——`ProcessStreamWriter` 在 worker 侧缓冲批写（`flush_at=40` 阈值），flush 失败只降级为 warning、绝不破坏正在跑的 run；`ProcessStreamRepository.list_since(after_seq)` 语义是 `seq > after_seq`，初始游标是 `-1`（seq 从 0 开始）。`process_stream` 表无外键（迁移 0016），这不是疏漏：worker 认领任务时对任务行持有 `SELECT ... FOR UPDATE` 直到整轮议会事务提交，而 Postgres 外键检查会对父行取 KEY SHARE 锁——两边互相等待就是死锁（曾把整个 worker 冻结、所有任务卡在 QUEUED）。过程流是 best-effort 的，孤儿行无害、可被保留期清理；`(task_id, seq)` 唯一约束保留，`task_id` 的索引支撑 API 的按任务重放。
 
 **模型层**：`StreamingModelGateway`（`packages/models/contracts.py`）与 `OpenAICompatibleModelGateway.stream_invoke` 解析 SSE 块，`reasoning_content` 与 `content` 分开成 `StreamEvent{kind, text}`；`GatewayDeliberator` 流式失败时回退到非流式 `invoke`，任务不因流断了而失败。SSE 鉴权用 query 参数 `?token=`（EventSource 无法带自定义请求头），泄露面已在 README「安全」节注明。
+
+**前端消费纪律**（生产故障复盘沉淀）：过程/账本帧都按 250ms 批量合并成一次 state 更新（逐帧更新在千级重放帧下退化为 O(N²) 并冻结渲染器）；内存窗口封顶（过程 5000 + 结构锚点 3000、账本 4000）；任务终态后客户端主动关闭两条 EventSource；**首次快照到达前不订阅任何流**——否则重放驱动的防抖刷新每 250ms 掐断一次正在进行的初始快照请求，大任务永远停在「载入中」（漏掉的事件由重放补回，无损）。所有 JSON 请求带 60s 超时、首次载入带 30s 看门狗，超时落到带「重试 / 返回任务列表」的错误面板，不存在无法逃脱的载入陷阱。
 
 ---
 
@@ -832,12 +856,12 @@ Poliscope 自身代码以 [MIT 许可证](../LICENSE) 开源；MemoBrain 作为�
 
 ### 方法基座
 
-Poliscope 以 [MemoBrain](https://github.com/qhjqhj00/MemoBrain) 作为执行记忆方法基座：
+Poliscope 以 [MemoBrain](https://github.com/qhjqhj00/MemoBrain) 作为执行记忆方法基座（round-16 起为**上游代码级集成**）：
 
 - 论文：*MemoBrain: Executive Memory as an Agentic Brain for Reasoning*
-- ACL Anthology：<https://aclanthology.org/2026.findings-acl.127/>
+- ACL Anthology：<https://aclanthology.org/2026.findings-acl.127/>（arXiv:2601.08079）
 
-集成前已核验上游许可证，并通过 `MemoBrainAdapter` 适配，避免修改上游源代码。相关记录见 `docs/licenses/`。
+上游许可证已核验为 **Apache-2.0**（以上游根目录 `LICENSE` 文件为准；上游 pyproject 里的 `MIT` 字符串是过期元数据，不具授权效力）。集成方式：上游 `src/` 五个文件**逐字节未改** vendored 到 `packages/memory/vendor/memobrain/`（连同 LICENSE 与归属记录），`MemoBrainAdapter` 只通过子类覆写 `_create_completion` 这一个方法把记忆模型调用改走 Poliscope 的 Model Gateway（CLAUDE.md 第 8 条）；完整记录见 `docs/licenses/memobrain.md`。论文中自训的记忆模型 φ（Qwen3 系列微调）未捆绑、未自托管——生产实例用部署方配置的模型跑上游提示词（上游 README 明确支持任意 OpenAI 兼容 LLM）；想接自托管 vLLM 精调权重时，只需把 `POLISCOPE_MODEL_BASE_URL` 与 `POLISCOPE_MODEL_NAME_LIGHTWEIGHT` 指向它。
 
 ### Poliscope 扩展
 
