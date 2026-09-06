@@ -725,8 +725,8 @@ packages/
 apps/
   api/         FastAPI：tasks / workspace / reports / stream（含 Dockerfile）
   worker/      任务认领、议会执行、图投影（含 Dockerfile）
-  cli/         十三个子命令（含 login/register/logout），纯 HTTP 客户端，不直连 packages
-  web/         React + TypeScript + React Flow 建任务表单 + 六视图工作台（含 Dockerfile、nginx.conf）
+  cli/         十四个子命令（含 login/register/logout），纯 HTTP 客户端，不直连 packages
+  web/         React + TypeScript + React Flow 建任务表单 + 十二标签工作台（含 Dockerfile、nginx.conf）
 
 poliscope/       CLI 入口点
 migrations/      Alembic：建表 + 建角色 + 授权
