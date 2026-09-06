@@ -17,12 +17,7 @@ https://aclanthology.org/2026.findings-acl.127/ ）的章节结构与文风撰�
 - 第一作者：**马珠淇**（中国人民大学 / Renmin University of China）— 2025201699@ruc.edu.cn
 - 通讯作者：**崔颢蓬**（清华大学 / Tsinghua University，†）— chp25@mails.tsinghua.edu.cn
 
-投稿前需替换的占位内容（文件中已标注 `Placeholders to fill before
-submission`）：
-
-1. 致谢与基金信息（可选）
-
-仓库已通过 Zenodo 归档并获得 DOI：`10.5281/zenodo.22541350`（已写入论文 3.8 节）。
+仓库已通过 Zenodo 归档并获得 DOI：`10.5281/zenodo.22541350`（已写入论文 3.8 节）。作者邮箱已填入作者块；本稿已无待填占位内容。
 
 ## 编译
 
