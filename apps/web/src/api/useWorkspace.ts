@@ -269,20 +269,33 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   // Slow insurance poll while live and visible. Hidden tabs are skipped --
   // polling a throttled background tab is exactly what used to pile up
   // requests and stall the return -- and the next visibility recovery heals
-  // them instead.
+  // them instead. Also gated on a loaded snapshot: polling an unloaded
+  // workspace would call refresh() every cycle and stomp the error panel
+  // back to "loading", trapping a failed history open in a 载入中/错误
+  // flip-flop instead of letting the researcher escape.
   useEffect(() => {
-    if (!taskId || terminal) return;
+    if (!taskId || terminal || !snapshot) return;
     const interval = window.setInterval(() => {
       if (!document.hidden) void refresh();
     }, INSURANCE_POLL_MS);
     return () => window.clearInterval(interval);
-  }, [taskId, terminal, refresh]);
+  }, [taskId, terminal, snapshot !== null, refresh]);
 
   useEffect(() => {
     if (!taskId) {
       setEvents([]);
       return;
     }
+    // Round-fix: a history open must not starve its own initial snapshot.
+    // The ledger stream replays the WHOLE task history from sequence 0; the
+    // old per-frame debounced refresh() aborted the in-flight initial fetch
+    // every 250 ms for the whole replay, so the first snapshot never landed
+    // and the open sat on 载入中 forever. Subscribe only after the first
+    // snapshot exists: events missed during the load are recovered by the
+    // replay-from-0, so nothing is lost, and the initial fetch finishes
+    // un-aborted. (The load-state watchdog below still catches a truly
+    // wedged server and turns it into the error panel.)
+    if (!snapshot) return;
     // Terminal: keep the collected events on screen (audit trail), but do not
     // subscribe -- the cleanup below already closed the stream when the
     // status flipped. A re-research flips the status back out of the set and
@@ -337,7 +350,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
       close();
       setStream("closed");
     };
-  }, [taskId, refresh, terminal, streamNonce, rebuildStream]);
+  }, [taskId, refresh, terminal, streamNonce, rebuildStream, snapshot !== null]);
 
   // Process trace: reconnect replays the newest rows (bounded server-side)
   // and deduplicates by server seq. Incoming frames are buffered and flushed
@@ -347,6 +360,10 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   // after a long background period (the old per-frame O(N) path froze it).
   useEffect(() => {
     if (!taskId) return;
+    // Same starvation rule as the ledger stream: wait for the first snapshot
+    // before replaying the process trace, so the replay burst cannot abort
+    // the in-flight initial fetch.
+    if (!snapshot) return;
     if (terminal) return;
     // Same-task resubscription (a self-heal streamNonce rebuild, or a
     // checkpoint re-research flipping terminal back to QUEUED) must NOT wipe
@@ -389,7 +406,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
       close();
       if (flushTimer !== 0) window.clearTimeout(flushTimer);
     };
-  }, [taskId, terminal, streamNonce, rebuildStream]);
+  }, [taskId, terminal, streamNonce, rebuildStream, snapshot !== null]);
 
   return { snapshot, load, stream, error, events, processEvents, refresh };
 }
