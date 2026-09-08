@@ -219,8 +219,8 @@ def test_joint_model_no_majority_vote() -> None:
             unresolved_conflicts=("uc",),
         )
     )
-    # No vote count field exists — consensus is conditional, not numeric
-    assert "conditional" in output.conditional_consensus.lower()
+    assert "主张" in output.conditional_consensus
+    assert "分歧" in output.conditional_consensus
 
 
 def test_final_rejudgment_all_seats_independent() -> None:

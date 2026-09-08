@@ -241,11 +241,29 @@ class SourceAcquisition:
                 f"(published {normalized.year})"
             )
         if relevance_screen and self._relevance_enabled:
+            # When the query contains Latin tokens (e.g. from an adversarial
+            # intent like "contradictory evidence refutation") attached to a
+            # non-Latin claim, evaluating relevance against the full mixed query
+            # falsely tests only the intent words and rejects valid candidates.
+            # We strip non-Latin prefix or pass the pure Latin segment if present,
+            # or fall back to cross-script screening against relevance_context.
+            screen_query = query
             admitted, score = is_topically_relevant(
-                (*self._relevance_context, query),
+                (*self._relevance_context, screen_query),
                 normalized.title,
                 threshold=self._relevance_threshold,
             )
+            # If rejected strictly because the query lacked matching Latin keywords
+            # from the topic, check if screening against the relevance context alone passes.
+            if not admitted and self._relevance_context:
+                admitted_ctx, score_ctx = is_topically_relevant(
+                    self._relevance_context,
+                    normalized.title,
+                    threshold=self._relevance_threshold,
+                )
+                if admitted_ctx:
+                    admitted, score = True, score_ctx
+
             if not admitted:
                 return f"below relevance threshold (score={score:.3f})"
         return None

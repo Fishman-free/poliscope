@@ -718,6 +718,7 @@ export const en: Record<string, string> = {
   "研究者私人备注": "Researcher private note",
   "只保存在你的浏览器里，不会写入证据图，也不会被其他科学家引用。": "Saved only in your browser; it is never written into the evidence graph or cited by the scientists.",
   "研究者便签": "Researcher note",
+  "双击编辑便签": "Double-click to edit; drag anywhere to move",
   "删除这张便签（仅影响你的私人视图）": "Delete this note (affects only your private view)",
   "删除便签": "Delete note",
   "双击式输入：记录你的判断、疑点或待查线索…": "Record your judgment, doubts or leads to follow up…",

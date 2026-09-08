@@ -120,6 +120,10 @@ export function buildSvg(
   title: string,
 ): string {
   const heights = new Map(nodes.map((node) => [node.id, nodeHeight(node.label)]));
+  // Seeded from the first node, not from 0: seeding the accumulator with zeros
+  // forces the origin into every export, so a graph whose blocks all sit far
+  // from (0,0) -- normal after the researcher drags things around -- came out
+  // with a wide band of dead whitespace. Empty input falls back to the origin.
   const bounds = nodes.reduce(
     (acc, node) => {
       const h = heights.get(node.id) ?? 80;
@@ -129,7 +133,14 @@ export function buildSvg(
       acc.maxY = Math.max(acc.maxY, node.y + h);
       return acc;
     },
-    { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+    nodes.length > 0
+      ? {
+          minX: Number.POSITIVE_INFINITY,
+          minY: Number.POSITIVE_INFINITY,
+          maxX: Number.NEGATIVE_INFINITY,
+          maxY: Number.NEGATIVE_INFINITY,
+        }
+      : { minX: 0, minY: 0, maxX: 0, maxY: 0 },
   );
   const width = Math.max(
     800,
@@ -161,18 +172,21 @@ export function buildSvg(
           : edge.kind === "user"
             ? "#7c5cbf"
             : "#86868b";
-    const dash =
+    // Every path attribute must appear exactly once: a duplicated attribute
+    // (the old user-connector branch injected a second stroke-width) makes the
+    // SVG invalid XML, so rasterising it via <img> fails silently -- the PNG
+    // export looked dead whenever the researcher had drawn a connector.
+    const strokeWidth = edge.kind === "user" ? 2.2 : 1.6;
+    const dashArray =
       edge.kind === "opposing"
         ? ' stroke-dasharray="6 4"'
         : edge.kind === "cite"
           ? ' stroke-dasharray="2 4"'
-          : edge.kind === "user"
-            ? ' stroke-width="2.2"'
-            : "";
+          : "";
     const midX = (x1 + x2) / 2;
     const midY = (y1 + y2) / 2 - 4;
     edgeSvg.push(
-      `<path d="${path}" fill="none" stroke="${color}" stroke-width="1.6"${dash} marker-end="url(#arrow-${edge.kind})"/>`,
+      `<path d="${path}" fill="none" stroke="${color}" stroke-width="${strokeWidth}"${dashArray} marker-end="url(#arrow-${edge.kind})"/>`,
     );
     if (edge.label) {
       edgeSvg.push(
@@ -288,35 +302,67 @@ export function exportJsonFile(
   );
 }
 
-/** Rasterise the self-contained SVG at 2x for crisp PNG export. */
+/** Rasterise the self-contained SVG at 2x for crisp PNG export.
+ *
+ * SVG-as-image is parsed as strict XML: any malformed attribute fires a silent
+ * ``onerror`` and the old code did nothing (the export "looked broken"). This
+ * rasteriser therefore (1) uses naturalWidth/Height, (2) falls back from a blob
+ * URL to a data URL once, and (3) surfaces a console error instead of a no-op.
+ */
 export function exportPngFile(
   nodes: ExportNode[],
   edges: ExportEdge[],
   title: string,
 ): void {
   const svg = buildSvg(nodes, edges, title);
-  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const image = new Image();
-  image.onload = () => {
-    const scale = 2;
-    const canvas = document.createElement("canvas");
-    canvas.width = image.width * scale;
-    canvas.height = image.height * scale;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      URL.revokeObjectURL(url);
-      return;
-    }
-    ctx.scale(scale, scale);
-    ctx.fillStyle = "#fbfbfd";
-    ctx.fillRect(0, 0, image.width, image.height);
-    ctx.drawImage(image, 0, 0, image.width, image.height);
-    URL.revokeObjectURL(url);
-    canvas.toBlob((png) => {
-      if (png) download(png, `poliscope-evidence-map-${stamp()}.png`);
-    }, "image/png");
+  const rasterise = (url: string, revokeUrl: () => void, retried: boolean) => {
+    const image = new Image();
+    image.onload = () => {
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+      if (!width || !height) {
+        revokeUrl();
+        console.error("PNG export: SVG reported zero intrinsic size");
+        return;
+      }
+      const scale = 2;
+      const canvas = document.createElement("canvas");
+      canvas.width = width * scale;
+      canvas.height = height * scale;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        revokeUrl();
+        console.error("PNG export: 2D canvas context unavailable");
+        return;
+      }
+      ctx.scale(scale, scale);
+      ctx.fillStyle = "#fbfbfd";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(image, 0, 0, width, height);
+      revokeUrl();
+      canvas.toBlob((png) => {
+        if (png) {
+          download(png, `poliscope-evidence-map-${stamp()}.png`);
+        } else {
+          console.error("PNG export: canvas.toBlob returned null");
+        }
+      }, "image/png");
+    };
+    image.onerror = () => {
+      revokeUrl();
+      // One data-URL retry: a few hardened browser setups refuse blob: SVG
+      // images while accepting the equivalent data: URL.
+      if (!retried) {
+        const dataUrl =
+          "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+        rasterise(dataUrl, () => undefined, true);
+        return;
+      }
+      console.error("PNG export: SVG failed to decode as an image");
+    };
+    image.src = url;
   };
-  image.onerror = () => URL.revokeObjectURL(url);
-  image.src = url;
+  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  const blobUrl = URL.createObjectURL(blob);
+  rasterise(blobUrl, () => URL.revokeObjectURL(blobUrl), false);
 }

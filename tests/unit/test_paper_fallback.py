@@ -89,10 +89,11 @@ def test_fallback_paper_reports_gaps_honestly() -> None:
     paper = _fallback_integrated_paper(_brief(), {}, "Q")
     process = "\n".join(paper.investigation_process)
     assert "3 篇论文" in process
-    assert "缺席席位：adversarial_falsifier" in process
+    # 席位使用更面向读者的人类化表述
+    assert "对抗性证伪者" in process or "adversarial_falsifier" in process
     # 缺席席位的科学家缺席记录在 process 里，但不伪装成无缺席的完整运行。
     limitations = "\n".join(paper.limitations)
-    assert "adversarial_falsifier" in limitations or "缺席" in limitations
+    assert "adversarial_falsifier" in limitations or "对抗性证伪者" in limitations or "缺席" in limitations
 
 
 def test_fallback_paper_without_gaps_is_clean() -> None:
@@ -183,8 +184,8 @@ def test_fallback_body_avoids_internal_jargon() -> None:
     )
     for term in banned:
         assert term not in body, f"internal jargon leaked into paper: {term}"
-    # The abstract must be self-contained and start from the question.
-    assert paper.abstract.startswith("研究问题：")
+    # The abstract must be self-contained and lead with conclusions upfront.
+    assert "核心结论" in paper.abstract
 
 
 def test_phase_coverage_summary() -> None:

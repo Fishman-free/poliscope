@@ -175,12 +175,18 @@ OUTPUT_LANGUAGE_DIRECTIVES: dict[str, str] = {
     "zh-Hans": (
         "Output language: Simplified Chinese (简体中文). The researcher asked "
         "in Chinese, so you MUST write your reasoning, structured outputs, "
-        "review text, and every judgment in Simplified Chinese."
+        "review text, and every judgment in Simplified Chinese. "
+        "EXCEPTION: for bibliographic search `requests` (literature retrieval queries), "
+        "always provide English academic search keywords (e.g. 'adolescent depression social media risk factors') "
+        "so global academic search engines (OpenAlex, Crossref) can match them accurately."
     ),
     "zh-Hant": (
         "Output language: Traditional Chinese (繁體中文). The researcher asked "
         "in Traditional Chinese, so you MUST write your reasoning, structured "
-        "outputs, review text, and every judgment in Traditional Chinese."
+        "outputs, review text, and every judgment in Traditional Chinese. "
+        "EXCEPTION: for bibliographic search `requests` (literature retrieval queries), "
+        "always provide English academic search keywords so global academic search engines "
+        "can match them accurately."
     ),
     "en": (
         "Output language: English. The researcher asked in English, so you "

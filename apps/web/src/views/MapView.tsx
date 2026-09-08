@@ -92,8 +92,8 @@ const OPPOSING = new Set(["REFUTES", "CONTRADICTS", "CONFOUNDS"]);
 const LANES: Record<string, number> = {
   ResearchQuestion: 0,
   Claim: 1,
-  Blindspot: 1,
   DebateCapsule: 1,
+  DissentCertificate: 1,
   StudyFinding: 2,
   Construct: 2,
   Context: 2,
@@ -101,13 +101,13 @@ const LANES: Record<string, number> = {
   DiscriminatingStudy: 3,
 };
 
-/** Sparse grid geometry. A lane wraps into a new sub-column after this many
- * rows instead of stacking everything in one tall, dense column. */
-const NODE_W = 220;
-const SUBCOLUMN_PITCH = NODE_W + 44;
-const LANE_GAP = 92;
-const ROW_HEIGHT = 196;
+/** Sparse grid geometry. */
+const NODE_W = 224;
+const SUBCOLUMN_PITCH = NODE_W + 48;
+const LANE_GAP = 96;
+const ROW_HEIGHT = 184;
 const ROWS_PER_SUBCOLUMN = 4;
+const BLINDSPOT_BAND_GAP = 80;
 
 function labelOf(node: GraphNode): string {
   for (const key of ["statement", "question", "title", "summary"]) {
@@ -120,9 +120,12 @@ function labelOf(node: GraphNode): string {
 }
 
 function layout(graph: EvidenceGraph): MapFlowNode[] {
-  // Count nodes per lane to know how many wrapped sub-columns each lane needs.
+  const mainNodes = graph.nodes.filter((node) => node.node_type !== "Blindspot");
+  const blindspotNodes = graph.nodes.filter((node) => node.node_type === "Blindspot");
+
+  // Count nodes per lane for non-blindspot nodes
   const laneLengths: [number, number, number, number] = [0, 0, 0, 0];
-  for (const node of graph.nodes) {
+  for (const node of mainNodes) {
     const lane = LANES[node.node_type] ?? 2;
     laneLengths[lane] = (laneLengths[lane] ?? 0) + 1;
   }
@@ -135,9 +138,10 @@ function layout(graph: EvidenceGraph): MapFlowNode[] {
     laneX[lane] = cursor;
     cursor += (laneColumns[lane] ?? 1) * SUBCOLUMN_PITCH + LANE_GAP;
   }
-  // Running row index per lane, output kept in the server's graph order.
+
+  let maxMainY = 0;
   const laneSeen: [number, number, number, number] = [0, 0, 0, 0];
-  return graph.nodes.map((node) => {
+  const result: MapFlowNode[] = mainNodes.map((node) => {
     const lane = LANES[node.node_type] ?? 2;
     const index = laneSeen[lane] ?? 0;
     laneSeen[lane] = index + 1;
@@ -150,18 +154,45 @@ function layout(graph: EvidenceGraph): MapFlowNode[] {
       tone,
       hasNote: false,
     };
+    const x = (laneX[lane] ?? 0) + subColumn * SUBCOLUMN_PITCH;
+    const y = row * ROW_HEIGHT;
+    if (y > maxMainY) maxMainY = y;
     return {
       id: node.id,
-      position: {
-        x: (laneX[lane] ?? 0) + subColumn * SUBCOLUMN_PITCH,
-        y: row * ROW_HEIGHT,
-      },
+      position: { x, y },
       data,
       type: "evidence",
       className: `map-node map-node--${tone}`,
       draggable: true,
     } satisfies Node<EvidenceNodeData> as MapFlowNode;
   });
+
+  // Dedicated Blindspot Band below the main lanes
+  const blindspotStartY = (maxMainY > 0 ? maxMainY + ROW_HEIGHT : ROW_HEIGHT) + BLINDSPOT_BAND_GAP;
+  blindspotNodes.forEach((node, index) => {
+    const tone = toneForStatus(node.status) as NodeTone;
+    const data: EvidenceNodeData = {
+      label: labelOf(node),
+      typeLabel: t("盲点审查"),
+      tone,
+      hasNote: false,
+    };
+    const col = index % 4;
+    const row = Math.floor(index / 4);
+    result.push({
+      id: node.id,
+      position: {
+        x: col * SUBCOLUMN_PITCH + (laneX[1] ?? 0),
+        y: blindspotStartY + row * ROW_HEIGHT,
+      },
+      data,
+      type: "evidence",
+      className: `map-node map-node--blindspot map-node--${tone}`,
+      draggable: true,
+    } satisfies Node<EvidenceNodeData> as MapFlowNode);
+  });
+
+  return result;
 }
 
 type FormalEdgeKind = "normal" | "opposing" | "cite";
@@ -240,6 +271,34 @@ function toEdges(graph: EvidenceGraph): Edge[] {
       );
     }
   }
+
+  // Connect Blindspots with their cited Sources
+  for (const node of graph.nodes) {
+    if (node.node_type === "Blindspot") {
+      const sourceRefs = node.payload.source_refs;
+      if (Array.isArray(sourceRefs)) {
+        for (const sRef of sourceRefs) {
+          const sid = String(sRef);
+          if (byId.has(sid)) {
+            const key = `${node.id}->${sid}:BLINDSPOT_SOURCE`;
+            if (!drawn.has(key)) {
+              drawn.add(key);
+              edges.push(
+                makeEdge(
+                  `cite-bs-${node.id}-${sid}`,
+                  node.id,
+                  sid,
+                  t("质疑/依据文献"),
+                  "cite",
+                ),
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
   return edges;
 }
 
@@ -283,6 +342,7 @@ function MapViewInner({
         type: "sticky",
         position: { x: note.x, y: note.y },
         draggable: true,
+        className: "map-sticky",
         data: {
           text: note.text,
           color: note.color,
@@ -597,8 +657,6 @@ function MapViewInner({
     );
   }
 
-  const { exportNodes, exportEdges } = buildExportModel();
-
   return (
     <div className={`map${dimRefuted ? " map--dim-refuted" : ""}`}>
       <div className="map__canvas-wrap">
@@ -649,18 +707,24 @@ function MapViewInner({
           <button
             type="button"
             className="map__tool"
-            onClick={() => exportPngFile(exportNodes, exportEdges, exportTitle)}
-            title={t("导出当前画布为 PNG 图片（2 倍清晰度，包含便签与连线）")}
+            onClick={() => {
+              const currentModel = buildExportModel();
+              exportPngFile(currentModel.exportNodes, currentModel.exportEdges, exportTitle);
+            }}
+            title={t("导出当前画布为 PNG 图片（包含你的自由拖动布局、便签与连线）")}
           >
-            {t("导出 PNG")}
+            {t("导出证据图 PNG")}
           </button>
           <button
             type="button"
             className="map__tool"
-            onClick={() => exportSvgFile(exportNodes, exportEdges, exportTitle)}
-            title={t("导出可缩放矢量图 SVG，适合论文与打印（包含便签与连线）")}
+            onClick={() => {
+              const currentModel = buildExportModel();
+              exportSvgFile(currentModel.exportNodes, currentModel.exportEdges, exportTitle);
+            }}
+            title={t("导出可缩放矢量图 SVG（包含你的自由拖动布局、便签与连线）")}
           >
-            {t("导出 SVG")}
+            {t("导出证据图 SVG")}
           </button>
           <button
             type="button"

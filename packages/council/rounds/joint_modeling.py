@@ -50,19 +50,21 @@ class JointModelingHandler:
         hinge_variables = tuple(
             f"hinge-{i}" for i in range(len(input.claim_refs))
         )
-        consensus_parts = [f"conditional on {len(input.claim_refs)} claims"]
+        # Reader-facing Chinese fallback (quoted verbatim in the final paper,
+        # so English scaffolding here leaked as system noise to readers).
+        consensus_parts = [f"综合结论以 {len(input.claim_refs)} 项已有主张为前提"]
         if input.boundary_conditions:
             consensus_parts.append(
-                f"bounded by {len(input.boundary_conditions)} conditions"
+                f"其适用范围受 {len(input.boundary_conditions)} 项边界条件约束"
             )
         if input.unresolved_conflicts:
             consensus_parts.append(
-                f"{len(input.unresolved_conflicts)} unresolved conflicts noted"
+                f"目前仍有 {len(input.unresolved_conflicts)} 处分歧尚未解决"
             )
         output = JointModelOutput(
             ready=True,
             missing_fields=(),
-            conditional_consensus="; ".join(consensus_parts),
+            conditional_consensus="；".join(consensus_parts),
             supporting_refs=input.claim_refs,
             opposing_refs=input.strongest_opposition_refs,
             hinge_variables=hinge_variables,

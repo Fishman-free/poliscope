@@ -19,6 +19,7 @@ import type {
   PaperReviewReport,
 } from "../api/types";
 import { Badge, Empty, Panel } from "../components/primitives";
+import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
 
 import "./PaperView.css";
@@ -159,7 +160,7 @@ function ReviewReportView({
 
       <div className="paper__grid">
         <Panel title={t("结论与局限")} subtitle={t("局限与结论并排呈现。")}>
-          <p className="paper__conclusion">{paper.conclusion}</p>
+          <Markdown className="paper__conclusion paper__md" text={paper.conclusion} />
           {paper.limitations.length === 0 ? (
             <Empty>{t("未记录局限。")}</Empty>
           ) : (
@@ -264,7 +265,7 @@ export function PaperView({
         ) : null}
         <section className="paper__abstract">
           <h3>{t("摘要")}</h3>
-          <p>{paper.abstract}</p>
+          <Markdown className="paper__md" text={paper.abstract} />
         </section>
 
         {paper.investigation_process.length > 0 ? (
@@ -288,7 +289,7 @@ export function PaperView({
               <section key={index} className="paper__section">
                 <h3>{section.heading}</h3>
                 {section.paragraphs.map((paragraph, pIndex) => (
-                  <p key={pIndex}>{paragraph}</p>
+                  <Markdown key={pIndex} className="paper__md" text={paragraph} />
                 ))}
               </section>
             ))}
@@ -305,18 +306,12 @@ export function PaperView({
             {paper.standpoints.map((standpoint, index) => (
               <li key={index} className="paper__standpoint">
                 <h3 className="paper__standpoint-seat">{standpoint.seat}</h3>
-                <p className="paper__standpoint-position">
-                  {t("观点：{0}", standpoint.position)}
-                </p>
+                <Markdown className="paper__standpoint-position paper__md" text={t("观点：{0}", standpoint.position)} />
                 {standpoint.weakness ? (
-                  <p className="paper__standpoint-weakness">
-                    {t("缺陷：{0}", standpoint.weakness)}
-                  </p>
+                  <Markdown className="paper__standpoint-weakness paper__md" text={t("缺陷：{0}", standpoint.weakness)} />
                 ) : null}
                 {standpoint.disagreement ? (
-                  <p className="paper__standpoint-disagreement">
-                    {t("分歧：{0}", standpoint.disagreement)}
-                  </p>
+                  <Markdown className="paper__standpoint-disagreement paper__md" text={t("分歧：{0}", standpoint.disagreement)} />
                 ) : null}
                 {standpoint.supporting_evidence.length > 0 ? (
                   <ul className="paper__standpoint-evidence">
@@ -336,7 +331,7 @@ export function PaperView({
           title={t("总体结论")}
           subtitle={t("现有证据是否支持总体观点，以及它依赖的证据。")}
         >
-          <p className="paper__conclusion">{paper.overall_conclusion}</p>
+          <Markdown className="paper__conclusion paper__md" text={paper.overall_conclusion} />
           {paper.conclusion_evidence && paper.conclusion_evidence.length > 0 ? (
             <>
               <h4 className="paper__subsection">{t("支撑证据")}</h4>

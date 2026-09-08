@@ -15,7 +15,7 @@
  * formal evidence edges.
  */
 
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Handle, type NodeProps, type Node, Position } from "@xyflow/react";
 
 import { t } from "../../i18n";
@@ -122,6 +122,24 @@ function StickyNode({
   data,
   selected,
 }: NodeProps<Node<StickyNodeData>>) {
+  // A textarea always swallows the pointer, so a note whose body is a live
+  // textarea can only be dragged by some other strip -- which is exactly why
+  // this note was reported as immovable. Instead the body is a plain div (part
+  // of the drag surface) until the researcher double-clicks to edit, the same
+  // gesture every whiteboard tool uses. Editing ends on blur or Escape.
+  const [editing, setEditing] = useState(false);
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    const area = textRef.current;
+    if (!area) return;
+    area.focus();
+    // Caret to the end, so double-click continues the note instead of
+    // overwriting it.
+    area.setSelectionRange(area.value.length, area.value.length);
+  }, [editing]);
+
   return (
     <div
       className={
@@ -129,11 +147,14 @@ function StickyNode({
         data.color +
         " sticky-node--font-" +
         data.font +
-        (selected ? " sticky-node--selected" : "")
+        (selected ? " sticky-node--selected" : "") +
+        (editing ? " sticky-node--editing" : "")
       }
     >
       <ConnectHandles />
       <div className="sticky-node__bar nodrag">
+        {/* Keeps the note labelled as the researcher's own overlay layer, never
+            formal evidence (AGENTS.md 6). */}
         <span className="sticky-node__title">{t("便签")}</span>
         <label className="sticky-node__control" aria-label={t("便签底色")}>
           <span className="sticky-node__swatch" aria-hidden="true">
@@ -200,15 +221,48 @@ function StickyNode({
           ×
         </button>
       </div>
-      <textarea
-        className={
-          "sticky-node__text nodrag sticky-node__text--" + data.textColor
-        }
-        value={data.text}
-        placeholder={t("在这里记录判断、疑点或待查线索…")}
-        onChange={(event) => data.onChange(id, event.target.value)}
-        rows={4}
-      />
+      {editing ? (
+        <textarea
+          ref={textRef}
+          className={
+            "sticky-node__text nodrag sticky-node__text--" + data.textColor
+          }
+          value={data.text}
+          placeholder={t("双击式输入：记录你的判断、疑点或待查线索…")}
+          onChange={(event) => data.onChange(id, event.target.value)}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(event) => {
+            // Escape leaves editing without bubbling to the canvas (which
+            // would otherwise clear the selection).
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              setEditing(false);
+            }
+          }}
+          rows={4}
+        />
+      ) : (
+        <div
+          className={
+            "sticky-node__text sticky-node__text--view sticky-node__text--" +
+            data.textColor +
+            (data.text ? "" : " sticky-node__text--empty")
+          }
+          onDoubleClick={() => setEditing(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              setEditing(true);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label={t("双击编辑便签")}
+          title={t("双击编辑便签")}
+        >
+          {data.text || t("双击式输入：记录你的判断、疑点或待查线索…")}
+        </div>
+      )}
     </div>
   );
 }

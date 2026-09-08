@@ -493,6 +493,11 @@ const TOOL_STUCK_CRITICAL_SECONDS = 300;
  *  审计轨迹里，这里折叠并给出数量说明。 */
 const TOOL_GROUPS_RENDER_CAP = 60;
 
+/** 议会动作最多渲染多少条。终态任务一次性回放整本账本（REST 上限 4000
+ *  行），无上限渲染就是一次提交上万个 DOM 节点 —— 与检索卡同样的问题，
+ *  同样的处理：裁最早的，折叠数量显式说明，完整留痕仍在审计轨迹。 */
+const ACTION_RENDER_CAP = 300;
+
 /** 未命中原因里的 URL（OpenAlex 的 404 地址、Mozilla 文档页等），提取
  * 出来作为可点击链接 —— 原始原因整段塞进卡片会撑破方框，且那一串
  * repr 对读者没有意义。 */
@@ -1025,6 +1030,8 @@ export function LiveView({
   const anyTrace = processEvents.length > 0;
   const hiddenToolCount = Math.max(0, toolGroups.length - TOOL_GROUPS_RENDER_CAP);
   const visibleToolGroups = toolGroups.slice(-TOOL_GROUPS_RENDER_CAP);
+  const hiddenActionCount = Math.max(0, actions.length - ACTION_RENDER_CAP);
+  const visibleActions = actions.slice(-ACTION_RENDER_CAP);
 
   return (
     <div className="live">
@@ -1219,18 +1226,28 @@ export function LiveView({
                 {actions.length === 0 ? (
                   <Empty>{t("还没有结构化动作。")}</Empty>
                 ) : (
-                  <ol className="live__action-log">
-                    {actions.map((item, index) => (
-                      <li key={index} className="live__action">
-                        <span
-                          className={`live__action-kind live__action-kind--${item.tone}`}
-                        >
-                          {t(item.meta)}
-                        </span>
-                        <span className="live__action-body">{item.body}</span>
-                      </li>
-                    ))}
-                  </ol>
+                  <>
+                    {hiddenActionCount > 0 ? (
+                      <p className="live__tool-folded">
+                        {t(
+                          "更早的 {0} 条动作已折叠（过程留痕可在审计轨迹查看）",
+                          hiddenActionCount,
+                        )}
+                      </p>
+                    ) : null}
+                    <ol className="live__action-log">
+                      {visibleActions.map((item, index) => (
+                        <li key={index} className="live__action">
+                          <span
+                            className={`live__action-kind live__action-kind--${item.tone}`}
+                          >
+                            {t(item.meta)}
+                          </span>
+                          <span className="live__action-body">{item.body}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </>
                 )}
               </section>
             </div>

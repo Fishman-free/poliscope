@@ -76,6 +76,24 @@ _PAPER_IDEMPOTENCY_KEY = "REPORTING:final_paper"
 _EMERGENCY_PAPER_IDEMPOTENCY_KEY = "REPORTING:emergency_fallback"
 _FAILED_IDEMPOTENCY_KEY = "REPORTING:final_paper_failed"
 
+# Internal seat ids must never reach a reader: the deterministic fallback paper
+# (and its standpoint headings) used to print raw ids such as
+# "缺席席位：theory_builder". Unknown values keep the raw id rather than guess.
+SEAT_DISPLAY_NAMES: dict[str, str] = {
+    "theory_builder": "理论建构者",
+    "causal_scientist": "因果推断专家",
+    "measurement_scientist": "测量与构念专家",
+    "replication_scientist": "统计与复现专家",
+    "boundary_scientist": "边界与情境专家",
+    "adversarial_falsifier": "对抗性证伪者",
+    "evidence_auditor": "证据与溯源审计员",
+}
+
+
+def _seat_display(seat: object) -> str:
+    text = str(seat)
+    return SEAT_DISPLAY_NAMES.get(text, text)
+
 
 def _strings(value: object) -> tuple[str, ...]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
@@ -221,11 +239,11 @@ def _fallback_integrated_paper(
     if judgments:
         standpoints = tuple(
             Standpoint(
-                seat=seat,
+                seat=_seat_display(seat),
                 position=str(judgment),
                 weakness=(
                     "该观点与主流结论不同；其理由与相关争议见正文「分歧与尚未回答的问题」部分。"
-                    if "DISSENT" in str(judgment)
+                    if "持异议" in str(judgment)
                     else "该观点的主要局限与反面证据见正文「分歧与尚未回答的问题」部分"
                     "（离线汇总，不展开论证细节）"
                 ),
@@ -302,7 +320,9 @@ def _fallback_integrated_paper(
         f"议会阶段：{_phase_coverage(brief)}。",
     ]
     if brief.absent_seats:
-        process.append(f"缺席席位：{', '.join(brief.absent_seats)}。")
+        process.append(
+            f"缺席席位：{', '.join(_seat_display(seat) for seat in brief.absent_seats)}。"
+        )
     references: tuple[PaperReference, ...] = ()
 
     title = f"关于「{question}」的研究整合结论"
@@ -313,28 +333,38 @@ def _fallback_integrated_paper(
     # (the same statements the sections above already show, capped so the
     # field stays a summary, not a second copy of the paper).
     conclusion_evidence = tuple(finding_lines[:6])
-    # A self-contained plain-language abstract: question -> main findings ->
-    # key disagreements -> overall assessment. Internal process terms never
-    # appear here (the abstract is the part a general reader reads first).
-    abstract_parts = [f"研究问题：{question}。"]
-    if brief.confirmed_claims:
-        claim_summary = "；".join(
-            claim.statement for claim in brief.confirmed_claims[:3]
-        )
-        abstract_parts.append(f"现有证据主要支持：{claim_summary}。")
-    elif finding_lines:
-        abstract_parts.append(f"主要结果：{finding_lines[0].lstrip('- ')}。")
+    # A self-contained plain-language abstract: conclusion FIRST -> ranked
+    # prominent factors / findings -> disagreements/boundaries -> confidence.
+    # Never put conclusion at the very end. Internal machine jargon never appears.
+    abstract_parts = []
+    consensus_text = consensus.get("conditional_consensus")
+    if isinstance(consensus_text, str) and consensus_text and not consensus_text.startswith("综合结论以"):
+        abstract_parts.append(f"**【核心结论】**：{consensus_text}\n\n")
+    elif brief.confirmed_claims:
+        top_claims = "；".join(claim.statement for claim in brief.confirmed_claims[:2])
+        abstract_parts.append(f"**【核心结论】**：综合实证研究表明，{top_claims}。\n\n")
     else:
-        abstract_parts.append("现有证据尚不足以形成明确结论。")
+        abstract_parts.append("**【核心结论】**：现有实证证据尚不足以形成统一因果推断。\n\n")
+
+    if brief.confirmed_claims or finding_lines:
+        abstract_parts.append("**【主要影响因素与实证发现】**：\n")
+        if brief.confirmed_claims:
+            for idx, claim in enumerate(brief.confirmed_claims[:3], 1):
+                abstract_parts.append(f"{idx}. **主要影响维度**：{claim.statement}\n")
+        elif finding_lines:
+            for idx, fl in enumerate(finding_lines[:3], 1):
+                clean_fl = fl.lstrip("- ")
+                abstract_parts.append(f"{idx}. **实证发现**：{clean_fl}\n")
+        abstract_parts.append("\n")
+
     if dissent_lines:
         disagreement = "；".join(
             line.lstrip("- ") for line in dissent_lines[:2]
         )
-        abstract_parts.append(f"主要分歧在于：{disagreement}。")
-    consensus_text = consensus.get("conditional_consensus")
-    if isinstance(consensus_text, str) and consensus_text:
-        abstract_parts.append(f"总体判断：{consensus_text}")
-    abstract = "".join(abstract_parts)[:400]
+        abstract_parts.append(f"**【关键争议与边界】**：{disagreement}。\n\n")
+
+    abstract_parts.append(f"**【研究问题】**：针对「{question}」的证据链整合与审视。")
+    abstract = "".join(abstract_parts)
     return FinalPaper(
         title=title,
         abstract=abstract,
@@ -579,11 +609,11 @@ async def _load_final_judgments(
             continue
         confidence = payload.get("confidence")
         dissent = payload.get("has_dissent")
-        suffix = " [DISSENT]" if dissent is True else ""
+        suffix = "（持异议）" if dissent is True else ""
         judgments.append(
             (
                 seat,
-                f"{judgment} (confidence: {_as_str(confidence)}{suffix})",
+                f"{judgment}（置信度：{_as_str(confidence)}{suffix}）",
             )
         )
     return tuple(judgments)
@@ -607,28 +637,37 @@ def _build_user_prompt(
         "limitations honestly -- a gap is a correct answer, a confident guess",
         "is not.",
         "",
-        "LANGUAGE RULE (critical): write plain, problem-oriented prose. The",
-        "internal vocabulary below is FORBIDDEN everywhere EXCEPT the",
-        "investigation_process field: 'atomic claim', 'claim bifurcation',",
-        "'dissent timeline', 'debate capsule', 'blindspot bounty', 'seat',",
-        "'council', 'precommitment/precommitted', 'conditioned consensus',",
-        "'joint modeling', 'cross-examination', 'evidence exchange', 'final",
-        "rejudgment', 'round/phase', and their Chinese equivalents",
-        "(原子主张, 主张分叉, 异议时间线, 争论胶囊, 盲点悬赏, 席位, 议会,",
-        "预承诺, 条件化共识, 联合建模, 交叉质询, 证据交换, 最终复判, 轮次).",
-        "Use ordinary academic wording instead, e.g. '现有证据支持……', '研究",
-        "之间在……上存在分歧', '这一问题尚缺乏研究', '综合现有证据可以认为……'.",
-        "Never describe machinery ('the experts met', 'the system",
-        "precommitted', 'during joint modeling') in the abstract, findings, or",
-        "conclusions; describe the scientific subject matter instead.",
+        "TYPOGRAPHY & READABILITY REQUIREMENT (critical): do NOT output dense walls",
+        "of unformatted text. Break long thoughts into crisp paragraphs. Use blank lines",
+        "between paragraphs. Use **bold** for key concepts, factor names, effect sizes,",
+        "and takeaways. Use bullet points or numbered lists where comparing factors or",
+        "hypotheses. Academic prose must be clear, well-structured, and effortless to read.",
         "",
-        "ABSTRACT (highest priority): it must stand alone. A reader who reads",
-        "only the abstract must understand, in this order and in plain",
-        "language: (a) the real-world question and why it matters; (b) the",
-        "main findings the evidence supports; (c) the key point(s) on which",
-        "studies or positions disagree, and why; (d) the overall conclusion",
-        "and how confident we can be. No internal terms, no process",
-        "narration, no mention of seats/rounds/phases. 180-300 words.",
+        "LANGUAGE RULE (critical): write plain, problem-oriented prose. The",
+        "internal vocabulary below is STRICTLY FORBIDDEN everywhere (including headings):",
+        "'atomic claim', 'claim bifurcation', 'dissent timeline', 'debate capsule',",
+        "'blindspot bounty', 'seat', 'council', 'precommitment/precommitted',",
+        "'conditioned consensus', 'joint modeling', 'cross-examination', 'evidence exchange',",
+        "'final rejudgment', 'round/phase', 'theory_builder', 'causal_scientist',",
+        "'measurement_scientist', 'replication_scientist', 'boundary_scientist',",
+        "'adversarial_falsifier', 'evidence_auditor', and their Chinese equivalents",
+        "(原子主张, 主张分叉, 异议时间线, 争论胶囊, 盲点悬赏, 席位, 议会,",
+        "预承诺, 条件化共识, 联合建模, 交叉质询, 证据交换, 最终复判, 轮次, 缺席席位).",
+        "DO NOT output phrases like 'conditional on 2 claims', 'bounded by 41 conditions',",
+        "or list system roles. Use genuine scientific terminology.",
+        "",
+        "ABSTRACT (highest priority - CONCLUSION FIRST): A reader must grasp the core",
+        "takeaway within 10 seconds. You MUST structure the abstract in this exact order:",
+        "1. **【核心结论】(Conclusion First)**: Give the direct, clear answer to the user's",
+        "   question upfront. State what the empirical evidence firmly supports.",
+        "2. **【主要影响因素与效应/权重】(Ranked Factors & Magnitudes)**: Explicitly list the",
+        "   primary contributing factors from greatest to least impact (e.g. 1. 因素一（主要驱动力/效应最大）...",
+        "   2. 因素二...). Detail what evidence shows about each factor's role.",
+        "3. **【关键争议与边界条件】(Key Disagreements & Boundaries)**: Highlight what is contested,",
+        "   confounding variables, and under what conditions the findings hold.",
+        "4. **【综合研判】(Overall Takeaway)**: Final synthesis and practical implication.",
+        "Use Markdown formatting with **bold headings**, bulleted factors, and clean line breaks.",
+        "Never bury the conclusion at the bottom. 250-450 words.",
         "",
         "The paper MUST preserve the controversy, not blend it into one voice.",
         "In the standpoints field, write one entry per distinct scientific",
@@ -673,20 +712,20 @@ def _build_user_prompt(
         "ordinary academic headings (no internal vocabulary in headings): "
         "(1) Background: the question, why it matters, and what existing "
         "evidence already supports; "
-        "(2) Results: what the admitted evidence shows, each result with the "
-        "evidence it rests on -- keep this section concrete and detailed; "
+        "(2) Results & Key Factors: what the admitted evidence shows, detailed breakdown "
+        "of major contributing factors, their relative impacts/magnitudes, and specific findings; "
         "(3) Points of disagreement: where and why studies or positions "
-        "diverge, unresolved conflicts, and questions evidence cannot yet "
-        "answer; "
-        "(4) Overall assessment: what can be concluded and under what "
-        "conditions; "
+        "diverge, unresolved conflicts, and questions evidence cannot yet answer; "
+        "(4) Overall assessment: what can be concluded and under what conditions; "
         "(5) Conclusions and limitations side by side -- if no overall "
         "conclusion was reached, list every major position here as its own "
         "item with supporting evidence and limitations. "
+        "EVERY paragraph in sections must use clean formatting: short readable chunks, "
+        "bullet points where appropriate, and **bold** for key concepts. "
         "`references` must cite the source ids/DOIs of the admitted findings; "
         "every `id` in references must be one of the finding/source ids "
         "present in the materials above. `investigation_process` is a factual "
-        "timeline and the only place process terms may appear."
+        "timeline describing the research steps without robotic system dumps."
     )
     return sanitize_export("\n".join(lines))
 

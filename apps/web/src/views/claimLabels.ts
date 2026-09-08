@@ -23,10 +23,15 @@ export const INTERNAL_LABELS: Record<string, string> = {
   "source is retracted": "来源已撤回",
 };
 
-/** 句子中出现的内部标识一律换成中文标签；未知片段原样保留。 */
+/** 句子中出现的内部标识一律换成中文标签；未知片段原样保留。
+ *
+ * 每个候选串先用 `includes` 试探再 `split/join`：这个函数会被账本里每条事件
+ * 的每个文本字段调用（4000 行 × 约 2 字段 × 10 个候选），而绝大多数字段
+ * 一个候选都不含。一次扫描远比一次分配数组的 split 便宜。 */
 export function humanizeText(text: string): string {
   let result = text;
   for (const [raw, label] of Object.entries(INTERNAL_LABELS)) {
+    if (!result.includes(raw)) continue;
     result = result.split(raw).join(label);
   }
   return result;
@@ -65,24 +70,30 @@ export function claimLabel(claimId: string, labels: Map<string, string>): string
   return t("主张（未命名）");
 }
 
+/** 正文中的 UUID 匹配式。带 `g`：`String.replace` 会在进入和退出时重置
+ * `lastIndex`，因此这里复用同一个常量是安全的；但绝不可改用 `.exec()` 或
+ * `.test()` 逐个推进 —— 那会因为残留的 `lastIndex` 而漏匹配。 */
+const CLAIM_UUID_RE =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+
 /** 把正文中出现的每一个 UUID 替换为对应主张的可读标签（若它指名一个
- * 已知主张），其余 UUID 保留原样 —— 识别不出就不能假装认识。 */
+ * 已知主张），其余 UUID 保留原样 —— 识别不出就不能假装认识。
+ *
+ * 单次 `String.replace` 扫描输入，绝不重扫自己的输出。这一点是硬性的：
+ * 旧实现用无 `g` 的正则反复 `exec`，每轮都从下标 0 重新开始，只在标签命中
+ * 时才改写字符串。于是标签查不到（模型给出未登记的 claim_id、Claim 节点
+ * statement 为空、任务还没有 brief）时字符串不变，下一轮匹配到同一位置 ——
+ * 死循环，主线程永久锁死，页面完全不响应。若标签文本自身含 UUID，则改写
+ * 后又产生新匹配，字符串无界增长。两种失败模式在这里都被结构性排除：
+ * 推进不再依赖查表是否命中。
+ */
 export function replaceClaimUuids(
   text: string,
   labels: Map<string, string>,
 ): string {
-  const uuid =
-    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
-  let result = text;
-  let match = uuid.exec(result);
-  while (match !== null) {
-    const label = labels.get(match[0]);
-    if (label) {
-      result = `${result.slice(0, match.index)}「${label}」${result.slice(
-        match.index + match[0].length,
-      )}`;
-    }
-    match = uuid.exec(result);
-  }
-  return result;
+  return text.replace(CLAIM_UUID_RE, (id) => {
+    // 正则大小写不敏感，而 Map 的键是小写，故补一次小写回退。
+    const label = labels.get(id) ?? labels.get(id.toLowerCase());
+    return label ? `「${label}」` : id;
+  });
 }

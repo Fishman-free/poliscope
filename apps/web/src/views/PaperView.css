@@ -1,33 +1,119 @@
 .paper {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-6, 32px);
+  max-width: 960px;
+  margin: 0 auto;
 }
 
-.paper__abstract p {
-  line-height: 1.65;
+/* 轻量 Markdown：排版考究、舒适呼吸感、层级分明 */
+.paper__md {
+  display: block;
 }
 
-.paper__process ul,
-.paper__limits,
-.paper__references {
+.paper__md .md-paragraph {
+  margin: 0 0 var(--space-4, 16px);
+  line-height: 1.85;
+  font-size: 15px;
+  color: var(--ink-1);
+  letter-spacing: -0.01em;
+}
+
+.paper__md .md-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.paper__md .md-list {
+  margin: var(--space-3, 12px) 0 var(--space-4, 16px);
+  padding-left: 1.6em;
+  display: grid;
+  gap: var(--space-2, 8px);
+  line-height: 1.8;
+  font-size: 15px;
+}
+
+.paper__md .md-list li {
+  line-height: 1.75;
+}
+
+.paper__md .md-heading {
+  margin: var(--space-5, 20px) 0 var(--space-2, 8px);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink-1);
+  letter-spacing: -0.02em;
+  line-height: 1.5;
+}
+
+.paper__md strong {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+.paper__abstract {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-3, 12px);
+  padding: var(--space-5, 20px) var(--space-6, 24px);
+  margin-bottom: var(--space-4, 16px);
+}
+
+.paper__abstract h3 {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  margin: 0 0 var(--space-3, 12px);
+}
+
+.paper__abstract .md-paragraph {
+  line-height: 1.85;
+  font-size: 15px;
+}
+
+.paper__process {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-4, 16px);
+  margin-top: var(--space-4, 16px);
+}
+
+.paper__process h3 {
+  font-size: 13px;
+  color: var(--ink-3);
+  margin-bottom: var(--space-2, 8px);
+}
+
+.paper__process ul {
   margin: 0;
-  padding-left: var(--space-5);
+  padding-left: var(--space-4, 16px);
+  font-size: 13px;
+  color: var(--ink-3);
+  line-height: 1.6;
 }
 
-.paper__process li,
-.paper__limits li {
-  margin-bottom: var(--space-2);
+/* 正文段落走书籍杂志式舒适排印 */
+.paper__section {
+  margin-bottom: var(--space-6, 28px);
 }
 
-/* 正文段落走报纸式排印：更宽的阅读行长、段落间距明显。 */
-.paper__section p {
-  margin-bottom: var(--space-4);
-  line-height: 1.7;
-  max-width: 100%;
+.paper__section:last-child {
+  margin-bottom: 0;
 }
 
 .paper__section h3 {
-  margin-bottom: var(--space-3);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--space-3, 12px);
+  color: var(--ink-1);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: var(--space-2, 8px);
+}
+
+.paper__section p {
+  margin-bottom: var(--space-4, 16px);
+  line-height: 1.85;
+  font-size: 15px;
+  max-width: 78ch;
 }
 
 .paper__grid {

@@ -342,14 +342,54 @@ function DissentDetail({
   );
 }
 
-function BlindspotDetail({ node }: { node: GraphNode }) {
+function BlindspotDetail({
+  node,
+  graph,
+  onSelect,
+}: {
+  node: GraphNode;
+  graph: EvidenceGraph;
+  onSelect: (node: GraphNode) => void;
+}) {
   const payload = node.payload;
+  const sources = referencedNodes(payload, "source_refs", graph);
+  const doi = typeof payload.doi === "string" ? payload.doi : null;
+
   return (
     <>
       <Field label={t("盲点")} value={str(payload, "statement")} />
       <Field label={t("类型")} value={str(payload, "kind")} />
       <Field label={t("影响")} value={str(payload, "impact")} />
       <Field label={t("不确定性")} value={str(payload, "uncertainty")} />
+      {doi ? (
+        <p className="map-detail__field">
+          <span className="map-detail__label">DOI</span>
+          <span className="map-detail__value">
+            <a
+              href={`https://doi.org/${encodeURIComponent(doi)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {doi} ↗
+            </a>
+          </span>
+        </p>
+      ) : null}
+      {sources.length > 0 ? (
+        <div className="map-detail__field">
+          <span className="map-detail__label">{t("关联文献")}</span>
+          <div className="map-detail__chips">
+            {sources.map((source) => (
+              <NodeChip
+                key={source.id}
+                node={source}
+                label={str(source.payload, "title") || source.id.slice(0, 8)}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
       <RawPayload payload={payload} />
     </>
   );
@@ -394,7 +434,7 @@ export function MapNodeDetail({
       ) : node.node_type === "DissentCertificate" ? (
         <DissentDetail node={node} graph={graph} onSelect={onSelect} />
       ) : node.node_type === "Blindspot" ? (
-        <BlindspotDetail node={node} />
+        <BlindspotDetail node={node} graph={graph} onSelect={onSelect} />
       ) : node.node_type === "ResearchQuestion" ||
         node.node_type === "DiscriminatingStudy" ||
         node.node_type === "Construct" ||
