@@ -35,20 +35,81 @@ async def test_writer_flush_assigns_per_task_sequences(
 ) -> None:
     await _commit_seeded_task(app_session)
     writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=2)
-    writer.emit("model_token", {"text": "a"})
-    writer.emit("model_token", {"text": "b"})
+    writer.emit(
+        "model_token",
+        {"text": "a", "seat": "theory_builder", "phase": "P"},
+    )
+    writer.emit(
+        "seat_working",
+        {"seat": "theory_builder", "phase": "P", "elapsed": 1},
+    )
     writer.emit("tool_call", {"query": "q"})
     await writer.flush()
 
     repo = ProcessStreamRepository(app_session)
     # seq starts at 0 and list_since means "> after_seq": from the beginning
-    # is -1, and a resume after seq 0 must see only seq 2's event.
+    # is -1, and a resume after seq 0 must see only seq 2's event. Adjacent
+    # same-kind token deltas would coalesce, so deliberately distinct kinds
+    # are used to pin raw seq allocation.
+    rows = await repo.list_since(seeded_task, -1)
+    assert [(row.seq, row.kind) for row in rows] == [
+        (0, "model_token"),
+        (1, "seat_working"),
+        (2, "tool_call"),
+    ]
+    await app_session.rollback()
+
+
+async def test_adjacent_token_deltas_are_coalesced_on_flush(
+    app_session: AsyncSession,
+    app_sessions: async_sessionmaker[AsyncSession],
+    seeded_task: UUID,
+) -> None:
+    """Many tiny deltas for one seat/phase become ONE row with concatenated
+    text -- the write/SSE volume reduction for the 2-core/2 GB host."""
+    await _commit_seeded_task(app_session)
+    writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=100)
+    for piece in ("Hel", "lo ", "world"):
+        writer.emit(
+            "model_token",
+            {"text": piece, "seat": "theory_builder", "phase": "P"},
+        )
+    await writer.close()
+
+    repo = ProcessStreamRepository(app_session)
+    rows = await repo.list_since(seeded_task, -1)
+    assert [(row.seq, row.kind) for row in rows] == [(0, "model_token")]
+    assert rows[0].payload["text"] == "Hello world"
+    await app_session.rollback()
+
+
+async def test_coalescing_never_merges_across_seats_or_structural_rows(
+    app_session: AsyncSession,
+    app_sessions: async_sessionmaker[AsyncSession],
+    seeded_task: UUID,
+) -> None:
+    await _commit_seeded_task(app_session)
+    writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=100)
+    writer.emit(
+        "model_token", {"text": "a", "seat": "theory_builder", "phase": "P"}
+    )
+    writer.emit(
+        "model_token", {"text": "b", "seat": "causal_scientist", "phase": "P"}
+    )
+    writer.emit(
+        "model_done", {"seat": "theory_builder", "phase": "P"}
+    )
+    await writer.close()
+
+    repo = ProcessStreamRepository(app_session)
     rows = await repo.list_since(seeded_task, -1)
     assert [(row.seq, row.kind) for row in rows] == [
         (0, "model_token"),
         (1, "model_token"),
-        (2, "tool_call"),
+        (2, "model_done"),
     ]
+    assert rows[0].payload["text"] == "a"
+    assert rows[1].payload["text"] == "b"
     await app_session.rollback()
 
 
@@ -59,7 +120,10 @@ async def test_writer_close_flushes_remaining_buffer(
 ) -> None:
     await _commit_seeded_task(app_session)
     writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=100)
-    writer.emit("model_reasoning", {"text": "thinking…"})
+    writer.emit(
+        "model_reasoning",
+        {"text": "thinking…", "seat": "theory_builder", "phase": "P"},
+    )
     await writer.close()
 
     repo = ProcessStreamRepository(app_session)
@@ -75,8 +139,10 @@ async def test_list_since_resumes_after_given_seq(
 ) -> None:
     await _commit_seeded_task(app_session)
     writer = ProcessStreamWriter(app_sessions, seeded_task)
-    for index in range(3):
-        writer.emit("model_token", {"text": str(index)})
+    # Distinct kinds so coalescing keeps three rows to pin the cursors.
+    writer.emit("model_token", {"text": "0", "seat": "s", "phase": "P"})
+    writer.emit("seat_working", {"seat": "s", "phase": "P", "elapsed": 1})
+    writer.emit("model_done", {"seat": "s", "phase": "P"})
     await writer.close()
 
     repo = ProcessStreamRepository(app_session)
@@ -110,7 +176,9 @@ async def test_closing_batch_survives_a_flush_failure(
         await original(pending)
 
     monkeypatch.setattr(writer, "_flush_pending", flaky)
-    writer.emit("model_token", {"text": "a"})
+    writer.emit(
+        "model_token", {"text": "a", "seat": "causal_scientist", "phase": "X"}
+    )
     writer.emit("model_done", {"seat": "causal_scientist", "phase": "X"})
     await writer.flush()  # first attempt fails, batch put back
     await writer.close()  # close retries and succeeds
@@ -142,7 +210,9 @@ async def test_token_batch_is_dropped_without_retry(
         raise RuntimeError("db down")
 
     monkeypatch.setattr(writer, "_flush_pending", always_fail)
-    writer.emit("model_token", {"text": "a"})
+    writer.emit(
+        "model_token", {"text": "a", "seat": "causal_scientist", "phase": "X"}
+    )
     await writer.flush()
     # Dropped, not retried: the next flush writes nothing.
     await writer.close()
@@ -163,8 +233,8 @@ async def test_list_structural_before_keeps_only_anchors_ascending(
     writer = ProcessStreamWriter(app_sessions, seeded_task, flush_at=100)
     # seq 0: anchor; seq 1-3: heavy tokens; seq 4: closing anchor.
     writer.emit("seat_deliberation", {"seat": "theory_builder", "phase": "P"})
-    writer.emit("model_token", {"text": "a"})
-    writer.emit("model_reasoning", {"text": "b"})
+    writer.emit("model_token", {"text": "a", "seat": "theory_builder", "phase": "P"})
+    writer.emit("model_reasoning", {"text": "b", "seat": "theory_builder", "phase": "P"})
     writer.emit("seat_working", {"seat": "theory_builder", "elapsed": 1})
     writer.emit("model_done", {"seat": "theory_builder", "phase": "P"})
     await writer.close()

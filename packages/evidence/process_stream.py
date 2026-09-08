@@ -51,6 +51,51 @@ FLUSH_AT = 40
 CLOSING_KINDS = frozenset({"model_done", "seat_absent"})
 MAX_CLOSING_RETRIES = 2
 
+# High-volume display rows that can be coalesced inside one flush batch.
+# A streaming answer emits one model_token/model_reasoning row per tiny delta;
+# merging adjacent deltas that belong to the same seat+phase into one row cuts
+# process_stream writes (and SSE replay payload) by an order of magnitude on a
+# long phase -- essential on the 2-core/2 GB deployment -- without losing any
+# text (the deltas are concatenated in order). Structural kinds are never
+# merged, since they open/close live-view slices.
+COALESCE_TOKEN_KINDS = frozenset({"model_reasoning", "model_token"})
+
+
+def _coalesce_batch(
+    pending: list[tuple[str, dict[str, object]]],
+) -> list[tuple[str, dict[str, object]]]:
+    """Collapse one flush batch's display noise, preserving order and text.
+
+    * Adjacent ``model_reasoning``/``model_token`` rows for the same seat and
+      phase are merged into one row whose ``text`` is the ordered concat --
+      the live view appends ``payload.text`` exactly as it does for separate
+      deltas, so the rendered stream is byte-identical.
+    * Adjacent ``seat_working`` heartbeats for the same seat collapse to the
+      last one (only the newest elapsed second matters).
+    * Every other kind (seat_deliberation/model_done/seat_absent/tool_* and
+      friends) is kept verbatim and also breaks a coalescing run.
+    The input rows are never mutated (copies are made), so a failed batch put
+    back for retry cannot be double-merged.
+    """
+    merged: list[tuple[str, dict[str, object]]] = []
+    for kind, payload in pending:
+        if merged and merged[-1][0] == kind:
+            _previous_kind, previous = merged[-1]
+            same_slice = (
+                previous.get("seat") == payload.get("seat")
+                and previous.get("phase") == payload.get("phase")
+            )
+            if kind in COALESCE_TOKEN_KINDS and same_slice:
+                previous["text"] = (
+                    f"{previous.get('text', '')}{payload.get('text', '')}"
+                )
+                continue
+            if kind == "seat_working" and same_slice:
+                merged[-1] = (kind, dict(payload))
+                continue
+        merged.append((kind, dict(payload)))
+    return merged
+
 # Sparse, load-bearing structural rows, as opposed to the high-volume token
 # deltas/heartbeats. The live view opens a seat's card only after seeing
 # ``seat_deliberation`` and closes it on ``model_done``/``seat_absent``; the
@@ -240,7 +285,7 @@ class ProcessStreamWriter:
         async with self._sessions() as session:
             repo = ProcessStreamRepository(session)
             seq = await repo.next_seq(self._task_id)
-            for kind, payload in pending:
+            for kind, payload in _coalesce_batch(pending):
                 repo.append(self._task_id, seq, kind, payload)
                 seq += 1
             await session.commit()

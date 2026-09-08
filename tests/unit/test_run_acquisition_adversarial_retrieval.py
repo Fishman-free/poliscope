@@ -1,10 +1,11 @@
 """Unit coverage for run_acquisition's adversarial-retrieval wiring (registry.py).
 
 The pure query generation is covered in tests/unit/test_adversarial_retrieval.py;
-this file checks that run_acquisition actually appends those six-per-claim
-queries to what reaches ``context.acquirer.acquire``, attributed to the
-adversarial falsifier seat, independent of whatever the other seats requested
-(design spec 7.9, mechanism 4 of 4).
+this file checks that run_acquisition actually appends those three-per-claim
+queries (for at most MAX_ADVERSARIAL_CLAIMS claims) to what reaches
+``context.acquirer.acquire``, attributed to the adversarial falsifier seat,
+independent of whatever the other seats requested (design spec 7.9,
+mechanism 4 of 4).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from uuid import UUID, uuid4
 
 from packages.council.contracts import Seat
 from packages.council.rounds.registry import (
+    MAX_ADVERSARIAL_CLAIMS,
     AcquiredLike,
     PhaseContext,
     RefusedLike,
@@ -59,7 +61,7 @@ class _RecordingAcquirer:
 
 
 class _EverythingUnresolvableAcquirer:
-    """Mimics the real pipeline: any free-text (non-DOI) query is unresolvable.
+    """Mimic the real pipeline: any free-text (non-DOI) query is unresolvable.
 
     ``CandidatePool.add`` in the real pipeline can only resolve a query that
     contains a DOI-shaped substring -- every adversarial-retrieval query is
@@ -83,18 +85,14 @@ class _EverythingUnresolvableAcquirer:
     async def acquire_uploaded(
         self, object_ids: tuple[UUID, ...]
     ) -> _AcquisitionResult:
-        # Not exercised by this file's scenarios -- none pass pdf_object_ids --
-        # but required to satisfy SourceAcquirer.
         return _AcquisitionResult()
 
     async def acquire_dois(self, dois: tuple[str, ...]) -> _AcquisitionResult:
-        # Not exercised by this file's scenarios -- none pass user DOIs.
         return _AcquisitionResult()
 
     async def acquire_knowledge_documents(
         self, documents: tuple[object, ...]
     ) -> _AcquisitionResult:
-        # Not exercised by this file's scenarios -- none link a knowledge base.
         return _AcquisitionResult()
 
 
@@ -121,7 +119,7 @@ def _context(
     )
 
 
-async def test_confirmed_claim_yields_six_adversarial_requests() -> None:
+async def test_confirmed_claim_yields_three_adversarial_requests() -> None:
     claim_id = uuid4()
     acquirer = _RecordingAcquirer()
 
@@ -132,7 +130,7 @@ async def test_confirmed_claim_yields_six_adversarial_requests() -> None:
         for seat, query in acquirer.seen_requests
         if seat is Seat.ADVERSARY_FALSIFIER
     ]
-    assert len(adversarial) == 6
+    assert len(adversarial) == 3
     # Queries name the science (the research question, when no statement map
     # is supplied), never the opaque claim UUID.
     assert all(
@@ -141,7 +139,7 @@ async def test_confirmed_claim_yields_six_adversarial_requests() -> None:
     assert all(str(claim_id) not in query for _, query in adversarial)
 
 
-async def test_two_confirmed_claims_yield_twelve_adversarial_requests() -> None:
+async def test_two_confirmed_claims_yield_six_adversarial_requests() -> None:
     acquirer = _RecordingAcquirer()
 
     await run_acquisition(_context((uuid4(), uuid4()), acquirer))
@@ -151,7 +149,24 @@ async def test_two_confirmed_claims_yield_twelve_adversarial_requests() -> None:
         for seat, query in acquirer.seen_requests
         if seat is Seat.ADVERSARY_FALSIFIER
     ]
-    assert len(adversarial) == 12
+    assert len(adversarial) == 6
+
+
+async def test_adversarial_claims_are_capped() -> None:
+    # More confirmed claims than MAX_ADVERSARIAL_CLAIMS must not multiply the
+    # outbound search burst without bound: three intents x at most the cap.
+    acquirer = _RecordingAcquirer()
+
+    await run_acquisition(
+        _context(tuple(uuid4() for _ in range(MAX_ADVERSARIAL_CLAIMS + 3)), acquirer)
+    )
+
+    adversarial = [
+        query
+        for seat, query in acquirer.seen_requests
+        if seat is Seat.ADVERSARY_FALSIFIER
+    ]
+    assert len(adversarial) == 3 * MAX_ADVERSARIAL_CLAIMS
 
 
 async def test_no_confirmed_claims_means_no_adversarial_requests() -> None:
@@ -185,7 +200,7 @@ async def test_adversarial_requests_fire_even_when_no_acquirer_is_configured() -
         if event.payload.get("kind") == "adversarial_retrieval"
     ]
     assert len(requested) == 1
-    assert requested[0].payload["request_count"] == 6
+    assert requested[0].payload["request_count"] == 3
 
 
 async def test_adversarial_unresolvable_queries_do_not_become_unfilled_slots() -> None:
@@ -208,6 +223,6 @@ async def test_adversarial_unresolvable_queries_do_not_become_unfilled_slots() -
         if event.event_type == "ADVERSARIAL_RETRIEVAL_ATTEMPTED"
     ]
     assert len(outcomes) == 1
-    assert outcomes[0].payload["attempted"] == 6
-    assert outcomes[0].payload["unresolved_count"] == 6
+    assert outcomes[0].payload["attempted"] == 3
+    assert outcomes[0].payload["unresolved_count"] == 3
     assert outcomes[0].payload["resolved_count"] == 0

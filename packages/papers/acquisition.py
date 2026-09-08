@@ -242,7 +242,7 @@ class SourceAcquisition:
             )
         if relevance_screen and self._relevance_enabled:
             admitted, score = is_topically_relevant(
-                self._relevance_context,
+                (*self._relevance_context, query),
                 normalized.title,
                 threshold=self._relevance_threshold,
             )

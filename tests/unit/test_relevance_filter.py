@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from packages.papers.relevance import (
+    CROSS_SCRIPT_SCORE,
     DEFAULT_RELEVANCE_THRESHOLD,
     is_topically_relevant,
+    shares_a_script,
     tokenize,
     within_cutoff,
 )
@@ -63,3 +65,42 @@ def test_within_cutoff_fails_open_on_unknowns() -> None:
     assert within_cutoff(2019, None) is True
     assert within_cutoff(2021, 2020) is False
     assert within_cutoff(2020, 2020) is True
+
+
+def test_chinese_context_admits_english_title_cross_script() -> None:
+    """Production bug: Chinese questions had every relevant English hit
+    recorded as a miss because lexical overlap across scripts is impossible."""
+    context = ["中国青少年频繁的抑郁症来源于什么，社交媒体还是学业压力"]
+    title = (
+        "Problematic mobile phone use and depressive symptoms in "
+        "adolescents: a longitudinal cohort study"
+    )
+    admitted, score = is_topically_relevant(context, title)
+    assert admitted
+    assert score == CROSS_SCRIPT_SCORE
+
+
+def test_cross_script_detection_helper() -> None:
+    cjk = tokenize("青少年抑郁")
+    latin = tokenize("adolescent depression")
+    assert not shares_a_script(cjk, latin)
+    assert shares_a_script(tokenize("depression 抑郁"), latin)
+
+
+def test_mixed_context_still_screens_english_titles() -> None:
+    # A Chinese question plus an English atomic claim has latin tokens to
+    # compare against an English title, so normal screening applies: an
+    # off-topic title is still rejected.
+    context = [
+        "中国青少年抑郁来源",
+        "problematic mobile phone use predicts adolescent depression",
+    ]
+    off_topic = "Stock market volatility and monetary policy transmission"
+    admitted, _ = is_topically_relevant(context, off_topic)
+    assert not admitted
+    on_topic = (
+        "Mobile phone addiction and depressive symptoms among adolescents"
+    )
+    admitted_on, score = is_topically_relevant(context, on_topic)
+    assert admitted_on
+    assert score >= 0

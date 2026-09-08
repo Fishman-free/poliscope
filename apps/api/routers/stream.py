@@ -35,6 +35,12 @@ router = APIRouter()
 # How long to wait before polling the ledger again when nothing new arrived.
 POLL_INTERVAL_SECONDS = 1.0
 
+# Process SSE: while rows are flowing, the terminal-status lookup runs only on
+# every Nth poll instead of every second -- on the 2-core/2 GB host that query
+# competes with the worker's process_stream writes at peak load. Idle polls
+# (no rows) always check, so a finished task still ends within ~1 s.
+STATUS_CHECK_EVERY_POLLS = 5
+
 # Sent when a poll finds nothing, so an idle connection is not closed by a proxy
 # and the client can tell "still working" apart from "server gone".
 KEEPALIVE_FRAME = ": keep-alive\n\n"
@@ -258,6 +264,11 @@ async def _process_events(
     # rows): replay those anchors separately first, so every seat card opens
     # after reconnect even when its token text is outside the tail.
     cursor = -1
+    # On the 2-core/2 GB host the per-second status lookup competes with the
+    # worker's writes exactly when tokens are flowing fastest. Rows are checked
+    # every poll (they carry the trace); task status -- only needed to end the
+    # stream -- is checked on every idle poll and every Nth active poll.
+    poll_count = 0
     async with state.session_factory() as session:
         repo = ProcessStreamRepository(session)
         latest = await repo.latest_seq(task_id)
@@ -281,12 +292,21 @@ async def _process_events(
             rows = await ProcessStreamRepository(session).list_since(
                 task_id, cursor
             )
+            poll_count += 1
             status = None
-            try:
-                task = await ResearchRepository(session).get_task(task_id)
-                status = task.status
-            except TaskNotFound:
-                status = TaskStatus.FAILED.value
+            # Active polls that just delivered rows skip the status lookup
+            # (cadence below); idle polls always check so a finished task ends
+            # the stream promptly.
+            if (
+                not rows
+                or poll_count == 1
+                or poll_count % STATUS_CHECK_EVERY_POLLS == 0
+            ):
+                try:
+                    task = await ResearchRepository(session).get_task(task_id)
+                    status = task.status
+                except TaskNotFound:
+                    status = TaskStatus.FAILED.value
         for row in rows:
             cursor = row.seq
             body = json.dumps(

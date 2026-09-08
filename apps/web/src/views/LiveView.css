@@ -65,6 +65,8 @@
 .live__seats {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* 顶对齐：某张卡内容变高时，同行卡片保持顶部齐平，不再出现视觉错位 */
+  align-items: start;
   gap: var(--space-3);
 }
 
@@ -79,6 +81,8 @@
 .live__seat-head {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
+  row-gap: 2px;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--line);
@@ -86,6 +90,7 @@
 }
 
 .live__seat-name {
+  white-space: nowrap;
   font-size: var(--text-small);
   font-weight: 550;
   color: var(--ink-1);
@@ -453,7 +458,7 @@
 /* Round-12 恢复：席位流式思考过程。过程数据，非正式证据。 */
 .live__seat-stream {
   margin-top: var(--space-2);
-  max-height: 16rem;
+  max-height: 12rem;
   overflow-y: auto;
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--app-hairline, var(--line));
@@ -502,4 +507,64 @@
 
 .live__seat-durable li + li {
   margin-top: 2px;
+}
+
+/* round-18：分阶段切片标签 + 结构化产物块（预承诺/质询/最终复判），
+   让科学家的正式输出在卡片内全程留痕、与流式思考区分层级。 */
+.live__seat-slice-phase {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--text-micro);
+  color: var(--ink-4);
+  letter-spacing: 0.02em;
+}
+
+.live__seat-stream + .live__seat-stream {
+  border-style: dashed;
+  opacity: 0.92;
+}
+
+.live__seat-record {
+  margin: var(--space-2) var(--space-3) 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-2);
+  border: 1px solid var(--app-hairline, var(--line));
+  background: var(--surface-1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.live__seat-record--pre {
+  border-left: 3px solid var(--admitted, #2f7d4f);
+}
+
+.live__seat-record--chal {
+  border-left: 3px solid var(--danger, #b3403a);
+}
+
+.live__seat-record--final {
+  border-left: 3px solid var(--accent, #345995);
+}
+
+.live__seat-record-tag {
+  font-size: var(--text-micro);
+  font-weight: 600;
+  color: var(--ink-3);
+}
+
+.live__seat-record-text {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: 1.55;
+  color: var(--app-ink-2, var(--ink-2));
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 检索卡折叠提示（超过渲染上限的更早检索仍可在审计轨迹查看）。 */
+.live__tool-folded {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--ink-4);
 }

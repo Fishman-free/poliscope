@@ -60,10 +60,18 @@ from packages.council.rounds.precommitment import (
 )
 from packages.epistemo.contracts import CouncilCancelled, TaskPhase
 from packages.evidence.adversarial_retrieval import adversarial_retrieval_queries
+
 from packages.evidence.contracts import ClaimType, EvidenceEdgeType, EvidenceNodeType
 from packages.evidence.dialectical_fold import DebateCapsule
 from packages.evidence.lifecycle import QuarantinedNode, check_resurrection_conditions
 from packages.evidence.source_diversity import SourceDiversityInput, check_diversity
+
+# Upper bound on how many confirmed claims get reverse-search intents per
+# acquisition pass. With three intents per claim (see adversarial_retrieval),
+# the whole adversarial burst stays <= 9 queries -- the old six-intents x
+# every-claim fan-out was both the biggest outbound burst on the 2-core/2 GB
+# host and a large source of "未命中" card noise.
+MAX_ADVERSARIAL_CLAIMS = 3
 
 # Process event types. None of these is one of the ten formal node types, so
 # the projector records them and refuses to turn them into evidence.
@@ -893,7 +901,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     instead.
 
     Adversarial retrieval (design spec 7.9, mechanism 4 of 4): alongside
-    whatever the seats actually asked for, this round also appends six
+    whatever the seats actually asked for, this round also appends three
     reverse-search-intent queries per confirmed claim, attributed to the
     adversarial falsifier seat, so acquisition itself is not structurally
     biased toward finding only what already supports the judgment on the
@@ -937,7 +945,7 @@ async def run_acquisition(context: PhaseContext) -> PhaseOutcome:
     # acquisition is not solely steered by what the seats already believe is
     # worth looking for.
     adversarial_queries: list[str] = []
-    for claim_id in context.confirmed_claims:
+    for claim_id in context.confirmed_claims[:MAX_ADVERSARIAL_CLAIMS]:
         adversarial_queries.extend(
             adversarial_retrieval_queries(
                 claim_id,

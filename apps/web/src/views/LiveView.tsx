@@ -9,9 +9,27 @@
  * （round-12 恢复：model_reasoning / model_token 片段实时聚合）。任何片段
  * 都是过程数据而非正式证据，重连后从服务端重放并由 seq 去重，不作为
  * 审计依据；正式结论以 Research Brief 与最终论文为准。
+ *
+ * round-18 修复（用户反馈：科学家卡片顺序错乱、完成后正文空白、输出框
+ * 折叠、检索卡「已等待 0s」与永久 pending、长时间运行后页面卡死）：
+ *  - 七张席位卡严格按 SEATS 固定顺序 1→7 渲染，阶段开始后七个槽位恒在；
+ *  - 思考流按「席位 × 阶段」分段累积（分阶段留痕，切换阶段不再清空），
+ *    每段文本与分片数量都有硬上界，消除每帧 O(全量 token) 的重复拼接；
+ *  - 流式片段缺失（重放尾部被裁剪、非流式兜底调用）时，用账本里的
+ *    预承诺/质询/最终复判正文兜底 —— 已完成的卡片永不空白、永不折叠；
+ *  - 检索卡按 query 把 tool_call/tool_result FIFO 配对（并行检索不再错配
+ *    到最后一张卡），startedAt 跨重算保持稳定（秒数真实增长）。
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import type {
   ConfirmedClaim,
@@ -44,6 +62,10 @@ const PHASES: { id: string; label: string }[] = [
   { id: "FINAL_REJUDGMENT", label: "最终复判" },
   { id: "REPORTING", label: "报告生成" },
 ];
+
+const PHASE_LABELS: Record<string, string> = Object.fromEntries(
+  PHASES.map((phase) => [phase.id, phase.label]),
+);
 
 /** 议会结构化动作的中文呈现 —— 预承诺、质询、复判是议会「过程」的
  * 骨架，与 token 流互补：token 是思考的原料，动作是思考的产物。 */
@@ -203,20 +225,12 @@ function phaseProgress(events: LedgerEvent[]): {
   return { current, done };
 }
 
-/** 每个席位最近的「一段」思考流：从最近的 seat_deliberation 起聚合
- * reasoning/token 片段，至最近的 model_done 截断。倒序遍历取最后一段。
- * ``seat_working`` 是模型调用期间服务器发的心跳（elapsed = 已等待秒数），
- * 供「思考中… 已等待 Ns」显示：一次调用卡住时，前端不再只有死寂的
- * 「思考中…」，而是能看见它已经等了多久。
- *
- * 思考片段（model_reasoning / model_token）是过程数据，不是正式证据：它
- * 随模型调用实时流动，重连后从服务端重放并按 seq 去重。展示它们是为了
- * 让研究者实时看见七位科学家正在想什么（round-12 恢复），但任何片段都
- * 不是正式结论 —— 正式结论以 Research Brief 与最终论文为准。 */
-/** 一个席位的思考流状态。``absent`` 由 ``seat_absent`` 事件置位（round-15：
- * 模型调用失败或被研究者停止时后端补发，关闭该段思考 —— 否则前端会
- * 永远停在「思考中…」，因为没有任何事件能把 running 置 false）。 */
-interface SeatSlice {
+/* ------------------------------------------------------------------ */
+/* 席位思考流：按「席位 × 阶段」分段、有界地聚合过程流 token 片段。      */
+/* ------------------------------------------------------------------ */
+
+/** 单个阶段内一个席位的一段思考。 */
+interface SeatPhaseSlice {
   phase: string;
   text: string;
   running: boolean;
@@ -225,22 +239,54 @@ interface SeatSlice {
   absentReason: string;
 }
 
-function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
-  const result: Record<string, SeatSlice> = {};
-  const current: Record<
-    string,
-    {
-      phase: string;
-      parts: string[];
-      running: boolean;
-      elapsed: number;
-      absent: boolean;
-      absentReason: string;
-    }
-  > = {};
-  // 仅凭席位事件即可懒开 slice 的种类：当 seat_deliberation 锚点被重放
-  // 窗口挤出（旧构建/超长 token 流）时，第一个到达的席位事件也能把卡片
-  // 救回来，席位不会因为锚点丢失而永久消失。
+/** 一个席位在本次会话中累积的全部阶段切片（最新在最后）。 */
+interface SeatStream {
+  slices: SeatPhaseSlice[];
+}
+
+/** 每段最多保留多少个原始增量分片；超出后把最老的一半折叠进 head，
+ *  保证任何一轮聚合的字符串工作量都有硬上界（长阶段不再拖死主线程）。 */
+const SLICE_PART_CAP = 800;
+/** head（已折叠的老文本）保留的最新字符数。 */
+const PHASE_HEAD_CAP = 6_000;
+/** 单段最终渲染文本的字符上限。 */
+const SEAT_PHASE_TEXT_CAP = 12_000;
+/** 每席位最多保留的阶段切片数（八阶段，留 1 段余量）。 */
+const MAX_SLICES_PER_SEAT = 9;
+
+/** 尚无过程流席位共享的稳定空数组，避免 memo 卡因新 [] 引用每帧重渲染。 */
+const EMPTY_SLICES: SeatPhaseSlice[] = [];
+
+interface MutableSlice {
+  phase: string;
+  head: string;
+  parts: string[];
+  running: boolean;
+  elapsed: number;
+  absent: boolean;
+  absentReason: string;
+}
+
+function capTail(text: string, cap: number): string {
+  return text.length > cap ? text.slice(text.length - cap) : text;
+}
+
+function finalizeSlice(slice: MutableSlice): SeatPhaseSlice {
+  const joined = slice.head + slice.parts.join("");
+  return {
+    phase: slice.phase,
+    text: capTail(joined, SEAT_PHASE_TEXT_CAP),
+    running: slice.running,
+    elapsed: slice.elapsed,
+    absent: slice.absent,
+    absentReason: slice.absentReason,
+  };
+}
+
+/** 把全量（已去重、有上界的）过程事件聚合成每席位的阶段切片。
+ *  复杂度 O(事件数)，且每席位的字符串拼接量被 head/parts 上界封死。 */
+function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatStream> {
+  const current: Record<string, MutableSlice[]> = {};
   const recoverable = new Set([
     "model_reasoning",
     "model_token",
@@ -248,80 +294,160 @@ function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatSlice> {
     "seat_absent",
     "seat_working",
   ]);
+
+  const lastSlice = (seat: string): MutableSlice | null => {
+    const list = current[seat];
+    if (!list || list.length === 0) return null;
+    return list[list.length - 1] ?? null;
+  };
+
+  const openSlice = (seat: string, phase: string): MutableSlice => {
+    const list = (current[seat] ??= []);
+    const previous = list[list.length - 1];
+    if (previous) previous.running = false;
+    const slice: MutableSlice = {
+      phase,
+      head: "",
+      parts: [],
+      running: true,
+      elapsed: 0,
+      absent: false,
+      absentReason: "",
+    };
+    list.push(slice);
+    if (list.length > MAX_SLICES_PER_SEAT) list.shift();
+    return slice;
+  };
+
   for (const event of processEvents) {
     const payload = event.payload as Record<string, unknown>;
     const seat = typeof payload.seat === "string" ? payload.seat : null;
     if (event.kind === "seat_deliberation" && seat) {
-      // 新一段思考开始：缺席标记随段重置 —— 上一个阶段缺席不代表这个
-      // 阶段也缺席（round-15）。
-      current[seat] = {
-        phase: typeof payload.phase === "string" ? payload.phase : "",
-        parts: [],
-        running: true,
-        elapsed: 0,
-        absent: false,
-        absentReason: "",
-      };
+      openSlice(
+        seat,
+        typeof payload.phase === "string" ? payload.phase : "",
+      );
       continue;
     }
     if (!seat) continue;
-    if (!current[seat]) {
+    let slice = lastSlice(seat);
+    if (!slice) {
       if (!recoverable.has(event.kind)) continue;
-      current[seat] = {
-        phase: typeof payload.phase === "string" ? payload.phase : "",
-        parts: [],
-        running: event.kind !== "model_done" && event.kind !== "seat_absent",
-        elapsed: 0,
-        absent: event.kind === "seat_absent",
-        absentReason:
-          event.kind === "seat_absent" ? String(payload.reason ?? "") : "",
-      };
+      slice = openSlice(
+        seat,
+        typeof payload.phase === "string" ? payload.phase : "",
+      );
+      slice.running =
+        event.kind !== "model_done" && event.kind !== "seat_absent";
+      if (event.kind === "seat_absent") {
+        slice.absent = true;
+        slice.absentReason = String(payload.reason ?? "");
+      }
     }
-    const slice = current[seat];
     const text = typeof payload.text === "string" ? payload.text : "";
     if (event.kind === "model_reasoning" || event.kind === "model_token") {
-      if (text) slice.parts.push(text);
+      if (text) {
+        slice.parts.push(text);
+        if (slice.parts.length > SLICE_PART_CAP) {
+          const folded = slice.parts.splice(0, SLICE_PART_CAP / 2);
+          slice.head = capTail(slice.head + folded.join(""), PHASE_HEAD_CAP);
+        }
+      }
     } else if (event.kind === "model_done") {
       slice.running = false;
     } else if (event.kind === "seat_working") {
-      const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
-      slice.elapsed = elapsed;
+      slice.elapsed =
+        typeof payload.elapsed === "number" ? payload.elapsed : 0;
     } else if (event.kind === "seat_absent") {
-      // 思考结束但没有产出：模型调用失败（缺席）或被研究者停止。关闭
-      // 本段思考 —— 没有这个事件，前端会永远显示「思考中… 已等待
-      // Ns」（round-15 生产故障）。
       slice.running = false;
       slice.absent = true;
       slice.absentReason = String(payload.reason ?? "");
     }
   }
-  for (const [seat, entry] of Object.entries(current)) {
-    const joined = entry.parts.join("");
-    result[seat] = {
-      phase: entry.phase,
-      // Bound the rendered thinking text: a long phase streamed tens of
-      // thousands of token deltas; an unbounded string turned into one giant
-      // DOM node was itself enough to jank/freeze the pane. Keep the newest
-      // slice, which is what the live card shows while streaming.
-      text:
-        joined.length > SEAT_TEXT_RENDER_CAP
-          ? joined.slice(joined.length - SEAT_TEXT_RENDER_CAP)
-          : joined,
-      running: entry.running,
-      elapsed: entry.elapsed,
-      absent: entry.absent,
-      absentReason: entry.absentReason,
-    };
+
+  const result: Record<string, SeatStream> = {};
+  for (const [seat, list] of Object.entries(current)) {
+    result[seat] = { slices: list.map(finalizeSlice) };
   }
   return result;
 }
 
-/** Max characters of one seat's live thinking rendered in its card. */
-const SEAT_TEXT_RENDER_CAP = 24_000;
+/* ------------------------------------------------------------------ */
+/* 席位结构化产物：从账本事件提取每位科学家的预承诺/质询/最终复判正文。  */
+/* 这些是科学家的「正式输出」，不依赖可能被重放窗口裁剪的 token 流：     */
+/* 只要账本在，已完成的卡片就永远有内容（修复「完成后空白/折叠」）。     */
+/* ------------------------------------------------------------------ */
 
-/** 一个席位连续无进展多久后提示「可能卡住」（秒）。阈值与后端模型调用
- * 总 deadline（240s）+ 重试余量对齐：超过 300s 而仍在 running，说明
- * 调用链已越过所有正常超时，即将被 watchdog 中断。 */
+interface SeatChallengeRecord {
+  statement: string;
+  fatal: boolean;
+  target: string | null;
+}
+interface SeatRecord {
+  precommitment: {
+    text: string;
+    confidence: number | null;
+    updateCondition: string;
+  } | null;
+  challenges: SeatChallengeRecord[];
+  final: { text: string; confidence: number | null; dissent: boolean } | null;
+}
+
+function seatRecords(
+  events: LedgerEvent[],
+  labels: Map<string, string>,
+): Record<string, SeatRecord> {
+  const result: Record<string, SeatRecord> = {};
+  const ensure = (seat: string): SeatRecord =>
+    (result[seat] ??= {
+      precommitment: null,
+      challenges: [],
+      final: null,
+    });
+  for (const event of events) {
+    const payload = event.payload as Record<string, unknown>;
+    if (typeof payload.seat !== "string") continue;
+    const record = ensure(payload.seat);
+    if (event.kind === "PRECOMMITMENT_SEALED") {
+      record.precommitment = {
+        text: replaceClaimUuids(
+          humanizeText(String(payload.initial_judgment ?? "")),
+          labels,
+        ),
+        confidence:
+          typeof payload.confidence === "number" ? payload.confidence : null,
+        updateCondition: replaceClaimUuids(
+          humanizeText(String(payload.update_condition ?? "")),
+          labels,
+        ),
+      };
+    } else if (event.kind === "CHALLENGE_RAISED") {
+      record.challenges.push({
+        statement: replaceClaimUuids(
+          humanizeText(String(payload.statement ?? "")),
+          labels,
+        ),
+        fatal: payload.is_fatal === true,
+        target:
+          typeof payload.claim_id === "string"
+            ? replaceClaimUuids(payload.claim_id, labels)
+            : null,
+      });
+    } else if (event.kind === "FINAL_JUDGMENT") {
+      record.final = {
+        text: replaceClaimUuids(
+          humanizeText(String(payload.final_judgment ?? "")),
+          labels,
+        ),
+        confidence:
+          typeof payload.confidence === "number" ? payload.confidence : null,
+        dissent: payload.has_dissent === true,
+      };
+    }
+  }
+  return result;
+}
+
 /** 过程流里没有该席位的实时片段时，用 snapshot 里的持久席位摘要兜底，
  *  让「断点续研后七位科学家整体消失」不再发生：实时输出缺席 ≠ 席位不存在。
  *  返回状态徽标文案与样式基调（复用 live__seat-idle/live__seat-absent）。 */
@@ -361,6 +487,11 @@ const SEAT_STUCK_CRITICAL_SECONDS = 300;
  * 警示「将超时」，让等待有界可见，而不是看起来永久卡住。 */
 const TOOL_STUCK_WARN_SECONDS = 45;
 const TOOL_STUCK_CRITICAL_SECONDS = 300;
+
+/** 检索卡最多渲染多少张（最新在前由调用方保证顺序，这里裁最早的）。
+ *  过程检索只增不减，几百张 DOM 卡本身就足以拖死页面；更早的检索仍在
+ *  审计轨迹里，这里折叠并给出数量说明。 */
+const TOOL_GROUPS_RENDER_CAP = 60;
 
 /** 未命中原因里的 URL（OpenAlex 的 404 地址、Mozilla 文档页等），提取
  * 出来作为可点击链接 —— 原始原因整段塞进卡片会撑破方框，且那一串
@@ -430,8 +561,15 @@ function MissReason({ reason }: { reason?: string }) {
 /** 检索卡片「等待结果…」：显示已等待秒数（由每秒 tick 驱动），并在越过
  * 服务端每查询超时阈值后警示。服务端有 45s/600s 硬上限与 watchdog，这里
  * 只是把「卡住」变成可读的倒计时。 */
-function ToolPending({ group }: { group: { startedAt: number } }) {
-  const elapsed = Math.max(0, Math.floor((performance.now() - group.startedAt) / 1000));
+const ToolPending = memo(function ToolPending({
+  startedAt,
+}: {
+  startedAt: number;
+}) {
+  const elapsed = Math.max(
+    0,
+    Math.floor((performance.now() - startedAt) / 1000),
+  );
   const critical = elapsed >= TOOL_STUCK_CRITICAL_SECONDS;
   const warn = elapsed >= TOOL_STUCK_WARN_SECONDS;
   return (
@@ -450,7 +588,7 @@ function ToolPending({ group }: { group: { startedAt: number } }) {
         : t("等待结果… 已等待 {0}s", elapsed)}
     </p>
   );
-}
+});
 
 /** 检索/文献卡片里的科学家徽标组：多个科学家共享同一次动作时折叠为
  * 「第一个 + …」，悬停显示全部 —— 检索与文献的科学家列表是全宽平铺的
@@ -483,6 +621,203 @@ export interface QueueInfo {
   running: { question: string; minutes: number } | null;
 }
 
+/** 一张席位卡。抽成 memo 组件：七张卡的 props 在每 250ms flush 后才变化
+ *  一次，未变化的卡跳过重渲染（长阶段渲染开销的主要来源之一）。 */
+interface SeatCardProps {
+  seat: Seat;
+  slices: SeatPhaseSlice[];
+  record: SeatRecord | null;
+  summary: SeatSummary | null;
+  status: string | undefined;
+  currentPhase: string | null;
+  /** 最新一段切片的滚动容器注册回调（只对最新段自动滚底）。 */
+  registerStream: (seat: Seat, node: HTMLDivElement | null) => void;
+}
+
+const SeatCard = memo(function SeatCard({
+  seat,
+  slices,
+  record,
+  summary,
+  status,
+  currentPhase,
+  registerStream,
+}: SeatCardProps) {
+  const last = slices[slices.length - 1] ?? null;
+  const pill = last
+    ? last.running
+      ? {
+          label:
+            last.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
+              ? t("模型长时间无响应（已等待 {0}s），系统将自动中断", last.elapsed)
+              : t("思考中… 已等待 {0}s", last.elapsed),
+          tone:
+            last.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
+              ? "critical"
+              : last.elapsed >= SEAT_STUCK_WARN_SECONDS
+                ? "slow"
+                : "running",
+        }
+      : last.absent
+        ? { label: t("缺席"), tone: "absent" as const }
+        : { label: t("已完成"), tone: "idle" as const }
+    : durablePill(summary, status, currentPhase);
+
+  const pillClass =
+    pill.tone === "absent"
+      ? "live__seat-running live__seat-absent"
+      : pill.tone === "critical"
+        ? "live__seat-running live__seat-running--critical"
+        : pill.tone === "slow"
+          ? "live__seat-running live__seat-running--slow"
+          : pill.tone === "running"
+            ? "live__seat-running"
+            : "live__seat-idle";
+
+  // 结构化产物块（预承诺/质询/最终复判）——正式输出，全程留痕。
+  const recordBlocks: ReactNode[] = [];
+  if (record?.precommitment?.text) {
+    const confidence =
+      record.precommitment.confidence != null
+        ? `（${t("置信度 {0}", record.precommitment.confidence)}）`
+        : "";
+    recordBlocks.push(
+      <div key="pre" className="live__seat-record live__seat-record--pre">
+        <span className="live__seat-record-tag">{t("预承诺")}</span>
+        <p className="live__seat-record-text">
+          {record.precommitment.text}
+          {confidence}
+        </p>
+      </div>,
+    );
+  }
+  if (record && record.challenges.length > 0) {
+    recordBlocks.push(
+      <div key="chal" className="live__seat-record live__seat-record--chal">
+        <span className="live__seat-record-tag">
+          {t("质询（{0} 项）", record.challenges.length)}
+        </span>
+        {record.challenges.map((challenge, index) => (
+          <p key={index} className="live__seat-record-text">
+            {challenge.fatal ? t("【致命】") : "· "}
+            {challenge.statement}
+            {challenge.target ? `（${t("针对")} ${challenge.target}）` : ""}
+          </p>
+        ))}
+      </div>,
+    );
+  }
+  if (record?.final?.text) {
+    recordBlocks.push(
+      <div key="final" className="live__seat-record live__seat-record--final">
+        <span className="live__seat-record-tag">
+          {t("最终复判")}
+          {record.final.dissent ? t("（附异议）") : ""}
+          {record.final.confidence != null
+            ? `（${t("置信度 {0}", record.final.confidence)}）`
+            : ""}
+        </span>
+        <p className="live__seat-record-text">{record.final.text}</p>
+      </div>,
+    );
+  }
+
+  // 持久摘要的补充说明（结构化产物缺失时的兜底信息）。
+  const durableNotes: string[] = [];
+  if (summary?.precommitment?.confidence != null && !record?.precommitment?.text)
+    durableNotes.push(t("预承诺置信度 {0}", summary.precommitment.confidence));
+  if (
+    summary &&
+    summary.challenges_raised.length > 0 &&
+    (record?.challenges.length ?? 0) === 0
+  )
+    durableNotes.push(t("已提出 {0} 项质询", summary.challenges_raised.length));
+  if (summary?.final_judgment && !record?.final?.text)
+    durableNotes.push(t("已提交最终复判"));
+  if (summary && summary.unavailable_phases.length > 0) {
+    const phaseLabels = PHASES.filter((phase) =>
+      summary.unavailable_phases.includes(phase.id),
+    ).map((phase) => t(phase.label));
+    durableNotes.push(t("缺席阶段：{0}", phaseLabels.join("、")));
+  }
+
+  // 卡片正文绝不允许完全空白（用户反馈：完成后框直接折叠/空白）。
+  const hasStreamText = slices.some((slice) => slice.text.length > 0);
+  const hasBody =
+    hasStreamText || recordBlocks.length > 0 || durableNotes.length > 0;
+
+  return (
+    <div className="live__seat">
+      <div className="live__seat-head">
+        <span className="live__seat-name">
+          {SEAT_LABELS[seat] ?? seat}
+        </span>
+        {(last?.phase || currentPhase) ? (
+          <span className="live__seat-phase mono">
+            {PHASE_LABELS[last?.phase ?? ""] ??
+              PHASE_LABELS[currentPhase ?? ""] ??
+              last?.phase ??
+              currentPhase}
+          </span>
+        ) : null}
+        <span className={pillClass} title={last?.absentReason || undefined}>
+          {pill.label}
+        </span>
+      </div>
+
+      {/* 分阶段思考切片：按阶段顺序全部保留（留痕），最新在最后。 */}
+      {slices.map((slice, index) => {
+        const isLast = index === slices.length - 1;
+        if (slice.text) {
+          return (
+            <div
+              key={`slice-${index}`}
+              className="live__seat-stream"
+              ref={isLast ? (node) => registerStream(seat, node) : undefined}
+            >
+              {slices.length > 1 && slice.phase ? (
+                <span className="live__seat-slice-phase mono">
+                  {PHASE_LABELS[slice.phase] ?? slice.phase}
+                </span>
+              ) : null}
+              <p className="live__seat-stream-text">{slice.text}</p>
+            </div>
+          );
+        }
+        if (isLast && slice.running) {
+          return (
+            <p
+              key="empty-running"
+              className="live__seat-stream live__seat-stream--empty"
+            >
+              {t("（尚无输出）")}
+            </p>
+          );
+        }
+        return null;
+      })}
+
+      {recordBlocks}
+
+      {durableNotes.length > 0 ? (
+        <ul className="live__seat-durable">
+          {durableNotes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      {!hasBody ? (
+        <p className="live__seat-stream live__seat-stream--empty">
+          {last?.running
+            ? t("（尚无输出）")
+            : t("本阶段无流式输出，正式结论见研究简报与最终论文")}
+        </p>
+      ) : null}
+    </div>
+  );
+});
+
 export function LiveView({
   events,
   processEvents,
@@ -510,115 +845,158 @@ export function LiveView({
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
   const streams = useMemo(() => seatStreams(processEvents), [processEvents]);
-  // 断点续研/重连后过程流可能暂时没有 seat_deliberation：用 snapshot 的持久
-  // 席位摘要兜底渲染七张卡片，实时片段一到就自动升级为流式卡片。
   const phaseStarted = current !== null || done.size > 0;
   const durableById = useMemo(() => {
     const map = new Map<string, SeatSummary>();
     for (const summary of seats ?? []) map.set(summary.seat, summary);
     return map;
   }, [seats]);
-  // 七张席位卡按固定顺序排列：有实时片段就渲染流式卡，否则渲染持久兜底
-  // 卡，实时片段一到自动原位升级 —— 卡片不再重排、不再整列消失。
-  const visibleSeatIds = useMemo(
-    () =>
-      SEATS.filter(
-        (seat) =>
-          streams[seat] !== undefined ||
-          (status !== "QUEUED" &&
-            (phaseStarted || durableById.has(seat))),
-      ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [streams, seats, status, current, done.size],
-  );
-  // 每秒重渲染一次，让「思考中… 已等待 Ns」与检索卡片的秒数走动。只在
-  // 还有席位 running 或有检索 pending 时启动定时器，空闲时不空转。
-  const [, setTick] = useState(0);
-  const anyRunning = useMemo(
-    () => Object.values(streams).some((entry) => entry.running),
-    [streams],
-  );
-
-  // 思考流自动滚底（round-12 恢复）：新片段到达时把每个有流的席位面板滚
-  // 到底 —— 研究者在看「现在」，不是往回翻。手动上滚会被下一次 flush
-  // 拉回，这是实时视图的取舍。
-  const streamRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  useEffect(() => {
-    for (const ref of Object.values(streamRefs.current)) {
-      if (ref) ref.scrollTop = ref.scrollHeight;
-    }
-  }, [processEvents.length]);
   const claimLabels = useMemo(
     () => buildClaimLabels(claims ?? [], graph ?? { nodes: [], edges: [] }),
     [claims, graph],
+  );
+  const records = useMemo(
+    () => seatRecords(events, claimLabels),
+    [events, claimLabels],
   );
   const actions = useMemo(
     () =>
       events
         .map((event) => actionSummary(event, claimLabels))
         .filter(
-          (item): item is { meta: string; tone: string; body: string } => item !== null,
+          (item): item is { meta: string; tone: string; body: string } =>
+            item !== null,
         ),
     [events, claimLabels],
   );
 
-  // 检索与文献：一次检索（tool_call）与其结果（tool_result）配对成一个
-  // 卡片组，多列平铺。分组而不是逐条平铺，是因为一次检索的多个命中
-  // 属于同一个动作——把结果拆散成独立条目会让「这次检索找到了什么」
-  // 无法从布局上直接读出。citation_count 是权威度信号（检索按被引量
-  // 排序），缺失时显示为 undefined，卡片不渲染徽标。
-  // 卡死感知：pending 组（只有 tool_call 没有 tool_result）显示已等待秒数
-  // ——检索有 45s 每查询 / 600s 整轮的服务端硬上限，前端把「等待」变成
-  // 可见的倒计时，而不是一片死寂的「等待结果…」；miss 结果带 reason 时
-  // 说明这次检索为什么没命中（超时/预算/撤回），而不是让读者自己猜。
+  // 七张席位卡严格固定顺序：阶段一旦开始（或任务已离开队列），七个槽位
+  // 恒在，谁先出内容都不引起重排；之前未开始时仅展示已有持久摘要的卡。
+  const visibleSeatIds = useMemo((): readonly Seat[] => {
+    const showAll =
+      phaseStarted || (!!status && status !== "QUEUED");
+    if (showAll) return SEATS;
+    return SEATS.filter((seat) => durableById.has(seat));
+  }, [phaseStarted, status, durableById]);
+
+  // 每秒重渲染一次，让「思考中… 已等待 Ns」与检索卡片的秒数走动。只在
+  // 还有席位 running 或有检索 pending 时启动定时器，空闲时不空转。
+  const [, setTick] = useState(0);
+  const anyRunning = useMemo(
+    () =>
+      Object.values(streams).some((stream) =>
+        stream.slices.some((slice) => slice.running),
+      ),
+    [streams],
+  );
+
+  // 最新一段思考切片自动滚底；手动上滚会被下一次 flush 拉回，这是实时
+  // 视图的取舍（研究者在看「现在」）。
+  const streamRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const registerStream = useCallback(
+    (seat: Seat, node: HTMLDivElement | null) => {
+      streamRefs.current[seat] = node;
+    },
+    [],
+  );
+  useEffect(() => {
+    for (const ref of Object.values(streamRefs.current)) {
+      if (ref) ref.scrollTop = ref.scrollHeight;
+    }
+  }, [processEvents.length]);
+
+  /* ---------------- 检索与文献：按 query FIFO 配对 ---------------- */
+  interface ToolResult {
+    url: string | null;
+    title: string;
+    miss: boolean;
+    reason?: string;
+    citationCount?: number;
+  }
   interface ToolGroup {
     kind: string;
     query: string;
     seats: string[];
     startedAt: number;
-    results: {
-      url: string | null;
-      title: string;
-      miss: boolean;
-      reason?: string;
-      citationCount?: number;
-    }[];
+    results: ToolResult[];
   }
+  // startedAt 必须跨 useMemo 重算保持稳定：processEvents 每 250ms 换一次
+  // 身份，若在重建时取 performance.now()，「已等待 Ns」会被永远重置为 0
+  // （生产 bug：检索卡永远显示「已等待 0s」）。按 callKey 记住首次见到
+  // 该检索的时刻。
+  const startedAtRef = useRef<Map<string, number>>(new Map());
   const toolGroups = useMemo(() => {
     const groups: ToolGroup[] = [];
-    let current: ToolGroup | null = null;
+    // 后端并行检索的事件顺序是「全部 tool_call → 并发完成后 tool_result」，
+    // result 自带 query：按 query 建 FIFO 队列配对，单 current 变量会把
+    // 所有结果错配到最后一张卡（生产 bug：三张卡永久等待结果）。
+    const pendingByQuery = new Map<string, ToolGroup[]>();
+    const callOrdinal = new Map<string, number>();
+    const liveKeys = new Set<string>();
     for (const event of processEvents) {
       const payload = event.payload as Record<string, unknown>;
       if (event.kind === "tool_call") {
-        current = {
-          kind: payload.kind === "doi_lookup" ? t("DOI 解析") : t("检索"),
-          query: String(payload.query ?? ""),
+        const query = String(payload.query ?? "");
+        const rawKind = String(payload.kind ?? "search");
+        const ordinal = (callOrdinal.get(query) ?? 0) + 1;
+        callOrdinal.set(query, ordinal);
+        const callKey = `${rawKind}|${query}|${ordinal}`;
+        liveKeys.add(callKey);
+        let startedAt = startedAtRef.current.get(callKey);
+        if (startedAt === undefined) {
+          startedAt = performance.now();
+          startedAtRef.current.set(callKey, startedAt);
+        }
+        const group: ToolGroup = {
+          kind: rawKind === "doi_lookup" ? t("DOI 解析") : t("检索"),
+          query,
           seats: Array.isArray(payload.seats)
             ? payload.seats.map(String)
             : [],
-          // performance.now() is monotonic (unaffected by clock jumps), so a
-          // resumed session's elapsed can't go negative or jump.
-          startedAt: performance.now(),
+          startedAt,
           results: [],
         };
-        groups.push(current);
-      } else if (event.kind === "tool_result" && current) {
+        groups.push(group);
+        const queue = pendingByQuery.get(query) ?? [];
+        queue.push(group);
+        pendingByQuery.set(query, queue);
+      } else if (event.kind === "tool_result") {
+        const query = String(payload.query ?? "");
+        let group = pendingByQuery.get(query)?.shift() ?? null;
+        if (!group) {
+          // 重放窗口裁掉了对应 tool_call（结构锚点超上限的极端情况）：
+          // 为结果补建一张已完成卡，结果永不丢失。
+          group = {
+            kind: t("检索"),
+            query,
+            seats: [],
+            startedAt: performance.now(),
+            results: [],
+          };
+          groups.push(group);
+        }
         const citationCount =
-          typeof payload.citation_count === "number" && payload.citation_count > 0
+          typeof payload.citation_count === "number" &&
+          payload.citation_count > 0
             ? payload.citation_count
             : undefined;
-        current.results.push({
+        group.results.push({
           url: typeof payload.url === "string" ? payload.url : null,
           title: String(payload.title ?? payload.doi ?? ""),
           miss: payload.miss === true,
-          reason: typeof payload.reason === "string" ? payload.reason : undefined,
+          reason:
+            typeof payload.reason === "string" ? payload.reason : undefined,
           citationCount,
         });
       }
     }
+    // 收敛 startedAt 缓存：只保留本轮组用到的 key，防止长跑后无限增长。
+    for (const key of startedAtRef.current.keys()) {
+      if (!liveKeys.has(key)) startedAtRef.current.delete(key);
+    }
     return groups;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [processEvents, t]);
+  }, [processEvents]);
 
   // 检索 pending 时也驱动每秒 tick（与席位 running 并列的第二种等待）。
   const anyToolPending = useMemo(
@@ -645,6 +1023,8 @@ export function LiveView({
   }, [current]);
 
   const anyTrace = processEvents.length > 0;
+  const hiddenToolCount = Math.max(0, toolGroups.length - TOOL_GROUPS_RENDER_CAP);
+  const visibleToolGroups = toolGroups.slice(-TOOL_GROUPS_RENDER_CAP);
 
   return (
     <div className="live">
@@ -704,7 +1084,7 @@ export function LiveView({
       ) : (
         <>
           {/* 研究者干预窗口：唯一、固定的方向性检查点（CLAUDE.md 4.1）。
-              说明它的边界 —— 可以调整讨论重点，不能影响任何判定。 */}
+              说明它的边界 —— 可以调整讨论重点，不能影响判定。 */}
           {status === "AWAITING_COUNCIL_INPUT" && taskId && seats ? (
             <CheckpointGate
               taskId={taskId}
@@ -727,115 +1107,18 @@ export function LiveView({
                 下方，一行多列铺开，而不是挤在右侧小栏里）。 */}
             <div className="live__main">
               <section className="live__seats" aria-label={t("席位运行状态")}>
-                {visibleSeatIds.map((seat) => {
-                  const entry = streams[seat];
-                  if (entry) {
-                    return (
-                      <div key={seat} className="live__seat">
-                        <div className="live__seat-head">
-                          <span className="live__seat-name">
-                            {SEAT_LABELS[seat as Seat] ?? seat}
-                          </span>
-                          {entry.phase ? (
-                            <span className="live__seat-phase mono">{entry.phase}</span>
-                          ) : null}
-                          {entry.running ? (
-                            <span
-                              className={
-                                entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
-                                  ? "live__seat-running live__seat-running--critical"
-                                  : entry.elapsed >= SEAT_STUCK_WARN_SECONDS
-                                    ? "live__seat-running live__seat-running--slow"
-                                    : "live__seat-running"
-                              }
-                            >
-                              {entry.elapsed >= SEAT_STUCK_CRITICAL_SECONDS
-                                ? t("模型长时间无响应（已等待 {0}s），系统将自动中断", entry.elapsed)
-                                : t("思考中… 已等待 {0}s", entry.elapsed)}
-                            </span>
-                          ) : entry.absent ? (
-                            /* round-15：思考结束但没有产出（调用失败或被停止）。
-                               原因悬停可见，与账本 SEAT_UNAVAILABLE 语义一致。 */
-                            <span
-                              className="live__seat-running live__seat-absent"
-                              title={entry.absentReason || undefined}
-                            >
-                              {t("缺席")}
-                            </span>
-                          ) : (
-                            <span className="live__seat-idle">{t("已完成")}</span>
-                          )}
-                        </div>
-                        {/* round-12 恢复：流式思考过程。过程数据，非正式证据——
-                           正式结论以 Research Brief 与最终论文为准。 */}
-                        {entry.text ? (
-                          <div
-                            className="live__seat-stream"
-                            ref={(node) => {
-                              streamRefs.current[seat] = node;
-                            }}
-                          >
-                            <p className="live__seat-stream-text">{entry.text}</p>
-                          </div>
-                        ) : entry.running ? (
-                          <p className="live__seat-stream live__seat-stream--empty">
-                            {t("（尚无输出）")}
-                          </p>
-                        ) : null}
-                      </div>
-                    );
-                  }
-                  // 持久兜底卡片：过程流暂时没有该席位片段（断点续跑重连、
-                  // 重放尾部不含锚点）时，席位也固定在自己的位置上，不会消失
-                  // 或重排；实时片段一到即在原位升级为流式卡。
-                  const summary = durableById.get(seat) ?? null;
-                  const pill = durablePill(summary, status, current);
-                  const notes: string[] = [];
-                  if (summary?.precommitment?.confidence != null)
-                    notes.push(
-                      t("预承诺置信度 {0}", summary.precommitment.confidence),
-                    );
-                  if (summary && summary.challenges_raised.length > 0)
-                    notes.push(t("已提出 {0} 项质询", summary.challenges_raised.length));
-                  if (summary?.final_judgment) notes.push(t("已提交最终复判"));
-                  if (summary && summary.unavailable_phases.length > 0) {
-                    const phaseLabels = PHASES.filter((phase) =>
-                      summary.unavailable_phases.includes(phase.id),
-                    ).map((phase) => t(phase.label));
-                    notes.push(t("缺席阶段：{0}", phaseLabels.join("、")));
-                  }
-                  return (
-                    <div
-                      key={`durable-${seat}`}
-                      className="live__seat live__seat--durable"
-                    >
-                      <div className="live__seat-head">
-                        <span className="live__seat-name">
-                          {SEAT_LABELS[seat as Seat] ?? seat}
-                        </span>
-                        {current ? (
-                          <span className="live__seat-phase mono">{current}</span>
-                        ) : null}
-                        <span
-                          className={
-                            pill.tone === "absent"
-                              ? "live__seat-running live__seat-absent"
-                              : "live__seat-idle"
-                          }
-                        >
-                          {pill.label}
-                        </span>
-                      </div>
-                      {notes.length > 0 ? (
-                        <ul className="live__seat-durable">
-                          {notes.map((note) => (
-                            <li key={note}>{note}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                  );
-                })}
+                {visibleSeatIds.map((seat) => (
+                  <SeatCard
+                    key={seat}
+                    seat={seat}
+                    slices={streams[seat]?.slices ?? EMPTY_SLICES}
+                    record={records[seat] ?? null}
+                    summary={durableById.get(seat) ?? null}
+                    status={status}
+                    currentPhase={current}
+                    registerStream={registerStream}
+                  />
+                ))}
                 {visibleSeatIds.length === 0 ? (
                   phaseStarted ? (
                     <Empty>
@@ -854,67 +1137,77 @@ export function LiveView({
                 {toolGroups.length === 0 ? (
                   <Empty>{t("还没有检索活动。")}</Empty>
                 ) : (
-                  <div className="live__tool-grid">
-                    {toolGroups.map((group, index) => (
-                      <div key={index} className="live__tool-card">
-                        <div className="live__tool-card-head">
-                          <span className="live__tool-kind mono">{group.kind}</span>
-                          <span className="live__tool-query" title={group.query}>
-                            {group.query}
-                          </span>
-                          {group.seats.length > 0 ? (
-                            <SeatCluster seats={group.seats} />
-                          ) : null}
-                        </div>
-                        {group.results.length === 0 ? (
-                          <ToolPending group={group} />
-                        ) : group.results.every((result) => result.miss) ? (
-                          <p className="live__tool-empty live__tool-empty--miss">
-                            {t("未命中")}
-                            <MissReason reason={group.results[0]?.reason} />
-                          </p>
-                        ) : (
-                          <ul className="live__tool-results">
-                            {group.results.map((result, resultIndex) => (
-                              <li key={resultIndex} className="live__tool-result">
-                                {result.miss ? (
-                                  <span className="live__tool-title live__tool-title--miss">
-                                    {result.title || t("未命中")}
-                                  </span>
-                                ) : (
-                                  <>
-                                    <span className="live__tool-title">
-                                      {result.title}
-                                    </span>
-                                    <span className="live__tool-meta">
-                                      {result.citationCount !== undefined ? (
-                                        <span
-                                          className="live__tool-citations"
-                                          title={t("被引次数（权威度信号）")}
-                                        >
-                                          {t("被引 {0}", result.citationCount)}
-                                        </span>
-                                      ) : null}
-                                      {result.url ? (
-                                        <a
-                                          className="live__tool-link"
-                                          href={result.url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                        >
-                                          {t("打开来源 ↗")}
-                                        </a>
-                                      ) : null}
-                                    </span>
-                                  </>
-                                )}
-                              </li>
-                            ))}
-                          </ul>
+                  <>
+                    {hiddenToolCount > 0 ? (
+                      <p className="live__tool-folded">
+                        {t(
+                          "更早的 {0} 条检索已折叠（过程留痕可在审计轨迹查看）",
+                          hiddenToolCount,
                         )}
-                      </div>
-                    ))}
-                  </div>
+                      </p>
+                    ) : null}
+                    <div className="live__tool-grid">
+                      {visibleToolGroups.map((group, index) => (
+                        <div key={`${group.query}-${index}`} className="live__tool-card">
+                          <div className="live__tool-card-head">
+                            <span className="live__tool-kind mono">{group.kind}</span>
+                            <span className="live__tool-query" title={group.query}>
+                              {group.query}
+                            </span>
+                            {group.seats.length > 0 ? (
+                              <SeatCluster seats={group.seats} />
+                            ) : null}
+                          </div>
+                          {group.results.length === 0 ? (
+                            <ToolPending startedAt={group.startedAt} />
+                          ) : group.results.every((result) => result.miss) ? (
+                            <p className="live__tool-empty live__tool-empty--miss">
+                              {t("未命中")}
+                              <MissReason reason={group.results[0]?.reason} />
+                            </p>
+                          ) : (
+                            <ul className="live__tool-results">
+                              {group.results.map((result, resultIndex) => (
+                                <li key={resultIndex} className="live__tool-result">
+                                  {result.miss ? (
+                                    <span className="live__tool-title live__tool-title--miss">
+                                      {result.title || t("未命中")}
+                                    </span>
+                                  ) : (
+                                    <>
+                                      <span className="live__tool-title">
+                                        {result.title}
+                                      </span>
+                                      <span className="live__tool-meta">
+                                        {result.citationCount !== undefined ? (
+                                          <span
+                                            className="live__tool-citations"
+                                            title={t("被引次数（权威度信号）")}
+                                          >
+                                            {t("被引 {0}", result.citationCount)}
+                                          </span>
+                                        ) : null}
+                                        {result.url ? (
+                                          <a
+                                            className="live__tool-link"
+                                            href={result.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                          >
+                                            {t("打开来源 ↗")}
+                                          </a>
+                                        ) : null}
+                                      </span>
+                                    </>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </section>
 
