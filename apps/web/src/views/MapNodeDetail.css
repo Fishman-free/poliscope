@@ -30,6 +30,9 @@
   font-size: var(--text-small);
   line-height: 1.5;
   word-break: break-word;
+  /* 模型输出的长文本字段（finding_statement/statement/reason 等）里带 \n，
+     默认 white-space 会把换行折叠成空格，导致「一坨一坨」；pre-line 保留换行。 */
+  white-space: pre-line;
 }
 
 .map-detail__quote {
@@ -40,6 +43,7 @@
   font-size: var(--text-small);
   line-height: 1.55;
   color: var(--ink-2);
+  white-space: pre-line;
 }
 
 .map-detail__link {

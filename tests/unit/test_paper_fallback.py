@@ -184,8 +184,9 @@ def test_fallback_body_avoids_internal_jargon() -> None:
     )
     for term in banned:
         assert term not in body, f"internal jargon leaked into paper: {term}"
-    # The abstract must be self-contained and lead with conclusions upfront.
-    assert "核心结论" in paper.abstract
+    # 社科论文摘要规范（round-19）：研究问题 → 方法 → 发现 → 结论，自包含且结论明确。
+    assert "【研究问题】" in paper.abstract
+    assert "【结论】" in paper.abstract
 
 
 def test_phase_coverage_summary() -> None:

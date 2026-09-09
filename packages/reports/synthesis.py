@@ -333,37 +333,53 @@ def _fallback_integrated_paper(
     # (the same statements the sections above already show, capped so the
     # field stays a summary, not a second copy of the paper).
     conclusion_evidence = tuple(finding_lines[:6])
-    # A self-contained plain-language abstract: conclusion FIRST -> ranked
-    # prominent factors / findings -> disagreements/boundaries -> confidence.
-    # Never put conclusion at the very end. Internal machine jargon never appears.
-    abstract_parts = []
+    # 社科论文摘要规范（round-19）：研究问题 → 方法证据 → 主要发现 → 结论，
+    # 第三人称、结论明确；覆盖全部主要主张/发现/争议，而非只取前 2-3 条。
+    abstract_parts = [f"**【研究问题】**：针对「{question}」的证据链整合与审视。\n\n"]
+    abstract_parts.append(
+        f"**【研究方法与证据】**：基于 {brief.paper_count} 篇论文、"
+        f"{brief.independent_cluster_count} 个独立证据簇的系统性审视。\n\n"
+    )
+    if confirmed_lines or finding_lines:
+        abstract_parts.append("**【主要发现】**：\n")
+        if confirmed_lines:
+            shown = confirmed_lines[:5]
+            for idx, line in enumerate(shown, 1):
+                abstract_parts.append(f"{idx}. {line.lstrip('- ')}\n")
+            if len(confirmed_lines) > len(shown):
+                abstract_parts.append(
+                    f"（共 {len(confirmed_lines)} 项主张，此处列前 {len(shown)} 项，其余见正文）\n"
+                )
+        elif finding_lines:
+            shown = finding_lines[:5]
+            for idx, line in enumerate(shown, 1):
+                abstract_parts.append(f"{idx}. {line.lstrip('- ')}\n")
+            if len(finding_lines) > len(shown):
+                abstract_parts.append(
+                    f"（共 {len(finding_lines)} 项发现，此处列前 {len(shown)} 项，其余见正文）\n"
+                )
+        abstract_parts.append("\n")
+    if dissent_lines:
+        shown = dissent_lines[:4]
+        disagreement = "；".join(line.lstrip("- ") for line in shown)
+        if len(dissent_lines) > len(shown):
+            disagreement += f"（共 {len(dissent_lines)} 项异议）"
+        abstract_parts.append(f"**【关键分歧】**：{disagreement}。\n\n")
+    if blindspot_lines:
+        shown = blindspot_lines[:3]
+        blinds = "；".join(line.lstrip("- ") for line in shown)
+        if len(blindspot_lines) > len(shown):
+            blinds += f"（共 {len(blindspot_lines)} 项）"
+        abstract_parts.append(f"**【尚未回答的问题】**：{blinds}。\n\n")
     consensus_text = consensus.get("conditional_consensus")
     if isinstance(consensus_text, str) and consensus_text and not consensus_text.startswith("综合结论以"):
-        abstract_parts.append(f"**【核心结论】**：{consensus_text}\n\n")
-    elif brief.confirmed_claims:
-        top_claims = "；".join(claim.statement for claim in brief.confirmed_claims[:2])
-        abstract_parts.append(f"**【核心结论】**：综合实证研究表明，{top_claims}。\n\n")
-    else:
-        abstract_parts.append("**【核心结论】**：现有实证证据尚不足以形成统一因果推断。\n\n")
-
-    if brief.confirmed_claims or finding_lines:
-        abstract_parts.append("**【主要影响因素与实证发现】**：\n")
-        if brief.confirmed_claims:
-            for idx, claim in enumerate(brief.confirmed_claims[:3], 1):
-                abstract_parts.append(f"{idx}. **主要影响维度**：{claim.statement}\n")
-        elif finding_lines:
-            for idx, fl in enumerate(finding_lines[:3], 1):
-                clean_fl = fl.lstrip("- ")
-                abstract_parts.append(f"{idx}. **实证发现**：{clean_fl}\n")
-        abstract_parts.append("\n")
-
-    if dissent_lines:
-        disagreement = "；".join(
-            line.lstrip("- ") for line in dissent_lines[:2]
+        abstract_parts.append(f"**【结论】**：{consensus_text}\n")
+    elif confirmed_lines:
+        abstract_parts.append(
+            f"**【结论】**：综合实证证据，{confirmed_lines[0].lstrip('- ')}。\n"
         )
-        abstract_parts.append(f"**【关键争议与边界】**：{disagreement}。\n\n")
-
-    abstract_parts.append(f"**【研究问题】**：针对「{question}」的证据链整合与审视。")
+    else:
+        abstract_parts.append("**【结论】**：现有实证证据尚不足以形成统一因果推断。\n")
     abstract = "".join(abstract_parts)
     return FinalPaper(
         title=title,
@@ -656,18 +672,19 @@ def _build_user_prompt(
         "DO NOT output phrases like 'conditional on 2 claims', 'bounded by 41 conditions',",
         "or list system roles. Use genuine scientific terminology.",
         "",
-        "ABSTRACT (highest priority - CONCLUSION FIRST): A reader must grasp the core",
-        "takeaway within 10 seconds. You MUST structure the abstract in this exact order:",
-        "1. **【核心结论】(Conclusion First)**: Give the direct, clear answer to the user's",
-        "   question upfront. State what the empirical evidence firmly supports.",
-        "2. **【主要影响因素与效应/权重】(Ranked Factors & Magnitudes)**: Explicitly list the",
-        "   primary contributing factors from greatest to least impact (e.g. 1. 因素一（主要驱动力/效应最大）...",
-        "   2. 因素二...). Detail what evidence shows about each factor's role.",
-        "3. **【关键争议与边界条件】(Key Disagreements & Boundaries)**: Highlight what is contested,",
-        "   confounding variables, and under what conditions the findings hold.",
-        "4. **【综合研判】(Overall Takeaway)**: Final synthesis and practical implication.",
-        "Use Markdown formatting with **bold headings**, bulleted factors, and clean line breaks.",
-        "Never bury the conclusion at the bottom. 250-450 words.",
+        "ABSTRACT (follow a Chinese social-science journal abstract, in the third person;"
+        "do NOT use '本文' or '作者'; the conclusion must be explicit and definite):"
+        "structure the abstract in this exact order --"
+        "1. **【研究问题与目的】**: one sentence naming the research question and why it matters."
+        "2. **【研究方法与证据】**: the analytic approach and the evidence base the paper rests on"
+        "   (how many independent studies, what kind of evidence)."
+        "3. **【主要发现】**: state the concrete findings explicitly and completely -- this is the"
+        "   body and longest part of the abstract. List EVERY major finding with its direction and"
+        "   strength, never as a vague hint."
+        "4. **【结论与启示】**: the definite conclusion drawn from the findings, stated explicitly"
+        "   and concretely -- name the actual answer, never hedge with '具有重要理论意义' filler."
+        "Use Markdown bold headings and clean paragraph breaks. 300-500 Chinese characters"
+        "(or 250-400 words).",
         "",
         "The paper MUST preserve the controversy, not blend it into one voice.",
         "In the standpoints field, write one entry per distinct scientific",
@@ -720,6 +737,11 @@ def _build_user_prompt(
         "(5) Conclusions and limitations side by side -- if no overall "
         "conclusion was reached, list every major position here as its own "
         "item with supporting evidence and limitations. "
+        "LOGICAL FLOW (critical): the sections must read as ONE continuous argument, not a "
+        "stack of disconnected notes. Each section must open by connecting to the previous one "
+        "and close by setting up the next. Do not jump between topics -- finish one point "
+        "before starting the next. Every conclusion must follow from the findings just "
+        "presented. "
         "EVERY paragraph in sections must use clean formatting: short readable chunks, "
         "bullet points where appropriate, and **bold** for key concepts. "
         "`references` must cite the source ids/DOIs of the admitted findings; "

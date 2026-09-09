@@ -273,6 +273,9 @@
   color: var(--ink-2);
   line-height: 1.5;
   word-break: break-word;
+  /* 议会动作正文（预承诺/质询/复判的 statement、judgment 等长文本）带 \n，
+     默认折叠成空格会成一坨；pre-line 保留换行（与思考流/结构化产物一致）。 */
+  white-space: pre-line;
 }
 
 /* 检索与文献：主界面下方，一行多个资料卡片，每个卡片是一次检索动作
