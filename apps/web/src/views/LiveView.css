@@ -96,6 +96,26 @@
   color: var(--ink-1);
 }
 
+/* 座位编号徽标（round-19）：按「首次输出」定序后的 1..7 位次。不是固定
+ * 席位 ID，而是本次任务中科学家真正开始输出的先后 —— 让顺序一目了然。 */
+.live__seat-number {
+  flex: none;
+  align-self: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: var(--text-micro);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 .live__seat-phase {
   font-size: var(--text-micro);
   color: var(--ink-4);

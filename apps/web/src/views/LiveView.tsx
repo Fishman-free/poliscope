@@ -251,8 +251,11 @@ const SLICE_PART_CAP = 800;
 const PHASE_HEAD_CAP = 6_000;
 /** 单段最终渲染文本的字符上限。 */
 const SEAT_PHASE_TEXT_CAP = 12_000;
-/** 每席位最多保留的阶段切片数（八阶段，留 1 段余量）。 */
-const MAX_SLICES_PER_SEAT = 9;
+/** 每席位最多保留的阶段切片数。每阶段至少 1 段、交叉质询/盲点悬赏会有
+ *  多轮发言，8 阶段上限放宽到 40（平均每阶段 5 段）后再 shift —— 只在
+ *  极端超长时触发，正常任务全程不再丢弃任何阶段正文（round-19：完成后
+ *  正文必须完整留痕）。字符量上界仍由 SEAT_PHASE_TEXT_CAP 独立封死。 */
+const MAX_SLICES_PER_SEAT = 40;
 
 /** 尚无过程流席位共享的稳定空数组，避免 memo 卡因新 [] 引用每帧重渲染。 */
 const EMPTY_SLICES: SeatPhaseSlice[] = [];
@@ -370,6 +373,49 @@ function seatStreams(processEvents: ProcessEvent[]): Record<string, SeatStream> 
     result[seat] = { slices: list.map(finalizeSlice) };
   }
   return result;
+}
+
+/** 每个席位「首次产生可视输出」的位置：进程序（有思考/完成/缺席等实质
+ *  进展的事件）与账本序（预承诺/质询/复判等正式产物）双轨记录，均未出现
+ *  记 MAX_SAFE。用于把七张卡按真实输出先后定序（round-19 用户反馈：
+ *  固定 SEATS 顺序 ≠ 我输入问题后的实际输出顺序；而纯动态重排又会乱跳，
+ *  故按首次输出定序且只升不降）。 */
+function firstOutputSeatOrder(
+  processEvents: ProcessEvent[],
+  events: LedgerEvent[],
+): Map<string, [number, number]> {
+  const order = new Map<string, [number, number]>();
+  const MAX = Number.MAX_SAFE_INTEGER;
+  const processKinds = new Set([
+    "model_reasoning",
+    "model_token",
+    "model_done",
+    "seat_absent",
+  ]);
+  for (let index = 0; index < processEvents.length; index += 1) {
+    const payload = processEvents[index]?.payload as
+      | Record<string, unknown>
+      | undefined;
+    const seat = typeof payload?.seat === "string" ? payload.seat : null;
+    if (!seat || !processKinds.has(processEvents[index]?.kind ?? "")) continue;
+    if (!order.has(seat)) order.set(seat, [index, MAX]);
+  }
+  const ledgerKinds = new Set([
+    "PRECOMMITMENT_SEALED",
+    "CHALLENGE_RAISED",
+    "FINAL_JUDGMENT",
+    "SEAT_UNAVAILABLE",
+  ]);
+  for (let index = 0; index < events.length; index += 1) {
+    const payload = events[index]?.payload as
+      | Record<string, unknown>
+      | undefined;
+    const seat = typeof payload?.seat === "string" ? payload.seat : null;
+    if (!seat || !ledgerKinds.has(events[index]?.kind ?? "")) continue;
+    const existing = order.get(seat);
+    if (!existing) order.set(seat, [MAX, index]);
+  }
+  return order;
 }
 
 /* ------------------------------------------------------------------ */
@@ -630,22 +676,28 @@ export interface QueueInfo {
  *  一次，未变化的卡跳过重渲染（长阶段渲染开销的主要来源之一）。 */
 interface SeatCardProps {
   seat: Seat;
+  /** 排列后的 1..7 位次（round-19：显式编号让「输出顺序」一目了然）。 */
+  seatNumber: number;
   slices: SeatPhaseSlice[];
   record: SeatRecord | null;
   summary: SeatSummary | null;
   status: string | undefined;
   currentPhase: string | null;
+  /** claim_id → 「主张：…」，把兜底质询正文里的 UUID 也换成可读文本。 */
+  labels: Map<string, string>;
   /** 最新一段切片的滚动容器注册回调（只对最新段自动滚底）。 */
   registerStream: (seat: Seat, node: HTMLDivElement | null) => void;
 }
 
 const SeatCard = memo(function SeatCard({
   seat,
+  seatNumber,
   slices,
   record,
   summary,
   status,
   currentPhase,
+  labels,
   registerStream,
 }: SeatCardProps) {
   const last = slices[slices.length - 1] ?? null;
@@ -727,17 +779,87 @@ const SeatCard = memo(function SeatCard({
     );
   }
 
-  // 持久摘要的补充说明（结构化产物缺失时的兜底信息）。
+  // 兜底正文块：账本重放缺失（事件被裁剪）时，snapshot 席位摘要里仍带
+  // 完整质询 statement 与最终复判全文 —— 必须整段渲染，而不是只给一行
+  // 「已提出 N 项质询」（round-19 用户反馈：完成后输出内容看不到）。
+  const durableBlocks: ReactNode[] = [];
+  const chalWithText =
+    summary?.challenges_raised.filter((challenge) => challenge.statement) ?? [];
+  if (!record?.precommitment?.text && summary?.precommitment) {
+    const parts: string[] = [];
+    if (summary.precommitment.confidence != null)
+      parts.push(t("置信度 {0}", summary.precommitment.confidence));
+    if (summary.precommitment.update_condition)
+      parts.push(
+        t("更新条件：{0}", replaceClaimUuids(
+          humanizeText(summary.precommitment.update_condition),
+          labels,
+        )),
+      );
+    if (parts.length > 0) {
+      durableBlocks.push(
+        <div key="du-pre" className="live__seat-record live__seat-record--pre">
+          <span className="live__seat-record-tag">{t("预承诺")}</span>
+          <p className="live__seat-record-text">{parts.join("，")}</p>
+        </div>,
+      );
+    }
+  }
+  if ((record?.challenges.length ?? 0) === 0 && chalWithText.length > 0) {
+    durableBlocks.push(
+      <div key="du-chal" className="live__seat-record live__seat-record--chal">
+        <span className="live__seat-record-tag">
+          {t("质询（{0} 项）", chalWithText.length)}
+        </span>
+        {chalWithText.map((challenge, index) => (
+          <p key={index} className="live__seat-record-text">
+            {challenge.is_fatal ? t("【致命】") : "· "}
+            {replaceClaimUuids(
+              humanizeText(String(challenge.statement)),
+              labels,
+            )}
+            {challenge.claim_id
+              ? `（${t("针对")} ${replaceClaimUuids(challenge.claim_id, labels)}）`
+              : ""}
+          </p>
+        ))}
+      </div>,
+    );
+  }
+  const durableFinal = summary?.final_judgment?.final_judgment ?? "";
+  if (!record?.final?.text && durableFinal) {
+    const fj = summary?.final_judgment;
+    durableBlocks.push(
+      <div key="du-final" className="live__seat-record live__seat-record--final">
+        <span className="live__seat-record-tag">
+          {t("最终复判")}
+          {fj?.has_dissent ? t("（附异议）") : ""}
+          {fj?.confidence != null
+            ? `（${t("置信度 {0}", fj.confidence)}）`
+            : ""}
+        </span>
+        <p className="live__seat-record-text">
+          {replaceClaimUuids(humanizeText(durableFinal), labels)}
+        </p>
+      </div>,
+    );
+  }
+
+  // 持久摘要的补充说明：只在上述正文块确实没有可显示文本时才给一行概要
+  // （例如质询计数存在但 statement 全缺、复判对象存在但全文缺失）。
   const durableNotes: string[] = [];
-  if (summary?.precommitment?.confidence != null && !record?.precommitment?.text)
-    durableNotes.push(t("预承诺置信度 {0}", summary.precommitment.confidence));
   if (
     summary &&
     summary.challenges_raised.length > 0 &&
-    (record?.challenges.length ?? 0) === 0
+    (record?.challenges.length ?? 0) === 0 &&
+    chalWithText.length === 0
   )
     durableNotes.push(t("已提出 {0} 项质询", summary.challenges_raised.length));
-  if (summary?.final_judgment && !record?.final?.text)
+  if (
+    summary?.final_judgment &&
+    !record?.final?.text &&
+    !summary.final_judgment.final_judgment
+  )
     durableNotes.push(t("已提交最终复判"));
   if (summary && summary.unavailable_phases.length > 0) {
     const phaseLabels = PHASES.filter((phase) =>
@@ -749,11 +871,17 @@ const SeatCard = memo(function SeatCard({
   // 卡片正文绝不允许完全空白（用户反馈：完成后框直接折叠/空白）。
   const hasStreamText = slices.some((slice) => slice.text.length > 0);
   const hasBody =
-    hasStreamText || recordBlocks.length > 0 || durableNotes.length > 0;
+    hasStreamText ||
+    recordBlocks.length > 0 ||
+    durableBlocks.length > 0 ||
+    durableNotes.length > 0;
 
   return (
     <div className="live__seat">
       <div className="live__seat-head">
+        <span className="live__seat-number" title={t("按首次输出顺序")}>
+          {seatNumber}
+        </span>
         <span className="live__seat-name">
           {SEAT_LABELS[seat] ?? seat}
         </span>
@@ -803,6 +931,8 @@ const SeatCard = memo(function SeatCard({
       })}
 
       {recordBlocks}
+
+      {durableBlocks}
 
       {durableNotes.length > 0 ? (
         <ul className="live__seat-durable">
@@ -875,14 +1005,31 @@ export function LiveView({
     [events, claimLabels],
   );
 
-  // 七张席位卡严格固定顺序：阶段一旦开始（或任务已离开队列），七个槽位
-  // 恒在，谁先出内容都不引起重排；之前未开始时仅展示已有持久摘要的卡。
+  // 七个槽位在阶段开始（或任务离开队列）后恒在；排列按「首次可视输出」
+  // 定序：谁先真正开始输出谁排前，首个输出一旦出现即锁定（后续事件只会
+  // 刷新已锁定席位的内容、不改变位置），未输出席位按 SEATS 原序垫后。
+  // 既符合「按提交问题后科学家实际输出顺序排列」（round-19 用户反馈），
+  // 又不会像纯动态列表那样每帧重排乱跳。排队未开始时仅展示持久摘要卡。
   const visibleSeatIds = useMemo((): readonly Seat[] => {
     const showAll =
       phaseStarted || (!!status && status !== "QUEUED");
-    if (showAll) return SEATS;
-    return SEATS.filter((seat) => durableById.has(seat));
-  }, [phaseStarted, status, durableById]);
+    const base = showAll
+      ? SEATS
+      : SEATS.filter((seat) => durableById.has(seat));
+    if (!showAll || base.length <= 1) return base;
+    const first = firstOutputSeatOrder(processEvents, events);
+    const fallback = new Map<Seat, number>();
+    SEATS.forEach((seat, index) => fallback.set(seat, index));
+    const MAX = Number.MAX_SAFE_INTEGER;
+    return [...base].sort((a, b) => {
+      const fa = first.get(a) ?? [MAX, MAX];
+      const fb = first.get(b) ?? [MAX, MAX];
+      for (const dim of [0, 1] as const) {
+        if (fa[dim] !== fb[dim]) return fa[dim] - fb[dim];
+      }
+      return (fallback.get(a) ?? 0) - (fallback.get(b) ?? 0);
+    });
+  }, [phaseStarted, status, durableById, processEvents, events]);
 
   // 每秒重渲染一次，让「思考中… 已等待 Ns」与检索卡片的秒数走动。只在
   // 还有席位 running 或有检索 pending 时启动定时器，空闲时不空转。
@@ -1114,15 +1261,17 @@ export function LiveView({
                 下方，一行多列铺开，而不是挤在右侧小栏里）。 */}
             <div className="live__main">
               <section className="live__seats" aria-label={t("席位运行状态")}>
-                {visibleSeatIds.map((seat) => (
+                {visibleSeatIds.map((seat, index) => (
                   <SeatCard
                     key={seat}
                     seat={seat}
+                    seatNumber={index + 1}
                     slices={streams[seat]?.slices ?? EMPTY_SLICES}
                     record={records[seat] ?? null}
                     summary={durableById.get(seat) ?? null}
                     status={status}
                     currentPhase={current}
+                    labels={claimLabels}
                     registerStream={registerStream}
                   />
                 ))}
