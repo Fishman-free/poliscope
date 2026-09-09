@@ -1,35 +1,33 @@
 /** 极小、零依赖、默认安全的内联 Markdown 渲染器。
  *
  * 最终论文/审查报告由模型生成，需要 **加粗**、短列表、小标题与换行来分段，
- * 但不值得为此引入完整 markdown 库（包体 + XSS 面）。这里先做 HTML 转义，
- * 再只识别白名单语法：##/### 小标题、- / * 无序列表、1. 有序列表、**加粗**、
- * 空行分段、段内换行。任何原始 HTML 都会以文本形式显示，不注入 DOM。
+ * 但不值得为此引入完整 markdown 库（包体 + XSS 面）。这里只识别白名单语法：
+ * ##/### 小标题、- / * 无序列表、1. 有序列表、**加粗**、空行分段、段内换行。
+ * 任何原始 HTML 都以文本形式显示、不注入 DOM —— 这是 React 文本节点自带的
+ * 保障（textContent 注入），无需也不应手动做 HTML 实体转义：那会把 `"` 变成
+ * 字面 `&quot;` 显示给读者（round-19 用户反馈）。
  */
 import type { ReactNode } from "react";
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/** 行内：先转义，再把 **加粗** 切成 <strong>。其余语法一律不识别。 */
+/** 行内：把 **加粗** 切成 <strong>，其余语法一律不识别。
+ *
+ * 不做 HTML 实体转义：React 以 textContent 注入文本节点，浏览器不会解析
+ * 其中的标签或实体，天然免疫 XSS；若在此预先把 `"`/`&`/`<`/`>` 转成
+ * `&quot;`/`&amp;`/`&lt;`/`&gt;`，这些实体会被原样显示（round-19 反馈的
+ * `&quot;` 无关字符即由此而来）。 */
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
-  const escaped = escapeHtml(text);
   const nodes: ReactNode[] = [];
   const pattern = /\*\*([^*]+)\*\*/g;
   let last = 0;
   let match: RegExpExecArray | null;
   let index = 0;
-  while ((match = pattern.exec(escaped)) !== null) {
-    if (match.index > last) nodes.push(escaped.slice(last, match.index));
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > last) nodes.push(text.slice(last, match.index));
     nodes.push(<strong key={`${keyPrefix}-b${index}`}>{match[1]}</strong>);
     last = match.index + match[0].length;
     index += 1;
   }
-  if (last < escaped.length) nodes.push(escaped.slice(last));
+  if (last < text.length) nodes.push(text.slice(last));
   return nodes;
 }
 
