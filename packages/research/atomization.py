@@ -67,3 +67,38 @@ def suggest_atomic_claims(
             falsification_condition="随机实验无效应",
         ),
     )
+
+
+# Human-facing (simplified Chinese) label for each claim type. Reports render
+# these instead of the raw enum value ("causal") so no English token reaches a
+# reader (CLAUDE.md 15: 面向团队的文档默认使用简体中文). Unknown values keep
+# the raw string rather than guess.
+CLAIM_TYPE_ZH: dict[str, str] = {
+    "causal": "因果",
+    "correlational": "相关",
+    "measurement": "测量",
+    "boundary": "边界",
+    "mechanism": "机制",
+    "null_result": "零结果",
+}
+
+
+def claim_type_label(claim_type: object) -> str:
+    return CLAIM_TYPE_ZH.get(str(claim_type), str(claim_type))
+
+
+# The placeholder claims seeded by ``suggest_atomic_claims`` only scope the
+# council's investigation -- their statement is literally "关联主张：<question>"
+# / "因果主张：<question>" (and "论证严谨性：…" / "证据充分性：…" for a paper
+# review). They are not findings; a report must never list them as a confirmed
+# finding or a conclusion.
+_PLACEHOLDER_CLAIM_PREFIXES = (
+    "关联主张：",
+    "因果主张：",
+    "论证严谨性：",
+    "证据充分性：",
+)
+
+
+def is_placeholder_statement(statement: object) -> bool:
+    return str(statement).startswith(_PLACEHOLDER_CLAIM_PREFIXES)

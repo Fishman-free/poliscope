@@ -62,6 +62,10 @@ from packages.reports.contracts import (
 )
 from packages.reports.safety import sanitize_export
 from packages.reports.service import ReportService, ResearchBrief
+from packages.research.atomization import (
+    claim_type_label,
+    is_placeholder_statement,
+)
 from packages.research.language import detect_output_language
 from packages.research.models import ResearchTaskModel
 
@@ -164,13 +168,21 @@ def _fallback_integrated_paper(
     deterministic path is just as explicit about who argued what as the model
     path.
     """
+    # Placeholder claims (关联主张：/因果主张：/…) only scope the council's
+    # investigation; they are not findings and must never headline the paper.
+    # claim_type renders in Chinese (因果/相关/…) so no English token reaches
+    # the reader.
     confirmed_lines = [
-        f"- {claim.statement}（{claim.claim_type}；"
+        f"- {claim.statement}（类型：{claim_type_label(claim.claim_type)}；"
         f"证伪条件：{claim.falsification_condition}）"
         for claim in brief.confirmed_claims
+        if not is_placeholder_statement(claim.statement)
     ]
+    # Findings store their text under `finding_statement` (finding_extraction.py);
+    # `statement` is the older key kept as a fallback so a finding never
+    # renders as its bare node_id UUID.
     finding_lines = [
-        f"- {_as_str(item.payload.get('statement') or item.node_id)}"
+        f"- {_as_str(item.payload.get('finding_statement') or item.payload.get('statement') or item.node_id)}"
         for item in brief.findings
     ]
     blindspot_lines = [
@@ -378,6 +390,10 @@ def _fallback_integrated_paper(
         abstract_parts.append(
             f"**【结论】**：综合实证证据，{confirmed_lines[0].lstrip('- ')}。\n"
         )
+    elif finding_lines:
+        abstract_parts.append(
+            f"**【结论】**：综合实证证据，{finding_lines[0].lstrip('- ')}。\n"
+        )
     else:
         abstract_parts.append("**【结论】**：现有实证证据尚不足以形成统一因果推断。\n")
     abstract = "".join(abstract_parts)
@@ -480,13 +496,21 @@ def _parse_paper(payload: dict[str, object]) -> FinalPaper:
 
 def _material_brief_lines(brief: ResearchBrief) -> list[str]:
     lines = [f"Research question: {brief.question}", ""]
+    # Placeholder claims (关联主张：/因果主张：/…) only scope the council's
+    # investigation; feeding them to the model as "confirmed atomic claims"
+    # makes the paper echo the research question as if it were a finding.
+    material_claims = [
+        claim
+        for claim in brief.confirmed_claims
+        if not is_placeholder_statement(claim.statement)
+    ]
     lines.append("### Confirmed atomic claims")
-    for claim in brief.confirmed_claims:
+    for claim in material_claims:
         lines.append(
             f"- {claim.statement} (type: {claim.claim_type}; "
             f"falsification condition: {claim.falsification_condition})"
         )
-    if not brief.confirmed_claims:
+    if not material_claims:
         lines.append("- (none)")
 
     lines.append("")

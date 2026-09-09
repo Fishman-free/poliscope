@@ -128,6 +128,11 @@ function StickyNode({
   // of the drag surface) until the researcher double-clicks to edit, the same
   // gesture every whiteboard tool uses. Editing ends on blur or Escape.
   const [editing, setEditing] = useState(false);
+  // IME 组合态：中文输入法输入「你好」时，组合期间 onChange 会把拼音字母
+  // （n/i/h/a/o…）当成字面量写回 data.text，最终提交成
+  // nnini'hni'hani'hao你好 一类的乱码。组合期间不写回，等 compositionend
+  // 一次性提交最终文本。
+  const [composing, setComposing] = useState(false);
   const textRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -229,7 +234,15 @@ function StickyNode({
           }
           value={data.text}
           placeholder={t("双击式输入：记录你的判断、疑点或待查线索…")}
-          onChange={(event) => data.onChange(id, event.target.value)}
+          onCompositionStart={() => setComposing(true)}
+          onCompositionEnd={(event) => {
+            setComposing(false);
+            data.onChange(id, event.currentTarget.value);
+          }}
+          onChange={(event) => {
+            if (composing) return;
+            data.onChange(id, event.target.value);
+          }}
           onBlur={() => setEditing(false)}
           onKeyDown={(event) => {
             // Escape leaves editing without bubbling to the canvas (which

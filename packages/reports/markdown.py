@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from packages.reports.safety import apply_safety_notice, sanitize_export
 from packages.reports.service import BriefNode, ResearchBrief
+from packages.research.atomization import (
+    claim_type_label,
+    is_placeholder_statement,
+)
 
 AI_ASSISTANCE_NOTICE = (
     "本报告由 AI 辅助研究系统生成。所有结论均须结合原始文献独立复核。"
@@ -48,11 +52,18 @@ def render_markdown(brief: ResearchBrief) -> str:
         "### 已确认原子主张",
         "",
     ]
-    if brief.confirmed_claims:
+    # Placeholder claims (关联主张：/因果主张：/…) only scope the council's
+    # investigation; drop them and render the type in Chinese so a reader never
+    # sees "causal"/"correlational" or a question echoed as if it were a finding.
+    confirmed = [
+        claim for claim in brief.confirmed_claims
+        if not is_placeholder_statement(claim.statement)
+    ]
+    if confirmed:
         lines += [
-            f"- {claim.statement} （类型: {claim.claim_type}；证伪条件: "
-            f"{claim.falsification_condition}）"
-            for claim in brief.confirmed_claims
+            f"- {claim.statement} （类型: {claim_type_label(claim.claim_type)}；"
+            f"证伪条件: {claim.falsification_condition}）"
+            for claim in confirmed
         ]
     else:
         lines.append("_无已确认原子主张。_")

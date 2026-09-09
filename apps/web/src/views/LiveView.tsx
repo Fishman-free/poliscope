@@ -30,6 +30,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 import type {
   ConfirmedClaim,
@@ -50,6 +51,106 @@ import {
 import { CheckpointGate } from "./CheckpointGate";
 
 import "./LiveView.css";
+
+/** 可停留、可复制的悬停弹窗 —— 替代原生 title。
+ *
+ * 原生 title 在鼠标移开触发元素时立即消失，且文字不可选中复制（用户反馈：
+ * 「弹窗应该我鼠标随后放在那边可以继续显示，并且可以供我复制文字，而不是
+ * 直接消失」）。这里用真实 DOM 弹窗解决两点：
+ *  - 触发元素与弹窗之间留 120ms 宽限，弹窗本身也监听 mouseEnter，鼠标从
+ *    触发元素移入弹窗不会关闭，正文可整段选中复制；
+ *  - 弹窗经 portal 渲染到 document.body（position: fixed），不会被
+ *    .live__seat 的 overflow:hidden 裁剪。
+ *
+ * 动画走项目统一的 --ease-smooth / --duration-standard 令牌：淡入 + 轻微
+ * 上移，reduced-motion 下只保留透明度变化（见 LiveView.css）。 */
+function HoverPopover({
+  content,
+  className,
+  children,
+}: {
+  content: ReactNode;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const closeTimer = useRef<number | null>(null);
+  const corrected = useRef(false);
+
+  const clearClose = useCallback(() => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }, []);
+
+  const scheduleClose = useCallback(() => {
+    clearClose();
+    closeTimer.current = window.setTimeout(() => setOpen(false), 120);
+  }, [clearClose]);
+
+  const openPopover = useCallback(() => {
+    clearClose();
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    corrected.current = false;
+    setPos({ top: rect.bottom + 6, left: rect.left });
+    setOpen(true);
+  }, [clearClose]);
+
+  useEffect(() => clearClose, [clearClose]);
+
+  // 打开后按真实尺寸修正一次：底部越界则翻到触发元素上方，水平收拢。
+  useEffect(() => {
+    if (!open || !pos || corrected.current) return;
+    const card = cardRef.current;
+    if (!card) return;
+    corrected.current = true;
+    const rect = card.getBoundingClientRect();
+    let { top, left } = pos;
+    if (top + rect.height > window.innerHeight - 8) {
+      const triggerRect = triggerRef.current?.getBoundingClientRect();
+      top = Math.max(8, (triggerRect?.top ?? top) - rect.height - 6);
+    }
+    left = Math.min(Math.max(8, left), window.innerWidth - rect.width - 8);
+    if (top !== pos.top || left !== pos.left) setPos({ top, left });
+  }, [open, pos]);
+
+  return (
+    <span
+      ref={triggerRef}
+      className={className ? `hover-popover ${className}` : "hover-popover"}
+      onMouseEnter={openPopover}
+      onMouseLeave={scheduleClose}
+      onFocus={openPopover}
+      onBlur={scheduleClose}
+    >
+      {children}
+      {pos
+        ? createPortal(
+            <div
+              ref={cardRef}
+              className={
+                "hover-popover__card" +
+                (open ? " hover-popover__card--open" : "")
+              }
+              role="tooltip"
+              style={{ top: pos.top, left: pos.left }}
+              onMouseEnter={clearClose}
+              onMouseLeave={scheduleClose}
+            >
+              {content}
+            </div>,
+            document.body,
+          )
+        : null}
+    </span>
+  );
+}
 
 /** 八个阶段，与 packages/epistemo/contracts.py 的 PHASE_SEQUENCE 一致。 */
 const PHASES: { id: string; label: string }[] = [
@@ -654,14 +755,11 @@ function SeatCluster({ seats }: { seats: string[] }) {
   const preview = `${labelled[0]} +${labelled.length - 1}`;
   const full = labelled.join("、");
   return (
-    <span
-      className="live__tool-seats mono live__tool-seats--cluster"
-      data-seats={full}
-      title={full}
-      aria-label={full}
-    >
-      {preview}
-    </span>
+    <HoverPopover className="live__tool-seats mono" content={full}>
+      <span className="live__tool-seats--cluster" aria-label={full}>
+        {preview}
+      </span>
+    </HoverPopover>
   );
 }
 
@@ -893,9 +991,15 @@ const SeatCard = memo(function SeatCard({
               currentPhase}
           </span>
         ) : null}
-        <span className={pillClass} title={last?.absentReason || undefined}>
-          {pill.label}
-        </span>
+        {last?.absentReason ? (
+          <HoverPopover className="live__seat-pill" content={last.absentReason}>
+            <span className={pillClass} aria-label={last.absentReason}>
+              {pill.label}
+            </span>
+          </HoverPopover>
+        ) : (
+          <span className={pillClass}>{pill.label}</span>
+        )}
       </div>
 
       {/* 分阶段思考切片：按阶段顺序全部保留（留痕），最新在最后。 */}
