@@ -65,9 +65,24 @@ CHALLENGE_SET: Final[dict[str, Any]] = {
                 "properties": {
                     "claim_id": {
                         "type": "string",
-                        "description": "UUID of a confirmed atomic claim",
+                        "description": (
+                            "UUID of a confirmed atomic claim. The challenge "
+                            "must identify whose claim is being challenged: "
+                            "restate that claim's viewpoint in `statement` -- "
+                            "never challenge by id alone."
+                        ),
                     },
-                    "statement": {"type": "string"},
+                    "statement": {
+                        "type": "string",
+                        "description": (
+                            "The challenge. MUST (1) name the claim (and thus "
+                            "whose viewpoint) being challenged, and (2) restate "
+                            "the specific viewpoint being challenged before "
+                            "arguing against it. A challenge that only cites a "
+                            "claim id without its viewpoint reads as an "
+                            "unattached assertion and is unusable."
+                        ),
+                    },
                     "is_fatal": {"type": "boolean"},
                     "fork": {
                         "type": "object",

@@ -427,6 +427,9 @@ async def _seats(
             challenges[seat_value].append(
                 {
                     "claim_id": entry.payload.get("claim_id"),
+                    # round-24 「质询必须点明对象与观点」: 后端 run_cross_examination
+                    # 已在事件里附带被质询主张的原文，这里一起透传给议会面板。
+                    "claim_statement": entry.payload.get("claim_statement"),
                     "statement": entry.payload.get("statement"),
                     "is_fatal": entry.payload.get("is_fatal"),
                 }

@@ -123,6 +123,9 @@
   font-size: var(--text-small);
   color: var(--ink-2);
   line-height: 1.45;
+  /* 盲点陈述带 \n 分段，折叠会读成一坨（round-8 反馈：点击盲点右侧栏乱）。 */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .radar__payload {

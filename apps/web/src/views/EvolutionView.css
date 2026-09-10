@@ -35,6 +35,8 @@
   font-size: var(--text-small);
   min-width: 0;
   overflow-wrap: anywhere;
+  /* 目标主张的轨迹说明（confidence_delta_note 等）带 \n 分段，保留换行。 */
+  white-space: pre-line;
 }
 
 @media (max-width: 700px) {

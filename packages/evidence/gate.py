@@ -130,6 +130,64 @@ def _method_failure_detail(result: MethodQualityResult) -> str:
     return f"method quality below threshold: {', '.join(weak)}"
 
 
+def _method_average(result: MethodQualityResult) -> float:
+    """Mean of the six method-quality dimensions.
+
+    Replaces the old ``all(dimension >= threshold)`` gate: one weak dimension
+    no longer sinks a finding whose other five dimensions are strong. The mean
+    is what the scoring mechanism (CLAUDE.md 17 deviation, confirmed by the
+    researcher) actually compares against the threshold and floor.
+    """
+    return (
+        result.directness
+        + result.design_quality
+        + result.measurement_quality
+        + result.precision
+        + result.replicability
+        + result.external_validity
+    ) / 6.0
+
+
+# Method-quality floor: a finding whose mean score is below this carries no
+# usable signal and is still refused. Between the floor and the threshold the
+# finding is admitted but downgraded one level (see _downgrade), so "weaker"
+# is expressed as "lower tier", never as "discarded".
+METHOD_ACCEPT_FLOOR = 0.25
+
+# Severity ordering for accumulated defects. "fatal" refuses the event,
+# "major" downgrades its admission by one level, "minor" is audit-only.
+_DEFECT_ORDER = ("fatal", "major", "minor", None)
+
+
+def _max_defect(
+    current: str | None, incoming: str | None
+) -> str | None:
+    """Keep the more severe of two defect severities."""
+    if incoming is None:
+        return current
+    if current is None:
+        return incoming
+    current_rank = _DEFECT_ORDER.index(current)
+    incoming_rank = _DEFECT_ORDER.index(incoming)
+    return incoming if incoming_rank < current_rank else current
+
+
+_ADMISSION_TIERS = (
+    AdmissionDisposition.ADMIT,
+    AdmissionDisposition.SOURCE_ONLY,
+    AdmissionDisposition.DISCOVERY_ONLY,
+    AdmissionDisposition.TOOL_LEAD_ONLY,
+)
+
+
+def _downgrade(disposition: AdmissionDisposition) -> AdmissionDisposition:
+    """Lower an admission by one tier, never below the lowest."""
+    if disposition not in _ADMISSION_TIERS:
+        return AdmissionDisposition.TOOL_LEAD_ONLY
+    index = _ADMISSION_TIERS.index(disposition)
+    return _ADMISSION_TIERS[min(index + 1, len(_ADMISSION_TIERS) - 1)]
+
+
 def _candidate_node_id(candidate: ScientificEventCandidate) -> UUID:
     """Mirror ``sql_projector.node_id_for`` on a candidate rather than a row.
 
@@ -272,6 +330,7 @@ class FullEvidenceGate:
         self, candidate: ScientificEventCandidate
     ) -> FullAdmissionDecision:
         findings: list[AuditFinding] = []
+        majors = 0  # count of downgrade-worthy (major) defects
 
         # Stage 1: Schema
         schema_ok = bool(candidate.id and candidate.task_id and candidate.event_type)
@@ -288,6 +347,14 @@ class FullEvidenceGate:
         )
 
         # Stage 3: Source
+        #
+        # Graded instead of all-or-nothing: a retracted source, or one whose
+        # bytes fail to match its recorded metadata, is a fatal authenticity
+        # failure and is still refused, but missing third-party metadata
+        # (DOI/title/authors) only *downgrades* the finding one admission tier
+        # instead of discarding it. A single metadata gap no longer sinks a
+        # finding, and an uploaded PDF with no DOI is no longer permanently
+        # unadmittable.
         source_id = candidate.source_id
         source_detail = ""
         if source_id:
@@ -299,6 +366,18 @@ class FullEvidenceGate:
             source_ok = src.passed
             if not source_ok:
                 source_detail = _source_failure_detail(src)
+                if src.is_retracted or not src.pdf_matches:
+                    findings.append(
+                        AuditFinding(
+                            stage=AuditStage.SOURCE,
+                            passed=False,
+                            detail=source_detail,
+                        )
+                    )
+                    return self._quarantine(
+                        findings, source_detail or "source verification failed"
+                    )
+                majors += 1
         else:
             # This used to compare against the literal string "FINDING", which
             # never matched EvidenceNodeType.STUDY_FINDING's real value
@@ -306,17 +385,25 @@ class FullEvidenceGate:
             # always fell through to the "not a finding, so no source needed"
             # default instead of being caught here.
             source_ok = candidate.event_type != EvidenceNodeType.STUDY_FINDING.value
+            if not source_ok:
+                source_detail = "StudyFinding missing source reference"
+                findings.append(
+                    AuditFinding(
+                        stage=AuditStage.SOURCE, passed=False, detail=source_detail
+                    )
+                )
+                return self._quarantine(findings, source_detail)
         findings.append(
             AuditFinding(
                 stage=AuditStage.SOURCE, passed=source_ok, detail=source_detail
             )
         )
-        if not source_ok:
-            return self._quarantine(
-                findings, source_detail or "source verification failed"
-            )
 
         # Stage 4: Citation Entailment
+        #
+        # A failed entailment (empty quote, claim not entailed, or qualifiers
+        # dropped) is a scientific *defect*, not a fabrication: it downgrades
+        # the finding one tier instead of quarantining it.
         if candidate.finding_id:
             citation = verify_citation_entailment(
                 candidate.finding_id,
@@ -329,17 +416,45 @@ class FullEvidenceGate:
             AuditFinding(stage=AuditStage.CITATION_ENTAILMENT, passed=citation_ok)
         )
         if not citation_ok:
-            return self._quarantine(findings, "citation entailment failed")
+            majors += 1
 
         # Stage 5: Method Quality
+        #
+        # Scored on the *mean* of the six dimensions rather than "every
+        # dimension above threshold": five strong dimensions with one weak one
+        # is no longer discarded. Below the floor (METHOD_ACCEPT_FLOOR) the
+        # finding carries no usable signal and is refused; between the floor
+        # and the threshold it is admitted but downgraded one tier, so "weaker"
+        # reads as "lower tier", never as "thrown away".
         method_detail = ""
         if candidate.finding_id:
             method = audit_method_quality(
                 candidate.finding_id, **_method_scores(candidate.payload)
             )
-            method_ok = method.passed
+            method_mean = _method_average(method)
+            if method_mean < METHOD_ACCEPT_FLOOR:
+                method_detail = (
+                    f"method quality mean {method_mean:.2f} below floor "
+                    f"{METHOD_ACCEPT_FLOOR}: {_method_failure_detail(method)}"
+                )
+                findings.append(
+                    AuditFinding(
+                        stage=AuditStage.METHOD_QUALITY,
+                        passed=False,
+                        detail=method_detail,
+                    )
+                )
+                return self._quarantine(
+                    findings, method_detail or "method quality failed"
+                )
+            method_ok = method_mean >= METHOD_QUALITY_THRESHOLD
             if not method_ok:
-                method_detail = _method_failure_detail(method)
+                method_detail = (
+                    f"method quality mean {method_mean:.2f} below threshold "
+                    f"{METHOD_QUALITY_THRESHOLD} (floor {METHOD_ACCEPT_FLOOR}); "
+                    "admitted one tier lower: " + _method_failure_detail(method)
+                )
+                majors += 1
         else:
             method_ok = True
         findings.append(
@@ -349,10 +464,6 @@ class FullEvidenceGate:
                 detail=method_detail,
             )
         )
-        if not method_ok:
-            return self._quarantine(
-                findings, method_detail or "method quality failed"
-            )
 
         # Stage 6: Graph Consistency
         #
@@ -408,14 +519,22 @@ class FullEvidenceGate:
         if not consistency_ok:
             return self._quarantine(findings, consistency_detail)
 
-        # Apply A–D matrix
+        # Apply A–D matrix, then account for accumulated defects: each major
+        # defect lowers the admission by one tier (bounded by the lowest tier),
+        # so impact and severity are weighed together instead of any single
+        # unsupported dimension vetoing the whole finding.
         level = (candidate.evidence_level or "D").upper()
         disposition = self._LEVEL_DISPOSITION.get(
             level, AdmissionDisposition.TOOL_LEAD_ONLY
         )
+        for _ in range(min(majors, len(_ADMISSION_TIERS) - 1)):
+            disposition = _downgrade(disposition)
+        reasons = (
+            (f"{majors} major defect(s) downgraded admission",) if majors else ()
+        )
         return FullAdmissionDecision(
             disposition=disposition,
-            reasons=(),
+            reasons=reasons,
             evidence_level=level,
             audit_findings=tuple(findings),
         )

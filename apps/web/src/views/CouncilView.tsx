@@ -210,11 +210,16 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
 
   if (kind === "CHALLENGE_RAISED") {
     const statement = typeof payload.statement === "string" ? payload.statement : "";
+    const claimStatement =
+      typeof payload.claim_statement === "string" ? payload.claim_statement : "";
     const fatal = payload.is_fatal === true;
     return (
       <li className="council__tl-item">
         <Badge tone={fatal ? "refuted" : "provisional"}>{fatal ? t("致命质询") : t("非致命质询")}</Badge>
-        <span className="council__tl-text">{statement || t("（未记录质询内容）")}</span>
+        <span className="council__tl-text">
+          {statement || t("（未记录质询内容）")}
+          {claimStatement ? `（${t("针对")} ${claimStatement}）` : ""}
+        </span>
       </li>
     );
   }
@@ -298,7 +303,12 @@ function SummaryCard({ entry }: { entry: SeatSummary }) {
                 <Badge tone={challenge.is_fatal ? "refuted" : "provisional"}>
                   {challenge.is_fatal ? t("致命") : t("非致命")}
                 </Badge>
-                <span>{challenge.statement ?? t("（未记录质询内容）")}</span>
+                <span>
+                  {challenge.statement ?? t("（未记录质询内容）")}
+                  {challenge.claim_statement
+                    ? `（${t("针对")} ${challenge.claim_statement}）`
+                    : ""}
+                </span>
               </li>
             ))}
           </ul>

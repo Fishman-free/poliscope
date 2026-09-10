@@ -1718,6 +1718,14 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                 challenge_statement=str(item.get("statement", "")),
                 is_fatal=bool(item.get("is_fatal", False)),
             )
+            # The claim's own wording, so a challenge can say *whose* claim it
+            # targets and *what* that claim asserts -- a bare claim_id tells the
+            # researcher nothing (round-8 用户反馈：质询必须点明对象与观点).
+            # Confirmed claims are collective (no single seat owns one), so the
+            # only unambiguous "object" available here is the claim's statement.
+            claim_statement = str(
+                context.claim_statements.get(entry.claim_id, "")
+            ).strip()
             await handler.submit_challenge(entry)
             if entry.is_fatal:
                 blocked.append(str(entry.claim_id))
@@ -1727,6 +1735,7 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                     payload={
                         "seat": seat.value,
                         "claim_id": str(entry.claim_id),
+                        "claim_statement": claim_statement,
                         "statement": entry.challenge_statement,
                         "is_fatal": entry.is_fatal,
                     },
@@ -1734,11 +1743,17 @@ async def run_cross_examination(context: PhaseContext) -> PhaseOutcome:
                 )
             )
             severity = "致命" if entry.is_fatal else "非致命"
+            target = (
+                f"（针对主张：「{claim_statement}」）"
+                if claim_statement
+                else f"（针对主张 {entry.claim_id}）"
+            )
             events.append(
                 _confidence_marker(
                     context,
                     entry.claim_id,
-                    f"遭到 {seat.value} 的{severity}质询：{entry.challenge_statement}",
+                    f"遭到 {seat.value} 的{severity}质询{target}："
+                    f"{entry.challenge_statement}",
                     "challenge", seat.value, index,
                 )
             )

@@ -109,6 +109,40 @@ def _as_str(value: object) -> str:
     return "" if value is None else str(value)
 
 
+def _fallback_references(brief: ResearchBrief) -> tuple[PaperReference, ...]:
+    """References for the deterministic fallback paper.
+
+    The fallback has no model to resolve paper titles, so it reuses exactly
+    the literature the council already worked from: every admitted finding's
+    DOI, with the finding statement as the in-list label when no paper title
+    is available. The DOI stays clickable in the renderer, which is the only
+    honest reference an offline summary can produce -- it never invents a
+    title (用户点6h：论文总结部分补充参考文献，复用思考链路已引文献).
+    """
+    refs: list[PaperReference] = []
+    seen: set[str] = set()
+    for item in brief.findings:
+        payload = item.payload
+        doi = payload.get("doi")
+        doi_text = _as_str(doi) if doi is not None else ""
+        statement = _as_str(
+            payload.get("finding_statement") or payload.get("statement")
+        ).strip()
+        key = doi_text or str(item.node_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        title = statement or doi_text or str(item.node_id)
+        refs.append(
+            PaperReference(
+                id=str(item.node_id),
+                title=title[:120],
+                doi=doi_text or None,
+            )
+        )
+    return tuple(refs)
+
+
 def _parse_references(value: object) -> tuple[PaperReference, ...]:
     """Tolerantly parse the model's reference list.
 
@@ -137,6 +171,40 @@ def _parse_references(value: object) -> tuple[PaperReference, ...]:
                 id=ref_id,
                 title=title,
                 doi=None if doi is None else _as_str(doi),
+            )
+        )
+    return tuple(references)
+
+
+def _finding_references(brief: ResearchBrief) -> tuple[PaperReference, ...]:
+    """Build the fallback paper's reference list from admitted findings.
+
+    Round-24 「论文总结补充参考文献」: the deterministic fallback paper used to
+    ship an empty reference list even when the council had admitted findings
+    anchored to real DOIs. Each finding is the council's already-cited take on
+    one study, and its DOI is that study's identifier -- reuse it instead of
+    inventing titles. The title fallback is the DOI itself, which stays honest
+    (a DOI is a resolvable identifier; a guessed title would not be).
+    """
+    references: list[PaperReference] = []
+    seen: set[str] = set()
+    for item in brief.findings:
+        doi = item.payload.get("doi")
+        if not isinstance(doi, str) or not doi.strip():
+            continue
+        doi = doi.strip()
+        if doi in seen:
+            continue
+        seen.add(doi)
+        title = item.payload.get("source_title") or item.payload.get("title")
+        references.append(
+            PaperReference(
+                id=str(item.node_id),
+                title=(
+                    title if isinstance(title, str) and title.strip()
+                    else f"DOI {doi}"
+                ),
+                doi=doi,
             )
         )
     return tuple(references)
@@ -240,29 +308,34 @@ def _fallback_integrated_paper(
         PaperSection(heading="分歧与尚未回答的问题", paragraphs=tuple(controversy))
     )
 
-    # Round-12 「整合结论详细化」: the fallback must say just as clearly as
-    # the model path which positions were argued, where each is weak, and
-    # whether an overall view emerged -- assembled deterministically from the
-    # final judgments and consensus the ledger already holds. The wording
-    # addresses the subject matter, not the machinery: a reader should see
-    # the scientific positions, their supporting evidence, and their limits,
-    # not a tally of which "seat" said what.
+    # Round-24 「各方观点与缺陷必须为实质内容」: 确定性兜底没有模型可生成
+    # 逐席位的论证细节，但已采纳发现与终审结论都在账本里——把每席终审作为
+    # 「观点」、已采纳发现作为「支撑证据」、是否保留异议作为「缺陷/终审情况」，
+    # 逐块纵向呈现，而不是「该观点与主流结论不同…见正文」这类流程套话。
     standpoints: tuple[Standpoint, ...] = ()
     if judgments:
-        standpoints = tuple(
-            Standpoint(
-                seat=_seat_display(seat),
-                position=str(judgment),
-                weakness=(
-                    "该观点与主流结论不同；其理由与相关争议见正文「分歧与尚未回答的问题」部分。"
-                    if "持异议" in str(judgment)
-                    else "该观点的主要局限与反面证据见正文「分歧与尚未回答的问题」部分"
-                    "（离线汇总，不展开论证细节）"
-                ),
-                supporting_evidence=tuple(),
+        built_standpoints: list[Standpoint] = []
+        for seat, judgment in judgments:
+            judgment_text = str(judgment)
+            has_dissent = "持异议" in judgment_text
+            weakness = (
+                "终审保留异议：该观点未并入主流结论，作为独立意见保留。"
+                if has_dissent
+                else "终审未保留异议。"
             )
-            for seat, judgment in judgments
-        )
+            built_standpoints.append(
+                Standpoint(
+                    seat=_seat_display(seat),
+                    position=judgment_text,
+                    weakness=weakness,
+                    supporting_evidence=tuple(
+                        line.lstrip("- ")
+                        for line in finding_lines[:4]
+                        if isinstance(line, str)
+                    ),
+                )
+            )
+        standpoints = tuple(built_standpoints)
     overall: list[str] = []
     if consensus_lines:
         overall.append("综合各方面证据，可以得到如下总体判断：")
@@ -335,7 +408,9 @@ def _fallback_integrated_paper(
         process.append(
             f"缺席席位：{', '.join(_seat_display(seat) for seat in brief.absent_seats)}。"
         )
-    references: tuple[PaperReference, ...] = ()
+    # 参考文献复用思考链路已引用的文献：确定性兜底无法生成新引用，但可以
+    # 把已进入证据图的发现原文（带 DOI）作为可点击引用列出（round-12 反馈）。
+    references: tuple[PaperReference, ...] = _finding_references(brief)
 
     title = f"关于「{question}」的研究整合结论"
     overall_conclusion = _as_str(consensus.get("conditional_consensus")) or (
@@ -395,7 +470,29 @@ def _fallback_integrated_paper(
             f"**【结论】**：综合实证证据，{finding_lines[0].lstrip('- ')}。\n"
         )
     else:
-        abstract_parts.append("**【结论】**：现有实证证据尚不足以形成统一因果推断。\n")
+        # Round-24 「结论不得用回避套话」: 不能落入「现有实证证据尚不足以形成
+        # 统一因果推断」这类空话——研究者要的不是统一因果推断，而是各方观点与
+        # 全部影响因素都被表述出来。此处把已记录在案的盲点（尚未回答的问题）
+        # 与局限一并列出，让结论落在「已知什么、还未知什么」上，而不是一句
+        # 不表态的否定。
+        if blindspot_lines:
+            abstract_parts.append(
+                "**【结论】**：现有证据可确认的结论有限；"
+                "当前尚未回答的问题主要包括："
+                + "；".join(line.lstrip("- ") for line in blindspot_lines[:3])
+                + "。\n"
+            )
+        elif limitations:
+            abstract_parts.append(
+                "**【结论】**：在现有证据范围内，结论受以下局限约束："
+                + "；".join(limitations[:3])
+                + "。\n"
+            )
+        else:
+            abstract_parts.append(
+                "**【结论】**：本轮未记录到可支撑明确结论的已采纳发现；"
+                "需要更多原始研究方能判断。\n"
+            )
     abstract = "".join(abstract_parts)
     return FinalPaper(
         title=title,
@@ -718,6 +815,15 @@ def _build_user_prompt(
         "list the admitted evidence supporting it (supporting_evidence --",
         "quote the finding/claim statements below, never invent a source); and",
         "say how it differs from the other positions (disagreement).",
+        "SUBSTANCE RULE (critical): every standpoint's position, weakness,",
+        "supporting_evidence and disagreement must be REAL scientific content",
+        "-- the viewpoint itself, the admitted findings backing it, what the",
+        "council retrieved and judged for it, where its evidence is weak, and",
+        "how the final rejudgment treated it. FORBIDDEN filler such as 'two",
+        "confirmed claims merely restate the research question', 'this view",
+        "differs from the majority; see the disagreements section', or any",
+        "sentence describing the PROCESS instead of the POSITION. If a position",
+        "rests on no admitted finding, say exactly that and why.",
         "",
         "CONCLUSIONS: state clearly whether the evidence supports an overall",
         "conclusion and what it is (overall_conclusion), and list the admitted",
@@ -728,6 +834,15 @@ def _build_user_prompt(
         "as separate items, so a reader can see every viewpoint's evidence and",
         "limits without any process record. Never hide a minority position",
         "behind 'no consensus was reached'.",
+        "DO NOT refuse to take a position: even when viewpoints diverge or",
+        "boundaries are drawn, overall_conclusion MUST state the most confident,",
+        "specific conclusion the admitted evidence supports -- name the actual",
+        "answer, its direction and its strength -- and only THEN mention",
+        "remaining disagreements briefly at the end. A sentence like 'existing",
+        "evidence is insufficient to form a unified causal inference' or 'no",
+        "unified conclusion can be drawn' is an avoidance formula, not a",
+        "conclusion: the reader asked what all sides' views and all influencing",
+        "factors are, so state them concretely.",
         "",
         "investigation_process is the ONLY field allowed to narrate how the",
         "research ran (what was retrieved, what was refused, which steps were",
@@ -761,6 +876,14 @@ def _build_user_prompt(
         "(5) Conclusions and limitations side by side -- if no overall "
         "conclusion was reached, list every major position here as its own "
         "item with supporting evidence and limitations. "
+        "APPLICABILITY-BOUNDARY RULE (critical): every limitation or boundary "
+        "statement MUST first name WHOSE conclusion it bounds (which finding / "
+        "claim / position it applies to), then state the bound itself. A bare "
+        "'applies only to X' without naming its owner is unusable. "
+        "ORGANIZATION RULE (critical): boundaries and blindspots MUST be "
+        "organised vertically BY POSITION -- one position per block with its "
+        "own boundaries and blindspots listed under it -- never pooled into a "
+        "single global caveat dump. "
         "LOGICAL FLOW (critical): the sections must read as ONE continuous argument, not a "
         "stack of disconnected notes. Each section must open by connecting to the previous one "
         "and close by setting up the next. Do not jump between topics -- finish one point "

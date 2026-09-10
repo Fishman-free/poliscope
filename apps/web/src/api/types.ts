@@ -273,6 +273,7 @@ export interface SeatPrecommitment {
 /** One seat's challenge, straight off ``CHALLENGE_RAISED``. */
 export interface SeatChallenge {
   claim_id: string | null;
+  claim_statement: string | null;
   statement: string | null;
   is_fatal: boolean | null;
 }

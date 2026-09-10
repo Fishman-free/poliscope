@@ -24,7 +24,9 @@ function statementOf(node: BriefNode): string {
     const value = node.payload[key];
     if (typeof value === "string" && value) return value;
   }
-  return `${node.node_type} ${node.id.slice(0, 8)}`;
+  // 无任何文本字段时给一个可读兜底，绝不把内部 node_type / 短 id 泄漏给
+  // 研究者（round-8 用户反馈：界面出现 "StudyFinding 8d0a6ff7" 这类乱码）。
+  return t("（未命名节点）");
 }
 
 function NodeList({ nodes, empty }: { nodes: BriefNode[]; empty: string }) {

@@ -383,7 +383,7 @@ function BlindspotDetail({
               <NodeChip
                 key={source.id}
                 node={source}
-                label={str(source.payload, "title") || source.id.slice(0, 8)}
+                label={str(source.payload, "title") || t("查看来源节点")}
                 onSelect={onSelect}
               />
             ))}

@@ -143,6 +143,17 @@ PHASE_MODEL_CLASSES: dict[TaskPhase, ModelClass] = {
 # nuclear-plant instrument reliability. The round retrieves whatever the
 # seat asks for, so relevance has to be enforced where the requests are born.
 PHASE_INSTRUCTIONS: dict[TaskPhase, str] = {
+    TaskPhase.CROSS_EXAMINATION: (
+        "Cross-examination constraints for this round:\n"
+        "1. Every challenge MUST name whose claim it targets: quote the "
+        "claim's statement (the viewpoint) before challenging it -- never "
+        "reference a claim only by id.\n"
+        "2. Every challenge MUST restate the specific viewpoint being "
+        "challenged, then say exactly what is wrong with it and why.\n"
+        "3. Use is_fatal=true only when the flaw cannot be repaired by "
+        "narrowing scope or adding a qualifier; otherwise challenge "
+        "non-fatally.\n"
+    ),
     TaskPhase.ACQUISITION: (
         "Evidence-retrieval constraints for this round:\n"
         "1. Every request must bear directly on the research question or a "

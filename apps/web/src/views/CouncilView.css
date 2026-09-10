@@ -41,6 +41,10 @@
   font-size: var(--text-small);
   color: var(--ink-2);
   line-height: 1.45;
+  /* 模型的判断/条件文本带 \n 分段，默认 white-space 会折叠成空格，导致
+     整段挤成一坨；pre-wrap 保留换行与空格，按原文分段呈现（round-8 反馈）。 */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .council__confidence {
@@ -143,6 +147,9 @@
   font-size: var(--text-small);
   color: var(--ink-2);
   line-height: 1.45;
+  /* 质询语句与缺席原因带 \n 分段，折叠成空格会读成一坨（round-8 反馈）。 */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 最终立场汇总：七位科学家独立复判并排，非投票裁决（CLAUDE.md 4）。 */
@@ -208,10 +215,10 @@
   font-size: var(--text-small);
   line-height: 1.5;
   margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* 最终复判全文须完整分段呈现；旧 line-clamp:4 硬截断到 4 行，读者看不到
+     后面的判断（round-8 反馈：七人议会状态方框显示乱且被截断）。 */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .council__stance-text--missing {
@@ -231,6 +238,9 @@
 .council__consensus-text {
   line-height: 1.65;
   margin: var(--space-2) 0;
+  /* 条件化共识文本带 \n 分段，保留换行否则整段挤成一坨。 */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .council__consensus h5 {
