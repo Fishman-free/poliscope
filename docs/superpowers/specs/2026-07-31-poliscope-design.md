@@ -203,9 +203,9 @@ MemoBrain 的 `ReasoningGraph`、`Flush`、`Fold`、`Recall` 是为**一个** Ag
     → JOINT_MODELING → FINAL_REJUDGMENT → REPORTING
 ```
 
-`AWAITING_COUNCIL_INPUT` 期间，编排器已跑过的阶段产物（各阶段的 `carry` 累积状态）会被序列化保存，供续跑时重建联合建模所需的上下文，不需要从头重跑前 5 轮。默认宽限期为 120 秒，可通过 `POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS` 配置；配置必须是有限数字且不得短于 30 秒。Worker 在服务端轮询中过期等待任务，因此浏览器进入后台或关闭不会阻止研究继续。
+`AWAITING_COUNCIL_INPUT` 期间，编排器已跑过的阶段产物（各阶段的 `carry` 累积状态）会被序列化保存，供续跑时重建联合建模所需的上下文，不需要从头重跑前 5 轮。默认宽限期为 900 秒（15 分钟），可通过 `POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS` 配置；配置必须是有限数字且不得短于 30 秒。Worker 在服务端轮询中过期等待任务，因此浏览器进入后台或关闭不会阻止研究继续。
 
-自动续跑只把仍处于 `AWAITING_COUNCIL_INPUT` 且具有合法 checkpoint 的任务原子地置回 `QUEUED`；checkpoint 内容保持不变，`guidance` 保持 `None`，不得伪装成研究者明确提交的空意见。研究者在宽限期内提交的意见优先：人工路径先把状态置为 `QUEUED` 后，自动路径的条件更新不再匹配。所有状态变更必须刷新 `updated_at`，使宽限从真正进入等待态的时刻开始计算。该服务端调度行为不写 Evidence Graph、不改变 Evidence Gate，也不把待调查盲点冒充已证实结论。
+自动续跑只把仍处于 `AWAITING_COUNCIL_INPUT` 且具有合法 checkpoint 的任务原子地置回 `QUEUED`；checkpoint 内容保持不变，`guidance` 保持 `None`，不得伪装成研究者明确提交的空意见。研究者在宽限期内提交的意见优先：人工路径先把状态置为 `QUEUED` 后，自动路径的条件更新不再匹配。所有状态变更必须刷新 `updated_at`，使宽限从真正进入等待态的时刻开始计算。**此处必须用 `clock_timestamp()` 而非 `now()`**：`now()` 等价于 `transaction_timestamp()`，取的是事务开始时刻；而 Worker 是在跑完整个议会的**同一个长事务**内把状态置为 `AWAITING_COUNCIL_INPUT` 的，用 `now()` 记下的是认领任务的时刻。任何耗时超过宽限期的议会都会在停下的瞬间即被判定过期，被自动续跑抢先，研究者提交备注时只会收到 409——而界面上完全看不出发生了什么。该服务端调度行为不写 Evidence Graph、不改变 Evidence Gate，也不把待调查盲点冒充已证实结论。
 
 **API 契约：**
 

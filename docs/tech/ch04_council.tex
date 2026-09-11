@@ -72,4 +72,4 @@ EpistemoBrain 本身是\textbf{无投票权的组织脑}：它负责调度、记
 
 盲点悬赏结束、联合建模开始之前，任务进入 \code{AWAITING\_COUNCIL\_INPUT}：研究者可以查看七席此刻的立场（预承诺、置信度、已提质询），提交一段方向性备注，也可以明确留空。这个检查点有四条边界，保证它不违反「禁止投票」：它是单一研究者的调度性输入而非票数；只影响下一轮重点讨论哪些冲突；不改变任何证据门判定；不会作为证据进入任何正式节点。备注在联合建模提示词中以独立、显式标注的文本块注入（如「[研究者方向性备注，非科学判断]：……」）。
 
-研究者离开页面不会卡住任务：宽限期默认 300 秒（环境变量全名见附录 A.4，下限 30 秒），届满自动以「无干预」回到队列续跑。实现横跨状态枚举、\code{CouncilCheckpoint.guidance} 字段、预览与引导两个 API 端点（\code{council-preview}、\code{council-guidance}）、CLI 子命令与前端 \code{CheckpointGate.tsx}。
+研究者离开页面不会卡住任务：宽限期默认 900 秒（15 分钟；环境变量全名见附录 A.4，下限 30 秒），届满自动以「无干预」回到队列续跑。实现横跨状态枚举、\code{CouncilCheckpoint.guidance} 字段、预览与引导两个 API 端点（\code{council-preview}、\code{council-guidance}）、CLI 子命令与前端 \code{CheckpointGate.tsx}。
