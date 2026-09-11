@@ -697,7 +697,12 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
 
 
 def test_council_input_grace_configuration_is_bounded_and_validated() -> None:
-    assert _council_input_grace_seconds({}) == 300.0
+    # 900 s (15 min) is the shipping default: a council that runs long enough to
+    # get here has already burned real wall-clock, and the researcher needs a
+    # window they can actually answer in. Mirrors
+    # DEFAULT_COUNCIL_INPUT_GRACE_SECONDS in apps/worker/main.py and the
+    # countdown in apps/web/src/views/CheckpointGate.tsx.
+    assert _council_input_grace_seconds({}) == 900.0
     assert _council_input_grace_seconds(
         {"POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS": "45"}
     ) == 45.0
@@ -720,12 +725,19 @@ async def test_set_status_refreshes_updated_at(
         )
         await session.commit()
 
+    # Both bounds are sampled in their OWN short transactions. ``func.now()`` is
+    # the calling transaction's start time, so a bound read inside the writing
+    # transaction would be that transaction's start -- earlier than the
+    # ``clock_timestamp()`` stamp set_status writes, which would make a correct
+    # stamp look like it came from the future.
     async with app_sessions() as session:
         before = await session.scalar(select(func.now()))
+    async with app_sessions() as session:
         await ResearchRepository(session).set_status(
             task_id, TaskStatus.AWAITING_COUNCIL_INPUT
         )
         await session.commit()
+    async with app_sessions() as session:
         row = await session.scalar(
             select(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
         )
@@ -734,6 +746,54 @@ async def test_set_status_refreshes_updated_at(
     assert row is not None
     assert before is not None and after is not None
     assert before <= row.updated_at <= after
+
+
+async def test_set_status_stamps_wall_clock_not_transaction_start(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Regression: a long-running transaction must not backdate ``updated_at``.
+
+    The worker halts at the AWAITING_COUNCIL_INPUT checkpoint inside the SAME
+    transaction that just ran the whole council, so writing ``func.now()``
+    (``transaction_timestamp()``) there stamps the *transaction start* -- when
+    the task was claimed -- rather than the halt. A council that took longer
+    than the grace window then looked already-expired the instant it parked, and
+    the worker auto-resumed it before the researcher could type: the reported
+    "guidance rejected: task … is RUNNING, not AWAITING_COUNCIL_INPUT".
+
+    Ages a transaction with ``pg_sleep`` before the status write; the sleep
+    stands in for the council's runtime. With ``func.now()`` the stamp lands
+    ``SLEEP`` seconds before commit; with the ``clock_timestamp()`` that
+    ``set_status`` uses it lands at the write. Asserting the age is far below
+    ``SLEEP`` is what separates the two -- ``test_set_status_refreshes_updated_at``
+    cannot, because its transaction is milliseconds old.
+    """
+    sleep_seconds = 3.0
+    task_id, _ = await _seed_queued_task(app_sessions)
+    async with app_sessions() as session:
+        # Opens the transaction; every later now() in it is pinned to this.
+        await session.execute(text(f"select pg_sleep({sleep_seconds})"))
+        await ResearchRepository(session).set_status(
+            task_id, TaskStatus.AWAITING_COUNCIL_INPUT
+        )
+        await session.commit()
+
+    async with app_sessions() as session:
+        row = await session.scalar(
+            select(ResearchTaskModel).where(ResearchTaskModel.task_id == task_id)
+        )
+        database_now = await session.scalar(select(func.now()))
+
+    assert row is not None
+    assert database_now is not None
+    age = (database_now - row.updated_at).total_seconds()
+    # Well under the sleep: the stamp is commit time, not transaction start.
+    # Half the sleep leaves room for a slow CI clock without ever accepting the
+    # backdated value (which would be >= sleep_seconds).
+    assert age < sleep_seconds / 2, (
+        f"updated_at is {age:.2f}s old after a {sleep_seconds:.0f}s transaction; "
+        "set_status stamped the transaction start instead of the write"
+    )
 
 
 async def test_expired_council_input_auto_resumes_without_fake_guidance(

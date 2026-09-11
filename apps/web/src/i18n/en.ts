@@ -744,4 +744,5 @@ export const en: Record<string, string> = {
   "提醒开发者补充额度": " to ask for more quota",
   "议会正在运行，席位实时输出即将出现；已完成阶段的结论可在「研究简报」查看。": "The council is running; live seat output will appear shortly. Conclusions from completed phases are available in the Research Brief.",
   "建议使用deepseek官方api，以获得最佳的流式思考链体验": "We recommend using the official DeepSeek API for the best streaming chain-of-thought experience.",
+  "议会已不在等待输入状态（通常是等待超时后已自动继续运行）；本次备注未能注入，页面即将刷新到最新进展。": "The council is no longer waiting for input (usually because the grace period expired and it resumed automatically). Your note was not submitted; the page will refresh to the latest progress.",
 };

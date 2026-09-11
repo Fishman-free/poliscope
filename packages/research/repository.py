@@ -383,10 +383,30 @@ class ResearchRepository:
         # count is what distinguishes "set it" from "no such task". Refreshing
         # updated_at makes it the durable start time for status-based recovery
         # windows such as AWAITING_COUNCIL_INPUT's server-side grace period.
+        #
+        # ``updated_at`` must be the *real wall-clock time* of this status
+        # change, not PostgreSQL's transaction-start time. The worker halts at
+        # the AWAITING_COUNCIL_INPUT checkpoint inside the SAME long-running
+        # transaction that already ran the whole council, so ``func.now()``
+        # (== ``transaction_timestamp()``) there returns that transaction's
+        # start -- the moment the task was claimed, not the moment it halted. A
+        # council that took longer than the grace window (15 min) then looked
+        # already-expired the instant it parked, and the worker auto-resumed it
+        # before the researcher could type: the reported "提交方向性备注被拒：
+        # task … is RUNNING, not AWAITING_COUNCIL_INPUT".
+        #
+        # ``clock_timestamp()`` advances inside a transaction, so it stamps the
+        # actual write. It is deliberately preferred over a Python clock: the
+        # reader that consumes this column (``resume_expired_council_inputs`` in
+        # apps/worker/main.py, and ``recover_stale_running``) compares against
+        # ``now()`` -- the *database* clock. Stamping from the app host would
+        # put the two sides in different clock domains and reintroduce the bug
+        # as soon as the hosts drift (measured ~100 ms apart in CI, where the
+        # database runs in a container).
         result = cast(CursorResult[Any], await self._session.execute(
             update(ResearchTaskModel)
             .where(ResearchTaskModel.task_id == task_id)
-            .values(status=status, updated_at=func.now())
+            .values(status=status, updated_at=func.clock_timestamp())
         ))
         if result.rowcount == 0:
             raise TaskNotFound(str(task_id))

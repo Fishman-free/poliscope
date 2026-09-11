@@ -16,7 +16,7 @@
 
 import { useEffect, useState } from "react";
 
-import { submitCouncilGuidance } from "../api/client";
+import { ApiError, submitCouncilGuidance } from "../api/client";
 import type { Seat, SeatSummary } from "../api/types";
 import { SEAT_LABELS } from "../api/types";
 import { Badge, Empty, Panel } from "../components/primitives";
@@ -24,11 +24,15 @@ import { t } from "../i18n";
 
 import "./CheckpointGate.css";
 
-/** Countdown to the worker's automatic resume (default 5-minute grace). The
- * clock starts when the researcher first sees the gate; the server is the
- * authority and the SSE refresh swaps this panel away the moment it resumes. */
+/** Countdown to the worker's automatic resume. Must match the worker's
+ * ``DEFAULT_COUNCIL_INPUT_GRACE_SECONDS = 900`` (15 minutes, apps/worker/
+ * main.py) -- a shorter local countdown would claim the run resumed while
+ * the server is still waiting, and a longer one would promise time the
+ * worker will not give. The clock starts when the researcher first sees the
+ * gate; the server is the authority and the SSE refresh swaps this panel
+ * away the moment it resumes. */
 function AutoResumeHint() {
-  const [left, setLeft] = useState(300);
+  const [left, setLeft] = useState(900);
   useEffect(() => {
     const id = window.setInterval(
       () => setLeft((value) => Math.max(0, value - 1)),
@@ -68,8 +72,24 @@ export function CheckpointGate({
       await submitCouncilGuidance(taskId, text);
       onSubmitted();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      const message = cause instanceof Error ? cause.message : String(cause);
+      // 409 意味着任务已离开 AWAITING_COUNCIL_INPUT：最常见的原因是宽限期
+      // 到期后 worker 已自动续跑并转回 RUNNING，也可能是另一个窗口先提交了
+      // 备注，或任务已失败/取消。无论何种原因，这个请求都不可能再成功 ——
+      // 继续留在检查点只会让研究者反复提交一个注定失败的表单。给出明确原
+      // 因后刷新快照，让检查点随状态自然卸载，而不是把研究者卡死在输入框上。
+      const resumed = cause instanceof ApiError && cause.status === 409;
+      setError(
+        resumed
+          ? t(
+              "议会已不在等待输入状态（通常是等待超时后已自动继续运行）；本次备注未能注入，页面即将刷新到最新进展。",
+            )
+          : message,
+      );
       setSubmitting(false);
+      if (resumed) {
+        window.setTimeout(() => onSubmitted(), 1200);
+      }
     }
   }
 
