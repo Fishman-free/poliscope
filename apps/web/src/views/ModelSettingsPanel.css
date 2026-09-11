@@ -120,6 +120,19 @@
   color: var(--ink-3);
 }
 
+/* 流式思考链体验推荐提示：置于面板顶部，绿色强调「推荐」语义，
+   与表单其他说明的灰色区分，但不喧宾夺主。 */
+.settings__recommend {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-small);
+  line-height: 1.5;
+  color: var(--admitted);
+  background: color-mix(in srgb, var(--admitted) 8%, transparent);
+  border-left: 3px solid var(--admitted);
+  border-radius: var(--radius-2);
+}
+
 .settings__note {
   font-size: var(--text-micro);
   color: var(--ink-3);

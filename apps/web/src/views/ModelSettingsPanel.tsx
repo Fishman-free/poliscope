@@ -172,6 +172,11 @@ export function ModelSettingsPanel() {
       title={t("模型设置")}
       subtitle={t("保存一次，之后创建的任务自动使用")}
     >
+      {/* 流式思考链体验提示：DeepSeek 官方 API 的流式输出最稳定完整，
+          兼容/中转端点常缺推理链字段，故在模型设置旁显著提示。 */}
+      <p className="settings__recommend">
+        {t("建议使用deepseek官方api，以获得最佳的流式思考链体验")}
+      </p>
       {/* 加载失败也必须可见：错误的、没加载出来的面板不能伪装成「没有
           面板」。错误信息渲染在表单外层，任何状态都看得到。 */}
       {error ? (

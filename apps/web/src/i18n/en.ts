@@ -743,4 +743,5 @@ export const en: Record<string, string> = {
   "如果免费体验功能无法使用，请邮件联系开发者邮箱": "If the free trial is unavailable, email the developer at ",
   "提醒开发者补充额度": " to ask for more quota",
   "议会正在运行，席位实时输出即将出现；已完成阶段的结论可在「研究简报」查看。": "The council is running; live seat output will appear shortly. Conclusions from completed phases are available in the Research Brief.",
+  "建议使用deepseek官方api，以获得最佳的流式思考链体验": "We recommend using the official DeepSeek API for the best streaming chain-of-thought experience.",
 };
