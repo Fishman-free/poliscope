@@ -162,3 +162,52 @@ async def test_final_rejudgment_no_confirmed_claims_emits_no_marker() -> None:
     outcome = await run_final_rejudgment(_context((), outputs))
 
     assert _confidence_events(outcome.events) == []
+
+
+def _judgment_events(
+    events: tuple[EmittedEvent, ...],
+) -> dict[str, EmittedEvent]:
+    return {
+        str(event.payload["seat"]): event
+        for event in events
+        if event.event_type == "FINAL_JUDGMENT"
+    }
+
+
+async def test_final_judgment_carries_the_confidence_each_seat_reported() -> None:
+    """The Council panel puts a seat's precommitment confidence next to its
+    final one so a reader can see whether cross-examination moved it. That
+    comparison only means anything if the final number is the seat's own:
+    FinalRejudgmentHandler used to hardcode 0.5 for every seat, which made the
+    panel compare a measurement against a constant."""
+    outputs: dict[Seat, Mapping[str, object]] = {
+        Seat.THEORY_BUILDER: {
+            "final_judgment": "narrowed, not withdrawn",
+            "confidence": 0.8,
+        },
+        Seat.CAUSAL_SCIENTIST: {
+            "final_judgment": "still unsupported",
+            "confidence": "0.35",
+        },
+    }
+
+    outcome = await run_final_rejudgment(_context((uuid4(),), outputs))
+
+    events = _judgment_events(outcome.events)
+    assert events[Seat.THEORY_BUILDER.value].payload["confidence"] == 0.8
+    # A numeric string is a reported number, not a missing one.
+    assert events[Seat.CAUSAL_SCIENTIST.value].payload["confidence"] == 0.35
+
+
+async def test_final_judgment_without_a_reported_confidence_records_none() -> None:
+    """A seat that stayed silent about its confidence gets None, not a
+    default. The panel renders that as 未记录; a substituted number would be
+    indistinguishable from one the seat actually gave (CLAUDE.md 16)."""
+    outputs = {
+        Seat.THEORY_BUILDER: {"final_judgment": "narrowed, not withdrawn"},
+    }
+
+    outcome = await run_final_rejudgment(_context((uuid4(),), outputs))
+
+    events = _judgment_events(outcome.events)
+    assert events[Seat.THEORY_BUILDER.value].payload["confidence"] is None

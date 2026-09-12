@@ -190,6 +190,25 @@ FINAL_JUDGMENT: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
         "final_judgment": {"type": "string"},
+        # Asked for the same way PRECOMMITMENT_OUTPUT asks for it, and for the
+        # same reason: a seat committing to a position states how sure it is,
+        # and the Council panel puts that next to its precommitment so a reader
+        # can see whether cross-examination moved it. Before this field
+        # existed, FinalRejudgmentHandler hardcoded 0.5 for every seat, so the
+        # panel compared a real number against a constant and the comparison
+        # carried no information.
+        # Deliberately not in "required": the structured-output validator
+        # rejects the whole payload when a required field is missing, so
+        # requiring this would discard a seat's entire final judgment just
+        # because it omitted the number. Optional costs us "未记录" instead of
+        # the judgment, which is the right way round.
+        "confidence": {
+            "type": "number",
+            "description": (
+                "0 to 1. How confident you are in this final judgment, on the "
+                "same scale you used at precommitment."
+            ),
+        },
     },
     "required": ["final_judgment"],
 }

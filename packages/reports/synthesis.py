@@ -747,10 +747,14 @@ async def _load_final_judgments(
         confidence = payload.get("confidence")
         dissent = payload.get("has_dissent")
         suffix = "（持异议）" if dissent is True else ""
+        # A seat that did not report a confidence gets no number here. The
+        # frontend already renders the same case as 未记录; an empty
+        # "（置信度：）" would read as a value that failed to print.
+        recorded = "未记录" if confidence is None else _as_str(confidence)
         judgments.append(
             (
                 seat,
-                f"{judgment}（置信度：{_as_str(confidence)}{suffix}）",
+                f"{judgment}（置信度：{recorded}{suffix}）",
             )
         )
     return tuple(judgments)

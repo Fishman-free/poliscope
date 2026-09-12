@@ -771,8 +771,29 @@ def _confidence_marker(
     )
 
 
+def _optional_float(value: object) -> float | None:
+    """Parse a model-reported number, or None when it did not report one.
+
+    ``None`` and ``0.0`` are different answers, and so are ``None`` and a
+    default: a seat that stayed silent about its confidence did not report
+    zero confidence and did not report the default either.
+    """
+    if isinstance(value, bool):
+        # bool is an int subclass; True is not confidence 1.0.
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _float(value: object, default: float = 0.5) -> float:
-    return float(value) if isinstance(value, (int, float, str)) else default
+    parsed = _optional_float(value)
+    return default if parsed is None else parsed
 
 
 def _decimal(value: object, default: str = "0.5") -> Decimal:
@@ -2076,6 +2097,15 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
         seat: str(output.get("final_judgment", ""))
         for seat, output in outputs.items()
     }
+    # Only a seat that answered *this* round has a this-round confidence. The
+    # precommitment fallback below carries a judgment from an earlier phase,
+    # and handing its confidence to this phase would report a number the seat
+    # never gave here.
+    confidences = {
+        seat: parsed
+        for seat, output in outputs.items()
+        if (parsed := _optional_float(output.get("confidence"))) is not None
+    }
     if not judgments and isinstance(initial, Mapping):
         # Read back with str keys (see run_precommitment's carry comment) and
         # convert to Seat here, where FinalRejudgmentInput needs it.
@@ -2110,6 +2140,7 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
             # the `if not judgments` early return above already guarantees
             # non-empty, and context.seats is the honest fallback anyway.
             seats=tuple(judgments) or context.seats,
+            confidences=confidences,
         )
     )
     events = [
