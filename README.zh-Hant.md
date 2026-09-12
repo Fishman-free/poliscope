@@ -82,7 +82,7 @@ EpistemoBrain 把它推廣到多智能體：當記憶的所有者從「寫它的
 - **思考鏈路可見，思維鏈不裸奔**：原始推理折疊在輪次下，標註「過程資料，不是證據」。
 - **相關不自動升級為因果**：橫截面資料 + 因果主張的組合被證據門攔截。
 - **跑完有一份可下載的最終論文**：整合七席終審與參考文獻，可匯出 Markdown。
-- **四個入口，一套內核**：網頁 / API / CLI / Agent Skill 走同一條研究契約，沒有第二條繞過證據門的路徑。
+- **四個入口，一套協議**：網頁 / API / CLI 與 Agent Skill 跑同一套七輪議會協議與證據規則。前三者把證據門做進資料庫權限（事件帳本 + 單一寫入者 Graph Projector），Agent Skill 把同一套規則跑在你自己 Agent 的核心裡，產出直接寫進你的倉庫。
 
 ## 四、產品能力
 
@@ -112,7 +112,7 @@ EpistemoBrain 把它推廣到多智能體：當記憶的所有者從「寫它的
 
 ### 2. 程式設計 Agent（Skill）
 
-在 Claude Code / Codex 裡直接呼叫，無需切換網頁。**只需 Node 18+，不用複製倉庫、不用自建 Python 環境。**
+在 Claude Code / Codex 裡直接呼叫。**不用註冊、不用登入、不用連伺服器、不用自建 Python 環境**——只需 Node 18+。
 
 **裝 skill（一條命令）：**
 
@@ -120,30 +120,31 @@ EpistemoBrain 把它推廣到多智能體：當記憶的所有者從「寫它的
 npx github:Fishman-free/poliscope install-skill
 ```
 
-裝到 `~/.claude/skills/poliscope/`。**重啟 Agent**，然後輸入 `/poliscope` 就能用。
-
-**怎麼呼叫：**
+裝到 `~/.claude/skills/poliscope/`。**重啟 Agent**，然後：
 
 ```
 /poliscope 幫我研究：青少年社群媒體使用是否導致憂鬱症狀？
 ```
 
-Skill 會帶著你走完整條流程：整理成 Research Contract → **先給你確認，不直接提交** → `poliscope start` → `confirm-claims` 挑要查的主張 → `watch` 跟到跑完 → 把證據地圖、議會紀錄、每位科學家的立場匯出到你的倉庫。
+**它是怎麼跑的：** 七名科學家由你 Agent 自己的子智慧體擔任，檢索用你 Agent 自己的聯網工具，整條七輪協議在你這次工作階段裡跑完。不連任何外部服務，不消耗任何 Poliscope 帳號額度，模型就是你正在用的這一個。
 
-連線上實例（`https://poliscope.tech`）前先登入一次：
+結果寫進你自己的倉庫：
 
-```bash
-npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+```
+docs/poliscope/<slug>/
+├── README.md      索引：結論、缺口、這裡面有什麼
+├── contract.md    Research Contract（你確認過的那一版）
+├── brief.md       30 秒簡報
+├── evidence.json  可機器校驗的證據圖
+├── evidence.md    證據地圖
+├── council.md     七輪議會紀錄
+├── blindspots.md  盲點雷達
+├── dissent.md     異議證書
+├── paper.md       最終論文
+└── scientists/    每位科學家的立場軌跡
 ```
 
-**不裝 skill、只用命令列也行：**
-
-```bash
-npx github:Fishman-free/poliscope --help          # 全部子命令
-npx github:Fishman-free/poliscope health          # 探活
-npx github:Fishman-free/poliscope status <task>   # 看任務
-npx github:Fishman-free/poliscope export <task>   # 匯出結果
-```
+流程在兩個地方停下來等你：**開工前**給你看 Research Contract（不確認不下場），**第五輪後**給你看七人立場與盲點清單，等你給方向或直接放行。
 
 **裝到別處 / 覆蓋既有版本：**
 
@@ -152,7 +153,16 @@ npx github:Fishman-free/poliscope install-skill --dir <技能目錄>
 npx github:Fishman-free/poliscope install-skill --force
 ```
 
-完整用法見 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
+**要用帶資料庫級審計的完整版**（事件帳本、Graph Projector 單一寫入者、資料庫權限強制的證據門），走網頁或命令列連線上實例；命令列首次使用前登入一次：
+
+```bash
+npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+npx github:Fishman-free/poliscope health          # 探活
+npx github:Fishman-free/poliscope status <task>   # 看任務
+npx github:Fishman-free/poliscope export <task>   # 匯出結果
+```
+
+全部子命令見 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
 ## 六、請誠實對待它的結論
 

@@ -82,7 +82,7 @@ EpistemoBrain 把它推广到多智能体：当记忆的所有者从「写它的
 - **思考链路可见，思维链不裸奔**：原始推理折叠在轮次下，标注「过程数据，不是证据」。
 - **相关不自动升级为因果**：横截面数据 + 因果主张的组合被证据门拦截。
 - **跑完有一份可下载的最终论文**：整合七席终审与参考文献，可导出 Markdown。
-- **四个入口，一套内核**：网页 / API / CLI / Agent Skill 走同一条研究契约，没有第二条绕过证据门的路径。
+- **四个入口，一套协议**：网页 / API / CLI 与 Agent Skill 跑同一套七轮议会协议与证据规则。前三者把证据门做进数据库权限（事件账本 + 单一写入者 Graph Projector），Agent Skill 把同一套规则跑在你自己 Agent 的内核里，产出直接写进你的仓库。
 
 ## 四、产品能力
 
@@ -112,7 +112,7 @@ EpistemoBrain 把它推广到多智能体：当记忆的所有者从「写它的
 
 ### 2. 编程 Agent（Skill）
 
-在 Claude Code / Codex 里直接调用，无需切换网页。**只需 Node 18+，不用克隆、不用建 Python 环境。**
+在 Claude Code / Codex 里直接调用。**不用注册、不用登录、不用连服务器、不用建 Python 环境**——只需 Node 18+。
 
 **装 skill（一条命令）：**
 
@@ -120,30 +120,31 @@ EpistemoBrain 把它推广到多智能体：当记忆的所有者从「写它的
 npx github:Fishman-free/poliscope install-skill
 ```
 
-装到 `~/.claude/skills/poliscope/`。**重启 Agent**，然后输入 `/poliscope` 就能用。
-
-**怎么调用：**
+装到 `~/.claude/skills/poliscope/`。**重启 Agent**，然后：
 
 ```
 /poliscope 帮我研究：青少年社交媒体使用是否导致抑郁症状？
 ```
 
-Skill 会带着你走完整条流水线：整理成 Research Contract → **先给你确认，不直接提交** → `poliscope start` → `confirm-claims` 挑要查的主张 → `watch` 跟到跑完 → 把证据地图、议会记录、每位科学家的立场导出到你的仓库。
+**它是怎么跑的：** 七名科学家由你 Agent 自己的子智能体担任，检索用你 Agent 自己的联网工具，整条七轮协议在你这次会话里跑完。不连任何外部服务，不消耗任何 Poliscope 账号额度，模型就是你正在用的这个。
 
-连线上实例（`https://poliscope.tech`）前先登录一次：
+结果写进你自己的仓库：
 
-```bash
-npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+```
+docs/poliscope/<slug>/
+├── README.md      索引：结论、缺口、这里面有什么
+├── contract.md    Research Contract（你确认过的那一版）
+├── brief.md       30 秒简报
+├── evidence.json  可机器校验的证据图
+├── evidence.md    证据地图
+├── council.md     七轮议会记录
+├── blindspots.md  盲点雷达
+├── dissent.md     异议证书
+├── paper.md       最终论文
+└── scientists/    每位科学家的立场轨迹
 ```
 
-**不装 skill、只用命令行也行：**
-
-```bash
-npx github:Fishman-free/poliscope --help          # 全部子命令
-npx github:Fishman-free/poliscope health          # 探活
-npx github:Fishman-free/poliscope status <task>   # 看任务
-npx github:Fishman-free/poliscope export <task>   # 导出结果
-```
+流程在两个地方停下来等你：**开工前**给你看 Research Contract（不确认不下场），**第五轮后**给你看七人立场与盲点清单，等你给方向或直接放行。
 
 **装到别处 / 覆盖已有版本：**
 
@@ -152,7 +153,16 @@ npx github:Fishman-free/poliscope install-skill --dir <技能目录>
 npx github:Fishman-free/poliscope install-skill --force
 ```
 
-完整用法见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
+**要用带数据库级审计的完整版**（事件账本、Graph Projector 单一写入者、数据库权限强制的证据门），走网页或命令行连线上实例；命令行首次使用前登录一次：
+
+```bash
+npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+npx github:Fishman-free/poliscope health          # 探活
+npx github:Fishman-free/poliscope status <task>   # 看任务
+npx github:Fishman-free/poliscope export <task>   # 导出结果
+```
+
+全部子命令见 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
 ## 六、请诚实对待它的结论
 

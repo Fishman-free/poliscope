@@ -82,7 +82,7 @@ EpistemoBrain generalizes that to multiple agents. Once the owner of a memory ch
 - **The reasoning chain is visible, the chain-of-thought is not exposed**: raw model reasoning is collapsed under each round and labeled "process data, not evidence."
 - **Correlation does not automatically upgrade to causation**: cross-sectional data + causal claim is intercepted by the evidence gate.
 - **A downloadable final paper**: the seven seats' final judgments and references are synthesized into a structured paper, exportable as Markdown.
-- **Four entrances, one core**: web / API / CLI / Agent Skill all go through the same research contract — no second path bypasses the evidence gate.
+- **Four entrances, one protocol**: web / API / CLI and the Agent Skill all run the same seven-round council protocol and evidence rules. The first three enforce the gate in database privileges (event ledger + single-writer Graph Projector); the Agent Skill runs the same rules inside your own agent and writes its artifacts into your repository.
 
 ## 4. Capabilities
 
@@ -112,7 +112,7 @@ Deep research has one **bounded human checkpoint** before joint modeling: after 
 
 ### 5.2 From a Coding Agent (Skill)
 
-Call Poliscope directly from Claude Code / Codex, without switching to the web. **Node 18+ is the only requirement** — no clone, no Python environment of your own.
+Call Poliscope directly from Claude Code / Codex. **No sign-up, no login, no server, no Python environment** — Node 18+ is the only requirement.
 
 **Install the skill (one command):**
 
@@ -120,30 +120,31 @@ Call Poliscope directly from Claude Code / Codex, without switching to the web. 
 npx github:Fishman-free/poliscope install-skill
 ```
 
-This copies it into `~/.claude/skills/poliscope/`. **Restart your agent**, then type `/poliscope`.
-
-**How to invoke it:**
+This copies it into `~/.claude/skills/poliscope/`. **Restart your agent**, then:
 
 ```
 /poliscope research whether adolescent social media use causes depressive symptoms
 ```
 
-The Skill walks the whole pipeline with you: the Research Contract is generated for your confirmation (**shown first, never submitted directly**) → `poliscope start` → `confirm-claims` to pick which claims to investigate → `watch` to completion → exports the evidence map, council record, and every scientist's position into your own repository.
+**How it runs:** the seven scientists are your agent's own subagents, evidence retrieval uses your agent's own web tools, and the whole seven-round protocol runs inside this session. Nothing is sent to an external service, no Poliscope account quota is consumed, and the model is the one you are already talking to.
 
-Log in once before using a deployed instance (`https://poliscope.tech`):
+Results are written into your own repository:
 
-```bash
-npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+```
+docs/poliscope/<slug>/
+├── README.md      index: the answer, the gaps, what is in here
+├── contract.md    the Research Contract (the version you confirmed)
+├── brief.md       the 30-second brief
+├── evidence.json  the machine-checkable evidence graph
+├── evidence.md    the evidence map
+├── council.md     the seven rounds
+├── blindspots.md  the blindspot radar
+├── dissent.md     the dissent certificates
+├── paper.md       the synthesised final paper
+└── scientists/    one file per seat
 ```
 
-**Command line only, no skill install:**
-
-```bash
-npx github:Fishman-free/poliscope --help          # all subcommands
-npx github:Fishman-free/poliscope health          # liveness probe
-npx github:Fishman-free/poliscope status <task>   # inspect a task
-npx github:Fishman-free/poliscope export <task>   # export results
-```
+The run stops for you twice: **before it starts**, with the Research Contract shown for confirmation, and **after round 5**, with each seat's position and the blindspot list, for a directional note or an explicit pass.
 
 **Install elsewhere / overwrite an existing copy:**
 
@@ -152,7 +153,16 @@ npx github:Fishman-free/poliscope install-skill --dir <skills dir>
 npx github:Fishman-free/poliscope install-skill --force
 ```
 
-Full usage in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+**For the database-enforced build** (event ledger, single-writer Graph Projector, an evidence gate enforced in database privileges), use the web app or the CLI against a deployed instance. Log in once:
+
+```bash
+npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+npx github:Fishman-free/poliscope health          # liveness probe
+npx github:Fishman-free/poliscope status <task>   # inspect a task
+npx github:Fishman-free/poliscope export <task>   # export results
+```
+
+All subcommands in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ## 6. Be Honest with Its Conclusions
 

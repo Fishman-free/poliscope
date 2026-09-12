@@ -1,173 +1,157 @@
 ---
 name: poliscope
-description: Run an auditable Poliscope research task for a computational-social-science controversy (digital behavior, social media, mental health). Use when the user asks to research a contested empirical question, wants an evidence map with blindspots and preserved dissent instead of a single summarized answer, or explicitly mentions Poliscope, a Research Contract, or the 7-scientist council.
-allowed-tools: Bash(poliscope *), Bash(uvx --from git+https://github.com/Fishman-free/poliscope.git poliscope *), Bash(python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py *)
+description: Run an auditable Poliscope research task on a contested empirical question — seven role-specialised scientist subagents deliberate over seven rounds and write an evidence map with blindspots, preserved dissent, and a falsifiable final paper into the user's repository. Runs entirely inside this agent (no account, no server, no Python). Use when the user asks to research a contested empirical question, wants blindspots and preserved dissent instead of a single summarised answer, or mentions Poliscope, a Research Contract, or the 7-scientist council.
+allowed-tools: Task, Agent, SendMessage, WebSearch, WebFetch, Read, Write, Edit, Glob, Grep, Bash(node ${CLAUDE_SKILL_DIR}/scripts/check_evidence.mjs *)
 ---
 
 # Poliscope
 
-Poliscope is a thin adapter over the `poliscope` CLI, which is itself a thin
-HTTP client over the Research Service API. This skill never imports Poliscope's
-`packages/`, never calls a model or a paper source directly, never writes to
-the database or Evidence Graph, and never skips claim confirmation or the
-Evidence Gate. It only talks to the same CLI/API contract a human operator
-would use by hand (design spec `docs/superpowers/specs/2026-07-31-poliscope-design.md`
-section 8.7). If you are tempted to shortcut any of this to "just get an
-answer faster," don't -- that would make this a second, divergent Poliscope
-implementation, which is exactly what the design forbids.
+Seven AI scientists review a contested empirical question and produce an
+evidence map where conclusions sit beside limitations, every claim traces to a
+source, and no dissent is deleted.
 
-**`allowed-tools` covers three command shapes, and that is a convenience
-rather than a security boundary.** It exists so you are not asked to confirm
-every single invocation; it stops nothing on its own. The hard constraints at
-the end of this file are binding regardless of what the platform happens to
-permit, so reaching for `packages/`, a database client, or a model API
-directly during a Poliscope task stays out of scope even when nothing blocks
-it.
+**This skill runs inside your own agent.** There is no Poliscope account, no
+server to reach, and no Python to install. The seven seats are seven subagents
+you spawn; their model access, their search, and their tools are yours. The
+only file you need from this skill besides this one is
+`scripts/check_evidence.mjs`, which is Node and runs anywhere you were
+installed from.
 
-## Getting the `poliscope` CLI without cloning
+Read these before you start, and read the ones you need again as you get to
+them — do not try to hold the whole protocol in your head at once:
 
-If `poliscope` is not already on PATH, the fastest path is a zero-install run
-via `uv` (the Python ecosystem's equivalent of `npx`) -- no clone, no venv to
-manage:
+- `references/seats.md` — the seven role specifications and their isolation rules
+- `references/protocol.md` — the seven rounds, what each produces, the structured actions
+- `references/evidence-gate.md` — admission rules, evidence levels, what must never be written as a result
+- `references/outputs.md` — the artifact layout and the `evidence.json` schema
 
-```bash
-uvx --from "git+https://github.com/Fishman-free/poliscope.git" poliscope --help
-```
+## What this is not
 
-Every `poliscope` subcommand in this file works the same way, e.g.
-`uvx --from "git+https://github.com/Fishman-free/poliscope.git" poliscope health`.
-Prefer a normal `pip install`/local checkout instead if you expect to run many
-commands in one session -- `uvx` resolves the environment on every
-invocation, which is fine for occasional calls but wasteful in a tight loop.
+It is not a summariser, and it is not a debate club. A run that produces a tidy
+answer without a single blindspot, a single unresolved challenge, or a single
+dissent certificate has almost certainly failed rather than succeeded. Do not
+smooth disagreement into a conclusion — the disagreement is the product.
+
+It is also **not** the DB-backed Poliscope service. The server build enforces
+the evidence gate in database privileges with a single-writer projector and an
+append-only ledger; this harness build enforces it with the protocol in
+`references/` and the script in `scripts/`. That is weaker, and `paper.md`
+must say so when it states its own limitations. Do not describe a harness run
+as if it had the ledger.
 
 ## Workflow
 
-0. **Authenticate once (deployed instances only).** A local API on
-   localhost needs no credentials. A deployed instance requires an account:
-   `poliscope login --base-url <URL>` exchanges username/password for a
-   30-day token saved under `~/.poliscope/credentials.json`, and every later
-   command picks it up automatically. Non-interactive agents set
-   `POLISCOPE_API_TOKEN` instead.
+### 1. Get the question and nothing else
 
-1. **Understand the question.** From the user's request, extract: the
-   research question itself, target populations/regions/languages, a date
-   range if implied, which `evidence_priorities` matter most (see the enum
-   below), whether preprints should count, and any DOIs, BibTeX entries, or
-   explicit budget the user gave you. Do not go looking for more -- do not
-   scan the user's repository, do not infer materials they did not mention.
-   Per design-spec 8.7, this skill sends only the question, the Contract, and
-   material the user explicitly handed you.
+From the user's request, take: the research question, target
+populations/regions/languages, a date range if implied, which evidence
+priorities matter, whether preprints count, and any DOIs or material they
+handed you. Do not go looking for more — do not scan their repository, do not
+infer context they did not mention. Send only the question, the contract, and
+what they explicitly gave you.
 
-2. **Draft a Research Contract, do not submit it yet.** Build it with the
-   shared scaffolding script so the JSON shape always matches
-   `packages/research/contracts.py`'s `ResearchContract` schema without you
-   hand-typing it:
+### 2. Draft a Research Contract and get it confirmed
 
-   ```bash
-   python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py \
-     --question "<verbatim research question>" \
-     --population "<population>" --region "<region>" --language "<lang>" \
-     --evidence-priority CAUSAL_OR_REVERSE_CAUSAL --evidence-priority MEASUREMENT \
-     --doi "<doi if the user gave one>" \
-     --output poliscope_contract.json
-   ```
+Write `contract.md` with the question, scope, populations, date range, evidence
+priorities, inclusion rules for preprints, and the budget you intend to spend
+(how many sources, roughly, and how deep). Show it to the user and get an
+explicit yes or a correction **before** spawning any seat.
 
-   `--evidence-priority` accepts `CORRELATION`, `CAUSAL_OR_REVERSE_CAUSAL`,
-   `MEASUREMENT`, `REPLICATION`, `BOUNDARY`, `MECHANISM`, or
-   `NULL_OR_COUNTEREXAMPLE` (repeatable). Omitted budget flags default to a
-   modest 60-minute / 50-tool-call / 20-source run; raise them only if the
-   user asks for a deeper pass.
+This step is not optional. A contract the user never saw is the skill inventing
+its own scope, and the whole product claim is researcher-directed research.
 
-   **How PDF attachment works.** `POST /api/tasks/{task_id}/papers/upload`
-   parses a PDF into a `StudyFinding`, and it needs a task id to attach that
-   object to. The order is task first, upload second, which is why this script
-   leaves `pdf_object_ids` empty in the initial contract. The upload step is
-   served by that HTTP endpoint directly (e.g. `curl -F file=@paper.pdf ...`)
-   rather than by this skill, which by design does not upload files on its own
-   initiative (design spec 8.7).
+### 3. Spawn the seven seats
 
-3. **Show the drafted contract to the user and get explicit confirmation**
-   before creating the task. This is not optional -- a Research Contract that
-   was never shown to the user is not meaningfully "user-directed research,"
-   it's a skill inventing its own scope.
+Spawn all seven **at once**, in one message, one subagent per seat, each with:
 
-4. **Create the task and confirm claims** -- two separate, deliberate steps,
-   because claim confirmation is Poliscope's own gate against research drift:
+- its role instruction and expertise from `references/seats.md`
+- the research question and the confirmed claims from `contract.md`
+- the round-1 output shape (judgment, confidence, blindspots, update condition)
+- the isolation rule: it sees no other seat's output this round, and it must
+  not ask for one
 
-   ```bash
-   poliscope start --contract poliscope_contract.json --json
-   # -> prints suggested_claims; show them to the user, ask which to keep
-   poliscope confirm-claims --task-id <task_id> --claim-ids <id1> <id2> ...
-   ```
+Keep the agent ids. Do not respawn seats between rounds — a seat's private
+context *is* its private memory, and re-spawning it each round would erase
+exactly the continuity that makes the last round meaningful.
 
-5. **Report progress**, either a single snapshot or a live follow:
+If your harness cannot spawn subagents at all, stop and tell the user: a
+single context cannot hold seven independent seats, and one voice wearing seven
+hats is not this protocol. Offer to run the question as an ordinary research
+task instead.
 
-   ```bash
-   poliscope status --task-id <task_id> --json
-   poliscope watch --task-id <task_id>          # streams until the run ends
-   poliscope pause --task-id <task_id>          # only works while still QUEUED
-   poliscope resume --task-id <task_id>
-   ```
+### 4. Run the seven rounds
 
-   Summarize status in your own words for the user -- structured actions,
-   evidence used, challenges and responses, conclusions and confidence
-   changes. Never surface a seat's private chain-of-thought; Poliscope's own
-   API does not expose it, so there is nothing to accidentally leak here, but
-   do not paraphrase your own reasoning about the task as if it were the
-   council's either.
+Follow `references/protocol.md`. Rounds 1 and 2 are blind — no seat sees
+another's judgment or findings. From round 3 on, each seat receives only the
+shared frontier you assemble (the merged source list, the evidence graph, the
+blindspot list) plus its own memory, never another seat's raw output.
 
-6. **Export to a location the user names**, never a silent default:
+Between rounds, write state to files rather than carrying it in your own
+context — the round-1 precommitments especially, which must be sealed before
+round 3 and read back unchanged in round 7.
 
-   ```bash
-   poliscope export --task-id <task_id> --format markdown --output <user-chosen-path>
-   ```
+### 5. Stop at the researcher checkpoint
 
-   If the run reports `COMPLETED_WITH_GAPS` (for example, no model vendor
-   configured, or a budget ran out), say so plainly in your summary --
-   `has_gaps` and `limitations` in the exported brief exist precisely so this
-   is never silently smoothed over.
+After round 5 and before round 6, pause and show the user: where each seat
+stands, what is still contested, and the ranked blindspot list. Ask for a
+directional note or an explicit pass.
 
-7. **Write the full results into the user's project (round-4 skill output).**
-   After a task finishes, put the evidence map, the council record, and each
-   scientist's position into the project itself so the user can browse them
-   in their repository, not only in the web workbench:
+A note may steer what round 6 discusses. It may not count as a vote, become
+evidence for or against a claim, or enter a consensus condition. Quote it in
+`council.md` labelled as not a scientific judgment.
 
-   ```bash
-   poliscope export-docs --task-id <task_id> --output docs/poliscope
-   ```
+### 6. Close the run
 
-   This creates `docs/poliscope/{task-slug}/` with `README.md` (index),
-   `paper.md` (the synthesised final paper: abstract, sections, references,
-   limitations, investigation process -- server-rendered), `brief.md`
-   (server-rendered research brief), `evidence.md` (evidence map: nodes and
-   edges with paper/cluster counts), `council.md` (precommitments, challenges,
-   final judgments, conditioned consensus, evolution timeline with Chinese
-   labels), and `scientists/` (one file per seat). Every fact comes from the
-   API snapshot -- nothing is re-serialised or invented by the CLI. Point the
-   user at the directory in your final summary.
+Round 6 builds the conditional consensus — `supported`, `contested`, or
+`insufficient` per claim, with no vote count anywhere. Round 7 is each seat's
+final independent position, next to its own sealed precommitment, with what
+moved it.
 
-## Hard constraints (design spec 8.7, non-negotiable)
+Then write the artifacts in `references/outputs.md`, and run the gate:
 
-- Never call a model provider or a paper/data source directly from this skill.
-- Never write to Poliscope's database or Evidence Graph directly.
-- Never bypass atomic-claim confirmation or the Evidence Gate.
-- Never present unaudited or in-progress content as a formal conclusion.
-- Default to sending only the research question, the Contract, and materials
-  the user explicitly handed you -- no unprompted repo scanning, no file
-  uploads, and keep PDFs, signed URLs, local absolute paths, and any model
-  chain-of-thought out of logs and exports.
-- Long tasks return a `task_id` on purpose: if the user leaves and comes back
-  later (a new conversation, a different machine), `status`/`watch`/`export`
-  against that same `task_id` picks the task back up -- you do not need to
-  restart it.
+```bash
+node ${CLAUDE_SKILL_DIR}/scripts/check_evidence.mjs docs/poliscope/<slug>/
+```
+
+Fix every `FAIL` before you finish. `WARN` lines are for the user to see, not
+for you to hide — carry them into the limitations list if they survive.
+
+### 7. Report, and be honest about the edges
+
+Tell the user, in your own words: what the evidence supports and under what
+conditions, what it does not settle, the strongest counterexample, the top
+blindspots, and every gap in the run itself — a seat that failed to return, a
+budget you ran past, evidence you could not get past a paywall. A blank is
+never "no problem."
+
+Point them at the output directory. `paper.md` is the assembled paper;
+`evidence.md` is the map to browse; `dissent.md` is the part most people skip
+and should not.
+
+## Hard constraints
+
+- **No seat may see another seat's private reasoning**, in any round. Structured
+  output crosses; deliberation does not.
+- **No majority vote decides a scientific question.** Support counts are
+  bookkeeping, never verdicts. The output is a conditional consensus plus
+  named dissent certificates.
+- **No finding enters the graph without a source, a locator, and an exact
+  quote.** "Several studies show" is not a finding.
+- **Nothing is deleted.** Refuted, superseded, and quarantined items stay in
+  the artifacts with the reason they were set aside.
+- **Correlation never upgrades to causation.** A supported causal claim needs
+  a design that can identify an effect, quoted from full text.
+- **Never present in-progress or unaudited content as a formal conclusion**,
+  and never let `paper.md` assert anything that is not already in the graph,
+  the consensus, or a dissent certificate.
+- **Do not fetch or store personal data, and do not bypass paywalls or access
+  controls.** Abstract-only means Level B; say so rather than implying you read
+  the paper.
 
 ## Safety
 
-- This is a research aid, not medical or clinical advice or a diagnostic tool.
+- This is a research aid, not medical or clinical advice, and not a diagnostic
+  tool. Say so in any report touching mental health.
 - Model confidence does not replace statistical uncertainty or expert judgment.
-- Every command needs a reachable Poliscope API (`poliscope health` checks
-  this first if you are unsure one is running).
-- A deployed instance requires an account: run `poliscope login
-  --base-url <URL>` once (or set `POLISCOPE_API_TOKEN`), and every command
-  sends the session token automatically. Leave both unset for a local,
-  un-gated API.
+- No subagent in this protocol may be given the user's credentials, private
+  files, or anything the contract did not name.

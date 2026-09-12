@@ -43,11 +43,14 @@ on:
       - "docs/**"
       - "**/*.md"
       - ".github/**"
-      # Plugin/marketplace manifests are read by Claude Code from the git repo,
-      # never by the running containers -- deploying them rebuilds the whole
-      # stack for nothing (this takes 30-90 min on the China-hosted box).
-      - ".claude-plugin/**"
-      - "marketplace.json"
+      # Agent-skill directories are read by Claude Code / Codex / AGENTS.md
+      # clients straight from the git repo (or via `npx ... install-skill`);
+      # no container copies them. Deploying them rebuilds the whole stack for
+      # nothing (this takes 30-90 min on the China-hosted box).
+      - "skills/**"
+      - ".claude/skills/**"
+      - ".codex/skills/**"
+      - ".agents/skills/**"
   workflow_dispatch: # manual "Run workflow" button for on-demand deploys
 
 jobs:

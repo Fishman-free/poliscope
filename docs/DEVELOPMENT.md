@@ -767,25 +767,36 @@ CLI 是纯 HTTP 客户端，不 import `packages`。第二条进入研究服务�
 
 ## Agent Skill 集成细节
 
-四个入口：`.claude/skills/poliscope/`（Claude Code 项目级 Skill，随仓库自动发现）、
+四份副本：`.claude/skills/poliscope/`（Claude Code 项目级 Skill，随仓库自动发现）、
 `.codex/skills/poliscope/`（Codex 对应副本）、`.agents/skills/poliscope/`（通用
-`AGENTS.md` 约定读取的第三份副本）与 `skills/poliscope/`（Claude Code 插件分发结构，
-`/plugin install` 后可用，配套 `.claude-plugin/plugin.json`）——四份内容保持一致，避免多个入口
-的科研逻辑分叉——设计规格 §8.7 的硬约束。它们本质上都只是薄封装：解析用户意图 → 用
-`scripts/new_contract.py` 生成待确认的 Research Contract → 展示给用户确认 → 依次调用
-`poliscope start` / `confirm-claims` / `watch` / `status` / `export`，不直接 import
-`packages`，不直接调模型或论文数据源，不绕过原子主张确认和证据门。
+`AGENTS.md` 约定读取的第三份副本）与 `skills/poliscope/`（随 npm 包分发的那一份，
+`npx github:Fishman-free/poliscope install-skill` 把它复制进用户的 `~/.claude/skills/`）——
+四份内容保持一致，避免多个入口的科研逻辑分叉。**以 `skills/poliscope/` 为准**，另外三份由它同步。
 
-**访问已部署实例：** 先登录一次——`poliscope login --base-url <URL>`（或 `poliscope register
---base-url <URL>` 注册新账号），token 保存在 `~/.poliscope/credentials.json`
+**Skill 在 harness 内部执行，不是 HTTP 客户端。** 它不连 Poliscope 服务、不需要账号、也不
+import `packages`：七名科学家由用户 Agent 自己的子智能体担任，检索用 Agent 自己的联网工具，
+整条七轮协议在用户这次会话里跑完。协议细节在 `references/` 下（`seats.md` / `protocol.md` /
+`evidence-gate.md` / `outputs.md`），证据门的机械部分由 `scripts/check_evidence.mjs`（Node，
+无第三方依赖）在收尾时强制校验，产出写进用户仓库的 `docs/poliscope/<slug>/`。
+
+**与服务器版的关系：** 服务器版把证据门做进数据库权限（事件账本 + Graph Projector 单一写入
+者），harness 版把同一套规则做在协议与校验脚本里——前者强，后者轻。两边的七轮协议、席位规格
+与证据分层共用同一份定义：`references/seats.md` 的七条席位指令与
+`packages/council/deliberation.py` 的 `SEAT_INSTRUCTIONS` 逐字一致。论文与白皮书中「在数据库
+权限层面强制」的表述只适用于服务器版。
+
+**访问已部署实例（CLI / 网页路径）：** 先登录一次——`poliscope login --base-url <URL>`（或
+`poliscope register --base-url <URL>` 注册新账号），token 保存在 `~/.poliscope/credentials.json`
 （`apps/cli/main.py::_save_token()`），之后每个子命令自动附带 `Authorization: Bearer` 头
 （`apps/cli/main.py::_load_token()` 传给 `apps/cli/client.py::CLIClient` 的 `token` 参数）。非交互
-环境（Agent 场景）也可以设置 `POLISCOPE_API_TOKEN` 环境变量，优先级高于凭据文件。本机直连一个
-本地 API 不需要登录。
+环境也可以设置 `POLISCOPE_API_TOKEN` 环境变量，优先级高于凭据文件。注意任务类接口一律依赖
+`CurrentUserDep`（`apps/api/routers/tasks.py`），**本地自建实例同样需要账号**，只有 `health`
+和 `register` / `login` 是无鉴权端点。
 
 **附带 PDF：** 任务级 PDF 上传走 `POST /api/tasks/{id}/papers/upload`（见上表与
-[上传 PDF](#上传-pdf没有-doi-的来源怎么进证据管线)）；Skill 场景的完整流程是「Skill 建好任务 → curl
-上传 PDF → `poliscope confirm-claims`」，Skill 会如实引导用户完成这一步，而不是假装自己能一步上传。
+[上传 PDF](#上传-pdf没有-doi-的来源怎么进证据管线)）；服务器路径的完整流程是「建好任务 → curl
+上传 PDF → `poliscope confirm-claims`」。harness 路径不经过该端点：用户交给 Agent 的材料由
+Agent 自己读取，读不到的全文按 Level B 如实标注，不得假装读过。
 
 ---
 
