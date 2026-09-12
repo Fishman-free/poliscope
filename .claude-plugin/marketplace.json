@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace-manifest.json",
+  "name": "poliscope",
+  "owner": {
+    "name": "Fishman-free",
+    "url": "https://github.com/Fishman-free"
+  },
+  "description": "Poliscope — auditable controversy evidence mapping for computational social science, built on EpistemoBrain.",
+  "plugins": [
+    {
+      "name": "poliscope",
+      "source": "./",
+      "description": "Run auditable Poliscope research tasks: a seven-scientist council working over EpistemoBrain (a multi-agent generalization of MemoBrain's executive memory) produces a controversy evidence map with blindspots and preserved dissent instead of a single summarized answer. /poliscope turns a contested empirical question into a Research Contract, confirms atomic claims with the researcher, and streams the council's progress.",
+      "license": "MIT",
+      "keywords": [
+        "research",
+        "evidence",
+        "council",
+        "blindspot",
+        "controversy",
+        "epistemobrain"
+      ],
+      "strict": false,
+      "skills": [
+        "./skills/poliscope"
+      ]
+    }
+  ]
+}
