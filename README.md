@@ -7,6 +7,8 @@
 > **在线体验：** [https://poliscope.tech/](https://poliscope.tech/) — 作者部署的公开实例，打开即用，无需安装
 >
 > **学术论文：** [《EpistemoBrain: Generalizing Executive Memory to Multi-Agent Systems》](docs/paper/epistemobrain_main.pdf)（ACL Findings 2026 格式；LaTeX 源见 `docs/paper/`）
+>
+> **方法基座：** EpistemoBrain 源自 **MemoBrain** — [论文](https://aclanthology.org/2026.findings-acl.127/) · [代码](https://github.com/qhjqhj00/MemoBrain)
 
 想象一下：你正在审阅一篇「社交媒体导致青少年抑郁」的研究——结论很漂亮，引用很齐全，但没有人告诉你这篇论文和另外五篇用的是同一份数据，没有人告诉你因果表述其实只是相关。Poliscope 就是为这个场景造的：面向计算社会科学争议问题的**深度研究智能体**——**7 名各有专长的 AI 科学家**独立取证、交叉质询、专门找反例，产出一张**结论与局限并排、证据可溯源、异议不删除**的争议证据地图。
 
@@ -43,6 +45,23 @@
 ### 8. 认识论路由
 
 证据图暴露的缺口生成盲点悬赏，按影响、不确定性、可调查性打分排序，由七人认领——是证据状态驱动下一步调查，而不是主持人按台本点名。Blindspot 是产品的一等公民对象，不是报告末尾的「局限性」文字。
+
+### 9. 方法与出处：从 MemoBrain 到 EpistemoBrain
+
+EpistemoBrain 不是凭空设计的，它的工程基座是 **MemoBrain** —— [论文](https://aclanthology.org/2026.findings-acl.127/)（ACL Findings 2026）· [代码](https://github.com/qhjqhj00/MemoBrain)。
+
+MemoBrain 为**单个**推理智能体提供执行记忆：一张依赖感知的推理图，用 `Flush` 剪掉无效路径、`Fold` 压缩已完成的子轨迹、`Recall` 在固定 token 预算内重建高显著上下文。它解决的是「一个 Agent 跑长了会忘事、上下文被低价值内容占满」的问题。
+
+EpistemoBrain 把它推广到多智能体：当记忆的所有者从「写它的人」变成「没有写它的同伴」，三个操作的含义必须重写——`Flush` → `Quarantine`、`Fold` → `Dialectical Fold`、`Recall` → `Perspective Recall`，再适配进七人议会的决策框架。
+
+**省在哪。** 收益分两层：
+
+- **继承自 MemoBrain**：长程上下文不膨胀。完成的子轨迹折叠成摘要节点，无效路径不再占窗口，推理骨架始终留在预算内。
+- **多智能体新增**：**共享检索缓存**——七席证据需求合并去重，同一篇论文只下载、解析、验证 DOI 一次而不是七次；**发言预算**——没有新信息就 `PASS`；**语义去重**——重复内容不触发重新推理；**分层模型**——复杂判断走强模型，格式化与抽取走轻量模型；**召回预算**——每席 800 字符，保住骨架但不重放转录。
+
+**实测到的那一条**：脚本化对照案例上，完整系统每找到一个金标盲点消耗 **8.6** 个账本事件，单智能体需要 **34.0** 个——覆盖率是它的 7 倍，单位成本反而低约 4 倍。
+
+> **诚实说明**：系统对每次模型与工具调用都逐笔记录 input/output token、费用、延迟与重试（八层成本控制见[技术白皮书](docs/tech/tech.pdf)第 8 章），但论文尚未把「token 节省率」作为独立指标做对照实验。上面两层是机制层面的论证，只有第三段是实测数字。
 
 ## 二、应用场景
 

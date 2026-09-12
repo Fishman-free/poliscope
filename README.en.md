@@ -7,6 +7,8 @@
 > **Try it live:** [https://poliscope.tech/](https://poliscope.tech/) — the author's public deployment; open it and start, no install needed
 >
 > **Paper:** [*EpistemoBrain: Generalizing Executive Memory to Multi-Agent Systems*](docs/paper/epistemobrain_main.pdf) (ACL Findings 2026 format; LaTeX sources in `docs/paper/`)
+>
+> **Method base:** EpistemoBrain generalizes **MemoBrain** — [paper](https://aclanthology.org/2026.findings-acl.127/) · [code](https://github.com/qhjqhj00/MemoBrain)
 
 Imagine you are reviewing a study claiming that "social media causes adolescent depression." The conclusion is polished, the citations are plentiful — but nobody tells you that this paper and five others all rely on the same dataset, and nobody tells you that the causal claim is really just a correlation. Poliscope was built for exactly this situation: a **deep-research agent** for contested questions in computational social science — **7 AI scientists with distinct specialties** gather evidence independently, cross-examine one another, and hunt for counterexamples, producing a **controversy evidence map where conclusions sit beside limitations, every claim traces to its source, and no dissent is deleted**.
 
@@ -43,6 +45,23 @@ Six papers sharing one dataset are one piece of evidence told six times. The Evi
 ### 1.8 Epistemic Routing
 
 Gaps exposed by the evidence graph become **blindspot bounties**, scored by impact, uncertainty, and investigability, then claimed by the seven — the evidence state drives the next investigation, not a moderator reading from a script. Blindspot is a first-class object, not a "limitations" paragraph.
+
+### 1.9 Method and Provenance: from MemoBrain to EpistemoBrain
+
+EpistemoBrain was not designed from scratch. Its engineering base is **MemoBrain** — [paper](https://aclanthology.org/2026.findings-acl.127/) (ACL Findings 2026) · [code](https://github.com/qhjqhj00/MemoBrain).
+
+MemoBrain gives **one** reasoning agent an executive memory: a dependency-aware reasoning graph that uses `Flush` to prune invalid paths, `Fold` to compress completed sub-trajectories, and `Recall` to rebuild a high-salience context inside a fixed token budget. It solves the problem of an agent forgetting its own task and filling its window with low-value content on long runs.
+
+EpistemoBrain generalizes that to multiple agents. Once the owner of a memory changes from "the agent that wrote it" to "the peers that did not", the three operations have to be redefined — `Flush` → `Quarantine`, `Fold` → `Dialectical Fold`, `Recall` → `Perspective Recall` — and then adapted into the council's decision framework.
+
+**Where the savings come from.** Two layers:
+
+- **Inherited from MemoBrain**: long-horizon context stops inflating. Completed sub-trajectories fold into summary nodes, invalid paths stop occupying the window, and the reasoning backbone always fits the budget.
+- **New in the multi-agent setting**: a **shared retrieval cache** — the seven seats' evidence requests are merged and deduplicated, so one paper is downloaded, parsed, and DOI-verified once rather than seven times; **speaking budgets** — a seat with nothing new says `PASS`; **semantic deduplication** — repeated content does not trigger re-inference; **tiered models** — hard judgments go to the strong model, formatting and extraction to a lightweight one; **recall budget** — 800 characters per seat, enough to keep the backbone, not enough to replay a transcript.
+
+**The one measured number**: on the scripted control case, the full system spends **8.6** ledger events per gold blindspot found, against **34.0** for a single agent — seven times the coverage at roughly a quarter of the cost per blindspot.
+
+> **Honest note**: the system records input/output tokens, cost, latency, and retries for every model and tool call (the eight cost-control layers are in Chapter 8 of the [technical white paper](docs/tech/tech.pdf)), but the paper has **not** run a controlled experiment with "token saving rate" as its own metric. The first two layers above are mechanism-level arguments; only the third paragraph is a measurement.
 
 ## 2. Use Cases
 
