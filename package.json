@@ -11,7 +11,8 @@
     "poliscope": "bin/poliscope.mjs"
   },
   "files": [
-    "bin"
+    "bin",
+    "skills"
   ],
   "engines": {
     "node": ">=18"

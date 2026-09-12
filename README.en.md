@@ -112,14 +112,47 @@ Deep research has one **bounded human checkpoint** before joint modeling: after 
 
 ### 5.2 From a Coding Agent (Skill)
 
-Call Poliscope directly from Claude Code / Codex, without switching to the web:
+Call Poliscope directly from Claude Code / Codex, without switching to the web. **Node 18+ is the only requirement** — no clone, no Python environment of your own.
+
+**Install the skill (one command):**
 
 ```bash
-/plugin install Fishman-free/poliscope      # one command in Claude Code
-npx github:Fishman-free/poliscope --help    # or zero-install via npx (Node 18+)
+npx github:Fishman-free/poliscope install-skill
 ```
 
-The Skill wraps the same `poliscope` CLI: describe the question → the Research Contract is generated for your confirmation (shown first, never submitted directly) → `poliscope start` → `confirm-claims` → `watch` / `status` → `export`. Against a deployed instance, `poliscope login --base-url <URL>` first. Full usage in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+This copies it into `~/.claude/skills/poliscope/`. **Restart your agent**, then type `/poliscope`.
+
+**How to invoke it:**
+
+```
+/poliscope research whether adolescent social media use causes depressive symptoms
+```
+
+The Skill walks the whole pipeline with you: the Research Contract is generated for your confirmation (**shown first, never submitted directly**) → `poliscope start` → `confirm-claims` to pick which claims to investigate → `watch` to completion → exports the evidence map, council record, and every scientist's position into your own repository.
+
+Log in once before using a deployed instance (`https://poliscope.tech`):
+
+```bash
+npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+```
+
+**Command line only, no skill install:**
+
+```bash
+npx github:Fishman-free/poliscope --help          # all subcommands
+npx github:Fishman-free/poliscope health          # liveness probe
+npx github:Fishman-free/poliscope status <task>   # inspect a task
+npx github:Fishman-free/poliscope export <task>   # export results
+```
+
+**Install elsewhere / overwrite an existing copy:**
+
+```bash
+npx github:Fishman-free/poliscope install-skill --dir <skills dir>
+npx github:Fishman-free/poliscope install-skill --force
+```
+
+Full usage in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ## 6. Be Honest with Its Conclusions
 

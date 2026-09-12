@@ -112,14 +112,47 @@ EpistemoBrain 把它推廣到多智能體：當記憶的所有者從「寫它的
 
 ### 2. 程式設計 Agent（Skill）
 
-在 Claude Code / Codex 裡直接呼叫，無需切換網頁：
+在 Claude Code / Codex 裡直接呼叫，無需切換網頁。**只需 Node 18+，不用複製倉庫、不用自建 Python 環境。**
+
+**裝 skill（一條命令）：**
 
 ```bash
-/plugin install Fishman-free/poliscope      # Claude Code 一條命令裝好
-npx github:Fishman-free/poliscope --help    # 或 npx 零安裝（Node 18+）
+npx github:Fishman-free/poliscope install-skill
 ```
 
-Skill 呼叫同一個 `poliscope` 命令列工具：描述問題 → 生成 Research Contract 給你確認（先給你看，不直接提交）→ `poliscope start` → `confirm-claims` → `watch` / `status` → `export`。連已部署實例時先 `poliscope login --base-url <URL>`。完整用法見 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
+裝到 `~/.claude/skills/poliscope/`。**重啟 Agent**，然後輸入 `/poliscope` 就能用。
+
+**怎麼呼叫：**
+
+```
+/poliscope 幫我研究：青少年社群媒體使用是否導致憂鬱症狀？
+```
+
+Skill 會帶著你走完整條流程：整理成 Research Contract → **先給你確認，不直接提交** → `poliscope start` → `confirm-claims` 挑要查的主張 → `watch` 跟到跑完 → 把證據地圖、議會紀錄、每位科學家的立場匯出到你的倉庫。
+
+連線上實例（`https://poliscope.tech`）前先登入一次：
+
+```bash
+npx github:Fishman-free/poliscope login --base-url https://poliscope.tech
+```
+
+**不裝 skill、只用命令列也行：**
+
+```bash
+npx github:Fishman-free/poliscope --help          # 全部子命令
+npx github:Fishman-free/poliscope health          # 探活
+npx github:Fishman-free/poliscope status <task>   # 看任務
+npx github:Fishman-free/poliscope export <task>   # 匯出結果
+```
+
+**裝到別處 / 覆蓋既有版本：**
+
+```bash
+npx github:Fishman-free/poliscope install-skill --dir <技能目錄>
+npx github:Fishman-free/poliscope install-skill --force
+```
+
+完整用法見 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
 ## 六、請誠實對待它的結論
 
