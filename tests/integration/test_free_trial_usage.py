@@ -46,7 +46,7 @@ def _trial_probe_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
         return ProbeResult(True, "连接成功（1 ms）", 1)
 
     monkeypatch.setattr("apps.api.routers.settings.probe_endpoint", _ok)
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+    monkeypatch.setenv("FREE_TRIAL_API_KEY", "sk-freetrial-test")
 
 
 @pytest_asyncio.fixture
@@ -213,7 +213,7 @@ async def test_quota_exhausted_blocks_new_tasks_and_confirmations(
                 user_evidence={},
                 model_config={
                     "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                    "api_key": "sk-dashscope-test",
+                    "api_key": "sk-freetrial-test",
                     "is_free_trial": True,
                 },
             )

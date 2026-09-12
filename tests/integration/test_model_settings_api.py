@@ -554,7 +554,7 @@ async def test_free_trial_activation_saves_the_trial_endpoint(
 ) -> None:
     try:
         await _reset_trial(app_sessions, account)
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+        monkeypatch.setenv("FREE_TRIAL_API_KEY", "sk-freetrial-test")
 
         response = await api_client.post("/api/settings/model/free-trial", json={})
 
@@ -579,7 +579,7 @@ async def test_free_trial_activation_saves_the_trial_endpoint(
             )
         assert row is not None
         assert row.is_free_trial is True
-        assert row.model_api_key == "sk-dashscope-test"
+        assert row.model_api_key == "sk-freetrial-test"
     finally:
         await _reset_trial(app_sessions, account)
 
@@ -592,7 +592,7 @@ async def test_free_trial_unavailable_without_deployment_key(
 ) -> None:
     try:
         await _reset_trial(app_sessions, account)
-        monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+        monkeypatch.delenv("FREE_TRIAL_API_KEY", raising=False)
 
         response = await api_client.post("/api/settings/model/free-trial", json={})
 
@@ -610,7 +610,7 @@ async def test_free_trial_refuses_after_quota_exhausted(
 ) -> None:
     try:
         await _reset_trial(app_sessions, account)
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+        monkeypatch.setenv("FREE_TRIAL_API_KEY", "sk-freetrial-test")
         from sqlalchemy import update as sa_update
 
         async with app_sessions() as session:
@@ -637,7 +637,7 @@ async def test_manual_save_clears_the_free_trial_marker(
 ) -> None:
     try:
         await _reset_trial(app_sessions, account)
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+        monkeypatch.setenv("FREE_TRIAL_API_KEY", "sk-freetrial-test")
         activated = await api_client.post("/api/settings/model/free-trial", json={})
         assert activated.status_code == 200
 
@@ -671,7 +671,7 @@ async def test_get_reports_free_trial_block_without_leaking_the_key(
 ) -> None:
     try:
         await _reset_trial(app_sessions, account)
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope-test")
+        monkeypatch.setenv("FREE_TRIAL_API_KEY", "sk-freetrial-test")
 
         body = (await api_client.get(SETTINGS_PATH)).json()
 

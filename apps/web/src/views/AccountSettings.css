@@ -116,33 +116,6 @@
   color: var(--refuted);
 }
 
-.account-settings__danger {
-  border-top-color: var(--refuted-soft);
-}
-
-.account-settings__danger-note {
-  margin: 0;
-  font-size: var(--text-small);
-  color: var(--ink-3);
-  line-height: 1.5;
-}
-
-.account-settings__danger-btn {
-  background: var(--refuted);
-  color: #fff;
-  border-radius: var(--radius-pill);
-  border: none;
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-small);
-  cursor: pointer;
-  align-self: flex-start;
-}
-
-.account-settings__danger-btn:disabled {
-  opacity: 0.55;
-  pointer-events: none;
-}
-
 .account-settings__cancel {
   padding: 0;
   border: none;

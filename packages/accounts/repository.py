@@ -168,12 +168,6 @@ class UsersRepository:
         )
         await self._session.flush()
 
-    async def delete(self, user_id: UUID) -> None:
-        row = await self._session.get(UserModel, user_id)
-        if row is not None:
-            await self._session.delete(row)
-            await self._session.flush()
-
 
 class AuthTokensRepository:
     def __init__(self, session: AsyncSession) -> None:

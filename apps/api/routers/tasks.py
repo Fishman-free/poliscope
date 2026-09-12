@@ -50,7 +50,6 @@ from packages.knowledge.service import KnowledgeService
 from packages.models.endpoint_config import normalize_base_url
 from packages.models.free_trial import (
     FREE_TRIAL_EXHAUSTED_MESSAGE,
-    FREE_TRIAL_EXTRA_BODY,
     FREE_TRIAL_LIMIT,
 )
 from packages.models.settings import ModelSettingsRepository, StoredModelSettings
@@ -248,13 +247,13 @@ async def create_task(
             }
             if saved.is_free_trial:
                 # Free-trial marker: the task's own config must remember it
-                # came from the trial (confirm-claims consumes a quota slot
-                # on this flag), and the vendor's request fields must reach
-                # the worker's gateway. The slot is consumed when the task
+                # came from the trial, because confirm-claims consumes a quota
+                # slot on this flag. The slot is consumed when the task
                 # actually starts, so a trial task that is created but never
-                # confirmed costs nothing.
+                # confirmed costs nothing. No extra request fields are needed:
+                # the trial vendor is DeepSeek, which the Model Gateway
+                # already handles natively.
                 task_model_config["is_free_trial"] = True
-                task_model_config["extra_body"] = dict(FREE_TRIAL_EXTRA_BODY)
                 if saved.free_trial_used >= FREE_TRIAL_LIMIT:
                     # The first gate: refuse at the moment of asking, before
                     # any draft exists. The second gate is confirm-claims'

@@ -59,10 +59,11 @@ class TaskModelConfig(ContractModel):
     task row and is never returned by any read endpoint (CLAUDE.md 16).
 
     ``is_free_trial`` marks a task whose inherited endpoint is the
-    deployment's free-trial vendor (round-7); ``extra_body`` carries the
-    vendor-specific request fields that endpoint needs (DashScope's
-    ``enable_thinking``), forwarded to the worker's gateway. Both default
-    off/None so the ordinary researcher-owned path is untouched.
+    deployment's free-trial vendor (round-7); ``extra_body`` carries any
+    vendor-specific request fields that endpoint needs, forwarded to the
+    worker's gateway. Both default off/None so the ordinary researcher-owned
+    path is untouched -- and the current trial vendor (DeepSeek) needs no
+    extra fields at all, so ``is_free_trial`` is the only one set in practice.
     """
 
     base_url: str = Field(min_length=1)

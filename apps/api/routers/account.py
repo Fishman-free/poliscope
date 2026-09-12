@@ -1,4 +1,4 @@
-"""Account self-management: avatar, username, password, and deletion.
+"""Account self-management: avatar, username, and password.
 
 All endpoints require a logged-in account (``CurrentUserDep``). Everything
 here mutates the caller's own account; there is no admin surface.
@@ -8,10 +8,11 @@ only the object key lives on the ``users`` row (CLAUDE.md 16: uploaded
 material never leaks through logs or exports), and ``GET /avatar`` serves the
 bytes back through the authenticated API rather than exposing a public URL.
 
-Account deletion permanently removes every record that belongs to the
-account across every module -- tasks (via the shared cascade), knowledge
-bases and documents, skills, settings, auth tokens and the user row itself.
-``DELETE /api/account`` requires the current password as proof.
+**There is deliberately no account-deletion endpoint.** A deleted account
+frees its email address, and the free-trial quota is one run per account, so
+delete-then-re-register was a way to consume the trial repeatedly. Accounts
+are permanent; a researcher who wants a fresh start changes their username or
+password here instead.
 """
 
 from __future__ import annotations
@@ -28,7 +29,6 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy import delete, select
 
 from apps.api.dependencies import (
     CurrentUserDep,
@@ -38,24 +38,17 @@ from apps.api.dependencies import (
 from apps.api.schemas import (
     ChangePasswordRequest,
     ChangeUsernameRequest,
-    DeleteAccountRequest,
 )
-from apps.api.task_lifecycle import delete_task_cascade
 from packages.accounts.repository import (
     InvalidCredentials,
     UsernameTaken,
-    UsersRepository,
 )
 from packages.accounts.service import (
     AccountNotFound,
     AuthService,
     InvalidRegistration,
 )
-from packages.knowledge.models import KnowledgeBaseModel, KnowledgeDocumentModel
-from packages.models.settings import AppSettingsModel
 from packages.papers.object_store import ObjectNotFound
-from packages.research.models import ResearchTaskModel
-from packages.skills.models import SkillModel
 
 router = APIRouter()
 
@@ -182,75 +175,6 @@ async def change_password(
         raise HTTPException(status_code=422, detail=str(error)) from error
     await session.commit()
     return {"status": "ok"}
-
-
-@router.delete("", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_account(
-    request: DeleteAccountRequest,
-    session: SessionDep,
-    current_user: CurrentUserDep,
-    object_store: ObjectStoreDep,
-) -> None:
-    """Permanently delete the account and every record that belongs to it."""
-    service = AuthService(session)
-    if not await service.verify_credentials(current_user.id, request.password):
-        raise HTTPException(status_code=401, detail="密码错误")
-
-    user_id: UUID = current_user.id
-
-    # 1) The user's tasks (cascade removes every task-scoped record).
-    task_ids = (
-        await session.execute(
-            select(ResearchTaskModel.task_id).where(
-                ResearchTaskModel.user_id == user_id
-            )
-        )
-    ).scalars().all()
-    for task_id in task_ids:
-        await delete_task_cascade(session, task_id)
-
-    # 2) Knowledge bases (documents first -- sources.knowledge_document_id
-    #    pointed into this user's tasks, already removed above).
-    kb_ids = (
-        await session.execute(
-            select(KnowledgeBaseModel.id).where(
-                KnowledgeBaseModel.user_id == user_id
-            )
-        )
-    ).scalars().all()
-    if kb_ids:
-        await session.execute(
-            delete(KnowledgeDocumentModel).where(
-                KnowledgeDocumentModel.knowledge_base_id.in_(kb_ids)
-            )
-        )
-        await session.execute(
-            delete(KnowledgeBaseModel).where(KnowledgeBaseModel.id.in_(kb_ids))
-        )
-
-    # 3) Skills, settings, auth tokens, verification codes (by email).
-    await session.execute(delete(SkillModel).where(SkillModel.user_id == user_id))
-    await session.execute(
-        delete(AppSettingsModel).where(AppSettingsModel.user_id == user_id)
-    )
-    from packages.accounts.models import AuthTokenModel, EmailVerificationModel
-
-    await session.execute(
-        delete(AuthTokenModel).where(AuthTokenModel.user_id == user_id)
-    )
-    if current_user.email:
-        await session.execute(
-            delete(EmailVerificationModel).where(
-                EmailVerificationModel.email == current_user.email
-            )
-        )
-
-    # 4) Avatar object stays orphaned (the store has no delete API) -- it is
-    #    private and content-addressed, so it leaks nothing.
-
-    # 5) The user row itself.
-    await UsersRepository(session).delete(user_id)
-    await session.commit()
 
 
 __all__ = ["router"]

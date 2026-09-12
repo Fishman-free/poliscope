@@ -662,7 +662,7 @@ export function saveModelSettings(
   return putJson<ModelSettings>("/api/settings/model", update);
 }
 
-/** Save the deployment's free-trial endpoint (qwen3.8-max) as this account's
+/** Save the deployment's free-trial endpoint (DeepSeek) as this account's
  * model settings. The server enforces the two-use quota; activating only
  * saves the endpoint, and each confirmed research task consumes one slot. */
 export function activateFreeTrial(): Promise<ModelSettings> {
@@ -782,12 +782,6 @@ export function changePassword(oldPassword: string, newPassword: string): Promis
     old_password: oldPassword,
     new_password: newPassword,
   });
-}
-
-/** Permanently delete the account. Clears the local token on success. */
-export async function deleteAccount(password: string): Promise<void> {
-  await sendJson<unknown>("DELETE", "/api/account", { password });
-  clearToken();
 }
 
 /** Request a password-reset code (202 even for unknown emails). */

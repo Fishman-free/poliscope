@@ -252,12 +252,6 @@ class ChangePasswordRequest(ContractModel):
     new_password: str
 
 
-class DeleteAccountRequest(ContractModel):
-    """Permanently delete the account. The password is required as proof."""
-
-    password: str
-
-
 class ModelSettingsUpdate(ContractModel):
     """The researcher's permanent model endpoint.
 

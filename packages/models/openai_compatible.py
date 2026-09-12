@@ -117,11 +117,13 @@ class OpenAICompatibleConfig:
     stream_total_timeout_seconds: float = STREAM_TOTAL_TIMEOUT_SECONDS
     invoke_total_timeout_seconds: float = INVOKE_TOTAL_TIMEOUT_SECONDS
     # Vendor-specific request fields merged verbatim into every
-    # chat-completions body (round-7 free trial: DashScope's
-    # ``enable_thinking``). When present, the gateway skips its own
+    # chat-completions body. When present, the gateway skips its own
     # DeepSeek-style ``thinking`` field so the vendor's own toggle drives
     # thinking mode -- an unrecognised `thinking` would otherwise be sent to
     # a vendor that never asked for it (recorded assumption, CLAUDE.md 17).
+    # Nothing in the current deployment sets this: the free trial runs on
+    # DeepSeek, which the gateway handles natively. It stays as the extension
+    # point for an endpoint that does require non-OpenAI fields.
     extra_body: Mapping[str, object] | None = None
 
     @classmethod

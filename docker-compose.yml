@@ -73,8 +73,10 @@ services:
       POLISCOPE_GITHUB_TOKEN: "${POLISCOPE_GITHUB_TOKEN:-}"
       # Free-trial vendor key (round-7): the API's /settings/model/free-trial
       # endpoint probes and stores this endpoint on demand. Blank = the
-      # trial is disabled for every account.
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      # trial is disabled for every account. The vendor is DeepSeek; the var
+      # name is deliberately vendor-neutral so switching vendors is a value
+      # change, not a rename.
+      FREE_TRIAL_API_KEY: ${FREE_TRIAL_API_KEY:-}
       # Email verification (round-8): registration sends a 6-digit code via
       # SMTP. Blank SMTP_HOST = the register endpoint refuses with 503 (the
       # API process owns sending -- the worker never emails).
@@ -120,11 +122,11 @@ services:
       POLISCOPE_MODEL_NAME_LIGHTWEIGHT: ${POLISCOPE_MODEL_NAME_LIGHTWEIGHT:-}
       POLISCOPE_TOOLS_CONTACT_EMAIL: ${POLISCOPE_TOOLS_CONTACT_EMAIL:-}
       POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY: ${POLISCOPE_TOOLS_SEMANTIC_SCHOLAR_API_KEY:-}
-      # Free-trial vendor key (round-7): enables the per-account qwen3.8-max
-      # trial in Model Settings. The worker reads it through the stored task
-      # config, so this env is for the API's activation probe; a deployment
-      # that skips the trial simply leaves it blank.
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      # Free-trial vendor key (round-7): enables the per-account
+      # deepseek-v4-flash trial in Model Settings. The worker reads it
+      # through the stored task config, so this env is for the API's
+      # activation probe; a deployment that skips the trial leaves it blank.
+      FREE_TRIAL_API_KEY: ${FREE_TRIAL_API_KEY:-}
     # Shared with the API: the worker reads the uploaded papers the API wrote
     # into the private object store (round-10 fix -- see the api service's
     # volume comment). Mounted at the same default root.

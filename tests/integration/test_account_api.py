@@ -1,21 +1,12 @@
-"""Account self-management API: avatar, username, password, password reset,
-and permanent deletion with full cascade cleanup.
-"""
+"""Account self-management API: avatar, username, password, password reset."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from packages.accounts.models import EmailVerificationModel, UserModel
-from packages.knowledge.models import KnowledgeBaseModel, KnowledgeDocumentModel
-from packages.models.settings import AppSettingsModel
-from packages.research.models import ResearchTaskModel
 from tests.conftest import RECORDED_CODES, register_user
 
 ACCOUNT_PATH = "/api/account"
@@ -224,118 +215,3 @@ async def test_reset_password_with_wrong_code_is_422(
         json={"email": email, "code": "000000", "password": "some-new-password"},
     )
     assert response.status_code == 422
-
-
-async def test_delete_account_requires_password_and_cleans_everything(
-    api_client: httpx.AsyncClient,
-    app_sessions: async_sessionmaker[AsyncSession],
-) -> None:
-    account = await _register_fresh(api_client)
-    user_id = UUID(account["id"])
-    token = account["token"]
-    headers = _headers(token)
-
-    # Seed account-owned rows across the modules the cascade must clear:
-    # a task, a knowledge base + document, a settings row, and a
-    # verification-code row for the account's email.
-    async with app_sessions() as session:
-        session.add(
-            ResearchTaskModel(
-                id=uuid4(), task_id=uuid4(), question="q", status="QUEUED",
-                created_by=account["username"], user_id=user_id,
-                wall_clock_minutes=30, model_cost_usd=0, tool_call_limit=10,
-                source_limit=5, user_evidence={},
-            )
-        )
-        kb = KnowledgeBaseModel(
-            id=uuid4(), name="kb", created_by=account["username"], user_id=user_id
-        )
-        session.add(kb)
-        await session.flush()
-        session.add(
-            KnowledgeDocumentModel(
-                id=uuid4(),
-                knowledge_base_id=kb.id,
-                title="doc",
-                object_key=f"knowledge/{kb.id}/x.txt",
-                content_hash="x" * 64,
-                content_type="text/plain",
-                size_bytes=1,
-                page_count=1,
-                text_content="seed",
-                created_by=account["username"],
-            )
-        )
-        session.add(
-            AppSettingsModel(user_id=user_id, model_name="deepseek-chat")
-        )
-        # The register code already exists from register_user; a second row
-        # with a different purpose proves reset codes are cleaned too.
-        session.add(
-            EmailVerificationModel(
-                id=uuid4(),
-                email=f"{account['username']}@poliscope.test",
-                purpose="reset",
-                code_hash="x" * 64,
-                expires_at=datetime.now(UTC) + timedelta(minutes=5),
-                last_sent_at=datetime.now(UTC),
-                sent_day=datetime.now(UTC).date(),
-                sent_today=1,
-            )
-        )
-        await session.commit()
-
-    # Wrong password -> 401, nothing deleted.
-    wrong = await api_client.request(
-        "DELETE", ACCOUNT_PATH, headers=headers, json={"password": "wrong"}
-    )
-    assert wrong.status_code == 401
-
-    # Correct password -> 204.
-    deleted = await api_client.request(
-        "DELETE", ACCOUNT_PATH, headers=headers, json={"password": "test-password-123"}
-    )
-    assert deleted.status_code == 204
-
-    async with app_sessions() as session:
-        assert (
-            await session.get(UserModel, user_id)
-        ) is None
-        assert (
-            (
-                await session.execute(
-                    select(ResearchTaskModel).where(
-                        ResearchTaskModel.user_id == user_id
-                    )
-                )
-            ).scalars().first()
-            is None
-        )
-        assert (
-            (
-                await session.execute(
-                    select(KnowledgeBaseModel).where(
-                        KnowledgeBaseModel.user_id == user_id
-                    )
-                )
-            ).scalars().first()
-            is None
-        )
-        assert (
-            await session.get(AppSettingsModel, user_id)
-        ) is None
-        assert (
-            (
-                await session.execute(
-                    select(EmailVerificationModel).where(
-                        EmailVerificationModel.email
-                        == f"{account['username']}@poliscope.test"
-                    )
-                )
-            ).scalars().first()
-            is None
-        )
-
-    # The old token no longer authenticates.
-    me = await api_client.get(f"{AUTH_PATH}/me", headers=headers)
-    assert me.status_code == 401

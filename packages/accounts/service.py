@@ -211,13 +211,6 @@ class AuthService:
         await self._users.update_password(user.id, hash_password(new_password))
         await self._tokens.revoke_all_for_user(user.id)
 
-    async def verify_credentials(self, user_id: UUID, password: str) -> bool:
-        """Check a password without side effects (DELETE /api/account gate)."""
-        user = await self._users.get_by_id(user_id)
-        if user is None:
-            return False
-        return verify_password(password, user.password_hash)
-
     async def _require_user(self, user_id: UUID) -> StoredUser:
         user = await self._users.get_by_id(user_id)
         if user is None:

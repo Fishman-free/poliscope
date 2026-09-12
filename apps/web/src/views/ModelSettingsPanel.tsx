@@ -137,7 +137,7 @@ export function ModelSettingsPanel() {
     }
   }
 
-  /** 启用免费体验：把部署方的 qwen3.8-max 端点存为账号设置。激活本身不
+  /** 启用免费体验：把部署方的 DeepSeek 端点存为账号设置。激活本身不
    * 消耗额度（服务端语义：每次确认开始研究才扣一次），前端只展示服务器
    * 返回的剩余次数——额度裁决永远在服务端（apps/api/routers/tasks.py）。 */
   async function activateTrial() {
@@ -305,7 +305,7 @@ export function ModelSettingsPanel() {
               </button>
             ) : null}
             {/* 免费体验（round-7）：紧挨「清除 Key」的醒目按钮。启用后
-                把部署方的 qwen3.8-max 端点存为账号设置；激活本身不消耗
+                把部署方的 DeepSeek 端点存为账号设置；激活本身不消耗
                 额度（服务端语义：每次确认开始研究才扣一次）。 */}
             {freeTrial && freeTrial.enabled && !freeTrial.active && freeTrial.available ? (
               <button
@@ -341,7 +341,7 @@ export function ModelSettingsPanel() {
       {freeTrial ? (
         <div className="settings__trial">
           <h4 className="settings__trial-title">
-            {t("免费 qwen3.8-max 体验")}
+            {t("免费 DeepSeek 体验")}
             {freeTrial.active ? (
               <Badge tone="admitted">{t("体验中")}</Badge>
             ) : null}
@@ -354,7 +354,7 @@ export function ModelSettingsPanel() {
                   freeTrial.limit,
                 )
               : t(
-                  "每个账号仅可使用部署方提供的免费 qwen3.8-max 模型提问 1 次，之后需要填写自己的 API Key。点上方「免费体验」按钮启用。",
+                  "每个账号仅可使用部署方提供的免费 DeepSeek 模型提问 1 次，之后需要填写自己的 API Key。点上方「免费体验」按钮启用。",
                 )}
           </p>
           {freeTrial.enabled && freeTrial.used >= freeTrial.limit ? (

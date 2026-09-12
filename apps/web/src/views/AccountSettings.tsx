@@ -1,8 +1,10 @@
-/** 账号设置弹层：头像上传、修改用户名、修改密码、注销账户。
+/** 账号设置弹层：头像上传、修改用户名、修改密码。
  *
  * 遵循 Apple 设计语言（tokens.css）：唯一 #0066cc 交互色、pill 按钮、
- * hairline 卡片、负字距、无装饰渐变。注销是危险操作，两段式确认（输入
- * 密码 + 红色「永久删除」按钮）。
+ * hairline 卡片、负字距、无装饰渐变。
+ *
+ * 这里刻意不提供注销账户：账号一旦注销就释放了邮箱，而免费体验额度是
+ * 每账号一次——「注销后重新注册」会变成反复消耗体验额度的路径。
  */
 
 import { useState } from "react";
@@ -10,7 +12,6 @@ import { useState } from "react";
 import {
   changePassword,
   changeUsername,
-  deleteAccount,
   uploadAvatar,
 } from "../api/client";
 import { t } from "../i18n";
@@ -41,11 +42,6 @@ export function AccountSettings({
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [passwordDone, setPasswordDone] = useState(false);
-
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deletePassword, setDeletePassword] = useState("");
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function onPickAvatar(file: File | undefined) {
     if (!file) return;
@@ -102,20 +98,6 @@ export function AccountSettings({
       setPasswordError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setPasswordBusy(false);
-    }
-  }
-
-  async function submitDelete() {
-    if (deleteBusy || !deletePassword) return;
-    setDeleteBusy(true);
-    setDeleteError(null);
-    try {
-      await deleteAccount(deletePassword);
-      window.location.href = "/workspace"; // 注销后回登录页
-    } catch (cause) {
-      setDeleteError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setDeleteBusy(false);
     }
   }
 
@@ -224,54 +206,6 @@ export function AccountSettings({
           {passwordError ? (
             <p className="account-settings__error">{passwordError}</p>
           ) : null}
-        </section>
-
-        {/* 注销账户（危险区） */}
-        <section className="account-settings__section account-settings__danger">
-          <h3>{t("注销账户")}</h3>
-          {!confirmDelete ? (
-            <>
-              <p className="account-settings__danger-note">
-                {t("删除账号会永久清除你的全部任务、知识库与 Skills，且不可恢复。")}
-              </p>
-              <button
-                type="button"
-                className="button account-settings__danger-btn"
-                onClick={() => setConfirmDelete(true)}
-              >
-                {t("注销账户")}
-              </button>
-            </>
-          ) : (
-            <>
-              <input
-                type="password"
-                value={deletePassword}
-                onChange={(event) => setDeletePassword(event.target.value)}
-                placeholder={t("输入密码确认永久删除")}
-                disabled={deleteBusy}
-              />
-              <button
-                type="button"
-                className="button account-settings__danger-btn"
-                onClick={submitDelete}
-                disabled={deleteBusy || !deletePassword}
-              >
-                {deleteBusy ? t("请稍候…") : t("永久删除")}
-              </button>
-              <button
-                type="button"
-                className="account-settings__cancel"
-                onClick={() => setConfirmDelete(false)}
-                disabled={deleteBusy}
-              >
-                {t("取消")}
-              </button>
-              {deleteError ? (
-                <p className="account-settings__error">{deleteError}</p>
-              ) : null}
-            </>
-          )}
         </section>
     </div>
   );

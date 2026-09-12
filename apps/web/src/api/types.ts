@@ -188,7 +188,7 @@ export interface ModelSettings {
   /** Whether the saved settings would actually be applied to new tasks
    * (task creation inherits only when both URL and key are present). */
   usable: boolean;
-  /** Free-trial status (round-7): the deployment's qwen3.8-max trial. The
+  /** Free-trial status (round-7): the deployment's DeepSeek trial. The
    * server owns the quota; the client only displays it. */
   free_trial?: {
     /** Deployment operator configured the free-trial vendor. */
