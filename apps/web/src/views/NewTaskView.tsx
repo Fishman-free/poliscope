@@ -17,6 +17,7 @@ import {
   fetchKnowledgeBases,
   fetchSkills,
   type NewTaskOptions,
+  uploadKnowledgeDocument,
   uploadPaper,
 } from "../api/client";
 import type { KnowledgeBaseSummary, SkillSummary, SuggestedClaim } from "../api/types";
@@ -326,6 +327,41 @@ export function NewTaskView({
       setNewKbName("");
     } catch (cause) {
       setKbCreateError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCreatingKb(false);
+    }
+  }
+
+  /** 直接上传文件建库：以首个文件名作为库名，文件本身即库内容。
+   *
+   * 常见的用法是「知识库就是这篇文献」——研究者手里只有一个 PDF，不应该
+   * 被迫先想一个库名、建一个空库、再跳去知识库页把文件传进去。这里把三步
+   * 合成一步：选文件 → 建库（名取自文件名）→ 文件入库 → 自动关联到任务。
+   */
+  async function createKbFromFiles(files: FileList | null) {
+    if (!files || files.length === 0 || creatingKb) return;
+    const picked = Array.from(files);
+    const first = picked[0];
+    if (!first) return;
+    const baseName = first.name.replace(/\.[^.]+$/, "").trim() || t("新建知识库");
+    setCreatingKb(true);
+    setKbCreateError(null);
+    try {
+      const created = await createKnowledgeBase(baseName);
+      for (const file of picked) {
+        await uploadKnowledgeDocument(created.id, file);
+      }
+      // 重新拉取以带上 document_count，下拉里才会显示「1 篇文档」。
+      const fresh = await fetchKnowledgeBases();
+      setKnowledgeBases(fresh);
+      setKnowledgeBaseId(created.id);
+      setNewKbName("");
+    } catch (cause) {
+      setKbCreateError(
+        t(
+          `从文件建库失败：${cause instanceof Error ? cause.message : String(cause)}`,
+        ),
+      );
     } finally {
       setCreatingKb(false);
     }
@@ -822,6 +858,21 @@ export function NewTaskView({
                 >
                   {creatingKb ? t("创建中…") : t("创建并关联")}
                 </button>
+              </div>
+              <p className="newtask__model-note">
+                {t("或者直接选一个文件：以文件名作为库名，文件本身就是这个知识库的内容——手上只有一篇文献也可以建库。")}
+              </p>
+              <div className="newtask__inline-create-row">
+                <input
+                  type="file"
+                  accept=".pdf,.txt,.md,.csv,.docx,.pptx,.xlsx"
+                  multiple
+                  disabled={submitting || creatingKb}
+                  onChange={(event) => {
+                    void createKbFromFiles(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
               </div>
               {kbCreateError ? (
                 <p className="newtask__error" role="alert">
