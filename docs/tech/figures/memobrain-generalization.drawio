@@ -1,0 +1,123 @@
+<mxfile host="app.diagrams.net" agent="claude-code" version="24.7.17" pages="1">
+  <diagram id="fig_gen" name="执行记忆推广">
+    <mxGraphModel dx="1200" dy="990" grid="0" gridSize="10" guides="1" tooltips="1"
+                  connect="1" arrows="1" fold="1" page="1" pageScale="1"
+                  pageWidth="1200" pageHeight="990" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ============ 标题 ============ -->
+        <mxCell id="tx_title" value="执行记忆的单智能体到多智能体推广" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontStyle=1;fontColor=#262626;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="32" y="24" width="1136" height="36" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 列标题 ============ -->
+        <mxCell id="hd_left" value="MemoBrain　·　单智能体执行记忆" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=18;fontStyle=1;fontColor=#6b7683;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="32" y="70" width="430" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="hd_right" value="EpistemoBrain　·　多智能体集体执行记忆" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=18;fontStyle=1;fontColor=#2f4c78;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="738" y="70" width="430" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="tx_ops" value="三个原生操作及其泛化" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=16;fontStyle=1;fontColor=#4a4a4a;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="32" y="104" width="340" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 行 1：Flush → Quarantine ============ -->
+        <mxCell id="L1" value="&lt;b&gt;Flush&lt;/b&gt;　剪枝&lt;br&gt;&lt;br&gt;剪掉无效或失败的推理路径。&lt;br&gt;被剪掉的路不再出现。&lt;br&gt;&lt;br&gt;服务于同一个智能体自己的下一步。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#f2f4f6;strokeColor=#8a97a3;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="32" y="134" width="430" height="142" as="geometry" />
+        </mxCell>
+        <mxCell id="A1" value="从「删除」到「留痕」" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=bottom;whiteSpace=wrap;fontSize=16;fontStyle=1;fontColor=#a5703c;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="482" y="170" width="236" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="E1" value="" style="edgeStyle=none;html=1;endArrow=block;endFill=1;endSize=5;strokeWidth=2;strokeColor=#c08b5c;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="470" y="203" as="sourcePoint" />
+            <mxPoint x="730" y="203" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="R1" value="&lt;b&gt;Quarantine&lt;/b&gt;　隔离留痕&lt;br&gt;&lt;br&gt;被反驳的主张不删除，只改状态：&lt;br&gt;PROPOSED → SUPPORTED → CONTESTED&lt;br&gt;→ QUARANTINED → RESURRECTED/REJECTED&lt;br&gt;记录谁反驳、缺什么证据、何时可复活。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#eef6fd;strokeColor=#3b547f;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="738" y="134" width="430" height="142" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 行 2：Fold → Dialectical Fold ============ -->
+        <mxCell id="L2" value="&lt;b&gt;Fold&lt;/b&gt;　压缩&lt;br&gt;&lt;br&gt;压缩已完成的子轨迹。&lt;br&gt;只要这一段走完了就压掉。&lt;br&gt;&lt;br&gt;判据：轨迹是否完成。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#f2f4f6;strokeColor=#8a97a3;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="32" y="300" width="430" height="142" as="geometry" />
+        </mxCell>
+        <mxCell id="A2" value="从「压缩轨迹」到「压缩争议」" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=bottom;whiteSpace=wrap;fontSize=16;fontStyle=1;fontColor=#a5703c;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="470" y="336" width="260" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="E2" value="" style="edgeStyle=none;html=1;endArrow=block;endFill=1;endSize=5;strokeWidth=2;strokeColor=#c08b5c;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="470" y="369" as="sourcePoint" />
+            <mxPoint x="730" y="369" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="R2" value="&lt;b&gt;Dialectical Fold&lt;/b&gt;　辩证折叠&lt;br&gt;&lt;br&gt;争议只有在下列内容全部保留后才压缩：&lt;br&gt;双方最强立场 · 枢纽变量 · 适用范围 ·&lt;br&gt;未解决冲突 · 证伪条件。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#eef6fd;strokeColor=#3b547f;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="738" y="300" width="430" height="142" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 行 3：Recall → Perspective Recall ============ -->
+        <mxCell id="L3" value="&lt;b&gt;Recall&lt;/b&gt;　召回&lt;br&gt;&lt;br&gt;在固定 token 预算内重建高显著上下文。&lt;br&gt;一个智能体只读这一份。&lt;br&gt;&lt;br&gt;产出：一份无差别上下文。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#f2f4f6;strokeColor=#8a97a3;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="32" y="466" width="430" height="142" as="geometry" />
+        </mxCell>
+        <mxCell id="A3" value="从「共享一份」到「每人一份」" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=bottom;whiteSpace=wrap;fontSize=16;fontStyle=1;fontColor=#a5703c;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="470" y="502" width="260" height="26" as="geometry" />
+        </mxCell>
+        <mxCell id="E3" value="" style="edgeStyle=none;html=1;endArrow=block;endFill=1;endSize=5;strokeWidth=2;strokeColor=#c08b5c;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="470" y="535" as="sourcePoint" />
+            <mxPoint x="730" y="535" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="R3" value="&lt;b&gt;Perspective Recall&lt;/b&gt;　视角召回&lt;br&gt;&lt;br&gt;成员 i 的上下文 = 该成员角色专属投影&lt;br&gt;＋ 该成员自己的过程召回。&lt;br&gt;任何两个成员都不读同一份无差别摘要。&lt;br&gt;服务于集体共享认知状态。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#eef6fd;strokeColor=#3b547f;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="738" y="466" width="430" height="142" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 约束带 ============ -->
+        <mxCell id="tx_div" value="单智能体不会遇到、多智能体必须解决的两条新约束" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=16;fontStyle=1;fontColor=#4a4a4a;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="32" y="632" width="520" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ln_div" value="" style="endArrow=none;html=1;strokeWidth=1;strokeColor=#d0d5da;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="32" y="660" as="sourcePoint" />
+            <mxPoint x="1168" y="660" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="C1" value="&lt;b&gt;约束一：记忆从私有变成公共&lt;/b&gt;&lt;br&gt;&lt;br&gt;MemoBrain 的记忆是私有的：一个智能体写、同一个&lt;br&gt;智能体读，压缩错了自己承担。集体里一个成员写下的&lt;br&gt;东西，其他成员和操作者都会读到。因此压缩不再只是&lt;br&gt;内部优化，而是一次必须留痕的编辑。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#fcead9;strokeColor=#c08b5c;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="32" y="676" width="568" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="C2" value="&lt;b&gt;约束二：过程与证据必须分图&lt;/b&gt;&lt;br&gt;&lt;br&gt;单智能体可以让推理步骤与结论同处一张图；多智能&lt;br&gt;体不行——一个成员的瞬时猜测会被其他成员读成已核实&lt;br&gt;的事实。所以必须拆成两张图，中间隔着追加写的事件&lt;br&gt;账本与唯一投影器。" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#fcead9;strokeColor=#c08b5c;strokeWidth=1;fontSize=18;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="632" y="676" width="568" height="126" as="geometry" />
+        </mxCell>
+
+        <!-- ============ 实例化接口带 ============ -->
+        <mxCell id="tx_inst" value="实例化接口：以下三项由具体场景注入，机制本身不指定任何领域" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=16;fontStyle=1;fontColor=#4a4a4a;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="32" y="826" width="620" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="ln_inst" value="" style="endArrow=none;html=1;strokeWidth=1;strokeColor=#d0d5da;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="32" y="854" as="sourcePoint" />
+            <mxPoint x="1168" y="854" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="I1" value="&lt;b&gt;角色规格&lt;/b&gt;&lt;br&gt;成员数量、各自专长、质询规则" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#eef6fd;strokeColor=#3b547f;strokeWidth=1;fontSize=16;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="32" y="870" width="368" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="I2" value="&lt;b&gt;准入策略&lt;/b&gt;&lt;br&gt;什么材料可进入共享图、如何分级" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#eef6fd;strokeColor=#3b547f;strokeWidth=1;fontSize=16;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="416" y="870" width="368" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="I3" value="&lt;b&gt;共享图 schema&lt;/b&gt;&lt;br&gt;共享图有哪些节点类型与边类型" style="rounded=1;arcSize=8;whiteSpace=wrap;html=1;fillColor=#eef6fd;strokeColor=#3b547f;strokeWidth=1;fontSize=16;fontColor=#333333;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;align=left;verticalAlign=middle;spacingLeft=12;spacingRight=12;" vertex="1" parent="1">
+          <mxGeometry x="800" y="870" width="368" height="76" as="geometry" />
+        </mxCell>
+
+        <mxCell id="tx_ref" value="参考实例：科学争议审查（7 个专家角色 · A–D 证据分级 · 证据图 schema），其开源实现为 Poliscope" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=16;fontColor=#5a5a5a;fontFamily=Microsoft YaHei,PingFang SC,Helvetica;" vertex="1" parent="1">
+          <mxGeometry x="32" y="958" width="900" height="22" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

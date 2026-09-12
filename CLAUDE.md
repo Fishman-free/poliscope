@@ -9,6 +9,18 @@
 - **项目类型：** 面向计算社会科学争议问题的深度研究智能体
 - **首版领域：** 数字行为、社交媒体与心理健康
 - **正式设计规格：** `docs/superpowers/specs/2026-07-31-poliscope-design.md`
+- **论文：** `docs/paper/epistemobrain.tex`（EpistemoBrain 的独立论文）
+
+### 1.1 方法定位：EpistemoBrain 与 Poliscope 的关系
+
+**EpistemoBrain 是一套领域无关的通用多智能体记忆压缩与治理方法，是 MemoBrain 执行记忆机制从单智能体到多智能体的推广。Poliscope 是它在「科学争议审查」场景下的一个实例。**
+
+- **EpistemoBrain** ＝ 集体执行记忆与治理层。它只依赖三样由场景注入的东西：**角色规格**、**准入策略**、**共享图 schema**；机制本身不出现任何领域名。
+- **Poliscope** ＝ 该机制在科学争议审查场景的实现，**不是**方法本身。七人议会是**本项目填入的角色规格取值**，不是 EpistemoBrain 的定义。
+- 三个原生操作的泛化：`Flush → Quarantine`、`Fold → Dialectical Fold`、`Recall → Perspective Recall`。
+- 单智能体场景不会出现、多智能体必须解决的两条硬约束：**记忆由私有变为公共**、**过程与证据必须分图**。
+
+> **写作纪律：** 面向外部（论文、白皮书、答辩）时，不要把 EpistemoBrain 描述成「科学议会的组织脑」或「七个 MemoBrain」。议会应当被描述成**被机制管理的对象**。设计规格 §1.2 与 §4 中「无投票权组织脑，不是第 8 名科学家」说的是本项目这一实例中的角色定位，与上述通用定位不冲突，但引用时必须说明语境。
 
 Poliscope 组织 7 名 AI 科学家全程参与研究，并以 MemoBrain 管理长程过程记忆。系统输出可审计的争议证据地图，重点发现混杂、反向因果、测量偏差、复现风险、证据依赖和适用边界。
 
@@ -25,9 +37,9 @@ Poliscope 组织 7 名 AI 科学家全程参与研究，并以 MemoBrain 管理�
 7. **系统必须承认未知。** 全文不可得、解析不确定、引用冲突和预算不足必须显式呈现。
 8. **研究者控制方向，但不能绕过证据审核。** 未审计内容不能强制升级为正式证据。
 
-## 3. 七名科学家
+## 3. 七名科学家（本项目填入的角色规格）
 
-以下 7 个席位在每个正式研究任务中全程参与：
+以下 7 个席位在每个正式研究任务中全程参与。这是 **Poliscope 这一实例的角色规格取值**——机制本身不规定人数，也不规定角色名（见 §1.1）：
 
 1. `theory_builder`：理论建构者；
 2. `causal_scientist`：因果推断专家；
@@ -37,7 +49,7 @@ Poliscope 组织 7 名 AI 科学家全程参与研究，并以 MemoBrain 管理�
 6. `adversarial_falsifier`：对抗性证伪者；
 7. `evidence_auditor`：证据与溯源审计员。
 
-EpistemoBrain 是无投票权的组织脑，不是第 8 名科学家，也不能代表某个学术立场。
+在本实例中，EpistemoBrain 是无投票权的组织脑，不是第 8 名科学家，也不能代表某个学术立场。它不投票、不产出科研判断、不进入任何主张的证据链，只管理记忆与流程。
 
 7 名科学家共享运行框架和工具缓存，但必须拥有：
 
@@ -87,7 +99,7 @@ EpistemoBrain 是无投票权的组织脑，不是第 8 名科学家，也不能
 - 它不改变任何 Evidence Gate 判定逻辑，不作为任何 `Claim` 的 `SUPPORTS`/`REFUTES` 证据来源，不进入 `DebateCapsule` 或 `DissentCertificate` 的构造字段；
 - 联合建模的 prompt 会把它作为一段独立、明确标注来源的文本注入（例如"[研究者方向性备注，非科学判断]: ..."），供模型参考，不得被模型当成第 8 名科学家的科研判断。
 
-提交（或明确留空）后，任务状态回到 `QUEUED`，由 Worker 重新认领并从联合建模阶段续跑。这是一个**唯一、固定**的检查点，不是通用的"议会任意时点快照/暂停/恢复"——后者仍然超出本版范围（见 README「已知缺口」）。
+提交（或明确留空）后，任务状态回到 `QUEUED`，由 Worker 重新认领并从联合建模阶段续跑。这是一个**唯一、固定**的检查点，不是通用的"议会任意时点快照/暂停/恢复"——后者的范围边界见 `docs/DEVELOPMENT.md`「功能全景与设计边界」。
 
 ## 5. 双图与事件账本
 
@@ -145,6 +157,8 @@ EpistemoBrain 是无投票权的组织脑，不是第 8 名科学家，也不能
 MemoBrain 是外部方法基座，代码仓库为：
 
 https://github.com/qhjqhj00/MemoBrain
+
+MemoBrain 提供的是**单智能体**执行记忆基座（`Flush` / `Fold` / `Recall`）。EpistemoBrain 是它向多智能体的推广，两者不可混称：`packages/memory` 集成的是上游 MemoBrain；泛化后的三个操作（`Quarantine` / `Dialectical Fold` / `Perspective Recall`）属于 EpistemoBrain 层，不属于上游。
 
 集成前必须核验其许可证。通过 `MemoBrainAdapter` 集成，避免无必要地修改上游源代码。
 
@@ -394,7 +408,7 @@ Level B 不得单独支撑高置信因果结论；Level C 和 Level D 不得替�
 - 代码标识符使用英文；
 - 核心术语必须统一，不得随意创造同义名；
 - `Claim`、`StudyFinding`、`Blindspot`、`DebateCapsule`、`DissentCertificate` 和 `DiscriminatingStudy` 的含义以设计规格为准；
-- 引用 MemoBrain 时明确区分上游机制与 Poliscope 扩展；
+- 引用 MemoBrain 时明确区分上游的**单智能体**执行记忆基座与 EpistemoBrain 的**多智能体**推广（见 §1.1、§6）；
 - 新增模块或协议时同步更新设计文档、Schema 文档和测试说明。
 
 ## 16. 安全与伦理

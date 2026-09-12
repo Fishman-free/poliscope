@@ -1,6 +1,6 @@
 {
   "name": "poliscope",
-  "description": "Poliscope: auditable controversy evidence mapping (EpistemoBrain 7-scientist council).",
+  "description": "Poliscope: auditable controversy evidence mapping. A seven-scientist council runs over EpistemoBrain, a multi-agent generalization of MemoBrain's executive memory.",
   "version": "0.1.0",
   "plugins": [
     {

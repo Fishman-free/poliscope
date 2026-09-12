@@ -1,7 +1,7 @@
 {
   "name": "poliscope",
   "version": "0.1.0",
-  "description": "Auditable controversy evidence mapping for computational social science: the EpistemoBrain 7-scientist council produces an evidence map with blindspots and preserved dissent. The CLI is Python; this package is a thin launcher that runs it (via the repo venv or uvx).",
+  "description": "Auditable controversy evidence mapping for computational social science. Poliscope's seven-scientist council works over EpistemoBrain (a multi-agent generalization of MemoBrain's executive memory) to produce an evidence map with blindspots and preserved dissent. The CLI is Python; this package is a thin launcher that runs it (via the repo venv or uvx).",
   "license": "MIT",
   "repository": {
     "type": "git",

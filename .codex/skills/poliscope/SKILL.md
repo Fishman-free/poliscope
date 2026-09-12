@@ -1,7 +1,7 @@
 ---
 name: poliscope
 description: Run an auditable Poliscope research task for a computational-social-science controversy (digital behavior, social media, mental health). Use when the user asks to research a contested empirical question, wants an evidence map with blindspots and preserved dissent instead of a single summarized answer, or explicitly mentions Poliscope, a Research Contract, or the 7-scientist council.
-allowed-tools: Bash(poliscope *), Bash(python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py *)
+allowed-tools: Bash(poliscope *), Bash(uvx --from git+https://github.com/Fishman-free/poliscope.git poliscope *), Bash(python ${CLAUDE_SKILL_DIR}/scripts/new_contract.py *)
 ---
 
 # Poliscope
@@ -16,13 +16,13 @@ section 8.7). If you are tempted to shortcut any of this to "just get an
 answer faster," don't -- that would make this a second, divergent Poliscope
 implementation, which is exactly what the design forbids.
 
-**Known limitation, stated plainly rather than silently assumed away:** the
-`allowed-tools` line above only pre-approves those two command shapes so you
-are not asked to confirm every single invocation -- it does not technically
-prevent you from calling other tools. Do not use it as an excuse to reach for
-`packages/`, a database client, or a model API directly during a Poliscope
-task; the constraint is enforced by your own discipline here, not by the
-platform.
+**`allowed-tools` covers three command shapes, and that is a convenience
+rather than a security boundary.** It exists so you are not asked to confirm
+every single invocation; it stops nothing on its own. The hard constraints at
+the end of this file are binding regardless of what the platform happens to
+permit, so reaching for `packages/`, a database client, or a model API
+directly during a Poliscope task stays out of scope even when nothing blocks
+it.
 
 ## Getting the `poliscope` CLI without cloning
 
@@ -78,16 +78,13 @@ invocation, which is fine for occasional calls but wasteful in a tight loop.
    modest 60-minute / 50-tool-call / 20-source run; raise them only if the
    user asks for a deeper pass.
 
-   **Known, honest gap:** `POST /api/tasks/{task_id}/papers/upload` exists and
-   really parses the PDF into a `StudyFinding`, but it needs a task id to
-   attach the object to, so it can only be called *after* this script creates
-   the task -- this script itself always leaves `pdf_object_ids` empty in the
-   initial contract. There is also no `apps/cli` command for the upload step
-   yet (only the raw HTTP endpoint). If a user wants to attach a PDF, tell
-   them the task must exist first and the file has to be uploaded via that
-   endpoint directly (e.g. `curl -F file=@paper.pdf ...`) rather than through
-   this skill, which does not upload files on its own initiative (design spec
-   8.7).
+   **How PDF attachment works.** `POST /api/tasks/{task_id}/papers/upload`
+   parses a PDF into a `StudyFinding`, and it needs a task id to attach that
+   object to. The order is task first, upload second, which is why this script
+   leaves `pdf_object_ids` empty in the initial contract. The upload step is
+   served by that HTTP endpoint directly (e.g. `curl -F file=@paper.pdf ...`)
+   rather than by this skill, which by design does not upload files on its own
+   initiative (design spec 8.7).
 
 3. **Show the drafted contract to the user and get explicit confirmation**
    before creating the task. This is not optional -- a Research Contract that

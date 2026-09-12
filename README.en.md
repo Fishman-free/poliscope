@@ -6,7 +6,7 @@
 >
 > **Try it live:** [https://poliscope.tech/](https://poliscope.tech/) — the author's public deployment; open it and start, no install needed
 >
-> **Paper:** [*EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence Governance for Auditable Scientific Blindspot Discovery*](docs/paper/epistemobrain_main.pdf) (ACL Findings 2026 format; LaTeX sources in `docs/paper/`)
+> **Paper:** [*EpistemoBrain: Generalizing Executive Memory to Multi-Agent Systems*](docs/paper/epistemobrain_main.pdf) (ACL Findings 2026 format; LaTeX sources in `docs/paper/`)
 
 Imagine you are reviewing a study claiming that "social media causes adolescent depression." The conclusion is polished, the citations are plentiful — but nobody tells you that this paper and five others all rely on the same dataset, and nobody tells you that the causal claim is really just a correlation. Poliscope was built for exactly this situation: a **deep-research agent** for contested questions in computational social science — **7 AI scientists with distinct specialties** gather evidence independently, cross-examine one another, and hunt for counterexamples, producing a **controversy evidence map where conclusions sit beside limitations, every claim traces to its source, and no dissent is deleted**.
 
@@ -14,11 +14,11 @@ Imagine you are reviewing a study claiming that "social media causes adolescent 
 
 ### 1.1 The Problem
 
-Having 7 agents take turns talking and an 8th agent write a summary produces something that looks lively but solves none of the real problems of scientific blind spots — disagreement gets flattened at the summary step. Poliscope starts from the opposite direction: first design the organizational structure and memory mechanisms a reliable controversy review needs, then place the 7 roles inside it. That structure is called **EpistemoBrain**.
+Having 7 agents take turns talking and an 8th agent write a summary produces something that looks lively but solves none of the real problems of scientific blind spots — disagreement gets flattened at the summary step. Poliscope starts from the opposite direction: first design the organizational structure and memory mechanisms a reliable agent collective needs, then place the 7 roles inside it. That mechanism is called **EpistemoBrain**. It is **domain-general**: it depends only on three things an instantiation supplies — role specifications, an admission policy, and a shared-graph schema. Scientific controversy review is its reference instantiation, and Poliscope is the open-source implementation of that instantiation.
 
 ### 1.2 All Seven Participate Throughout
 
-The 7 seats (Theory Builder, Causal Scientist, Measurement & Construct Scientist, Statistics & Replication Scientist, Boundary & Context Scientist, Adversarial Falsifier, Evidence & Provenance Auditor) participate in **every formal research task**: each round has a speaking budget, seats `PASS` when they have nothing new, and all seven share one retrieval cache. Each seat has an independent role specification, private state, private memory, and different evidence-ordering weights; they gather evidence without seeing each other, commit to positions first, and only then exchange evidence — cross-examination is genuinely cross-examination. EpistemoBrain is the organizing brain without voting rights — not an 8th scientist.
+The 7 seats (Theory Builder, Causal Scientist, Measurement & Construct Scientist, Statistics & Replication Scientist, Boundary & Context Scientist, Adversarial Falsifier, Evidence & Provenance Auditor) participate in **every formal research task**: each round has a speaking budget, seats `PASS` when they have nothing new, and all seven share one retrieval cache. Each seat has an independent role specification, private state, private memory, and different evidence-ordering weights; they gather evidence without seeing each other, commit to positions first, and only then exchange evidence — cross-examination is genuinely cross-examination. In the Poliscope instantiation, EpistemoBrain is the organizing brain without voting rights — not an 8th scientist.
 
 ### 1.3 Three Layers of Memory
 

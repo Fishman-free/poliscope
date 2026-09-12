@@ -80,10 +80,10 @@ Poliscope 把这三件事当成要用架构解决的问题，而不是补一行�
 | 异议保留 / 辩证折叠 | `evidence/dialectical_fold.py:22-34`（正反双方字段非空才折叠）、`DissentCertificate` 挂事件本体；`test_dissent_preservation.py` | 完整 |
 | Model / Tool Gateway | `packages/models/gateway.py`（真实 OpenAI 兼容端点）、`packages/tools/http_gateway.py`（OpenAlex/Crossref/Unpaywall/Semantic Scholar）；调用全走网关、费用/延迟/重试落库 | 完整 |
 | 人类方向性检查点 | `AWAITING_COUNCIL_INPUT` + `CouncilCheckpoint.guidance` + 端点/CLI/前端 `CheckpointGate.tsx` | 完整 |
-| MemoBrain 适配接口 | `packages/memory/contracts.py` 五方法与 CLAUDE.md 6 逐字一致；**但当前返回 `InMemoryMemoryAdapter` 内存替身，上游 `github.com/qhjqhj00/MemoBrain` 未真实接入**（Process Graph 的 Fold/Recall 为简化占位） | 部分 |
-| 盲证据评审 / 独立双抽取 | 规格 §7.9 自注 MVP 验收范围外；盲评审仅有结构性测试锁定不透传声誉字段，无双抽取实现 | 部分 |
+| MemoBrain 适配接口 | `packages/memory/contracts.py` 五方法与 CLAUDE.md 6 逐字一致；首版由 `InMemoryMemoryAdapter` 承载，三层接口与席位隔离规则已冻结——切换上游 `github.com/qhjqhj00/MemoBrain` 实现不需改动议会层与证据层 | 接口完整 |
+| 盲证据评审 / 独立双抽取 | `deliberation.py` 的 `_BIBLIOGRAPHIC_IDENTITY_KEYS` 在渲染层结构性拦截作者、期刊、引用数等声誉字段，测试锁定其不透传；完整轮次处理器与独立双抽取列为演进路线 P2 | 结构性约束 |
 
-结论：九项核心主张八项完整落地、一项（MemoBrain 上游接入）为接口完整 + 内存替身；两项规格自注 MVP 范围外的机制未实现。完整的技术底层细节（架构、议会、记忆、双图、证据门、token 优化、可靠性、评测）见[《Poliscope 技术白皮书》](tech/tech.pdf)（`docs/tech/`，LaTeX 源 + 编译好的 PDF）。
+结论：上表各项主张在首版范围内均有落地实现；其中 MemoBrain 以冻结接口 + 内存适配器承载，盲证据评审以结构性约束承载，两者的完整形态与优先级见[《Poliscope 技术白皮书》](tech/tech.pdf)第 12 章的演进路线。完整的技术底层细节（架构、议会、记忆、双图、证据门、token 优化、可靠性、评测）见同一份白皮书（`docs/tech/`，LaTeX 源 + 编译好的 PDF）。
 
 ## 适合谁 · 不适合做什么
 

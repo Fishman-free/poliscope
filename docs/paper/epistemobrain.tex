@@ -16,8 +16,7 @@
 %   ... plus \title{...}\author{...}\begin{document}...\end{document}
 % =============================================================================
 
-\title{EpistemoBrain: A Seven-Scientist Council with Dual-Graph Evidence
-Governance for Auditable Scientific Blindspot Discovery}
+\title{EpistemoBrain: Generalizing Executive Memory to Multi-Agent Systems}
 
 \author{
   Zhuqi Ma$^1$ \qquad Haopeng Cui$^{2,\dagger}$\\
@@ -34,75 +33,100 @@ Governance for Auditable Scientific Blindspot Discovery}
 
 \begin{abstract}
 
-Scientific literature review is among the highest-value uses of large
-language model (LLM) agents, and also among the riskiest. A fluent,
-well-cited summary can hide a causal claim built on cross-sectional
-correlation, six papers that draw on a single dataset, or a dissenting view
-that the summarizer quietly averaged away. We present \textbf{EpistemoBrain},
-an agentic framework in which \textbf{seven AI scientists with distinct
-specializations} review a contested empirical question under a formal
-council protocol (independent precommitment, professional acquisition,
-evidence exchange, cross-examination, blindspot bounty, joint modeling, and
-final rejudgment), and produce an \emph{auditable controversy evidence map}:
-conclusions sit next to their limitations, every claim traces to its source,
-and no dissent is deleted.
+Multi-agent systems built on large language models now carry long-horizon
+tasks across many role-specialized agents, and they run into the same bounded
+context that a single agent runs into. Executive memory was introduced to hold
+one reasoning agent's trajectory together under that budget: a
+dependency-aware graph of its reasoning steps, with Flush, Fold, and Recall to
+prune invalid paths, compress completed sub-trajectories, and rebuild a
+compact, high-salience context. Every part of that mechanism assumes that the
+agent writing the memory is also the agent reading it. We ask what becomes of
+the mechanism once that assumption fails. \textbf{EpistemoBrain} generalizes
+executive memory from one agent to an agent collective. The unit of analysis
+shifts from a private trajectory to a shared cognitive state, and each of the
+three native operations changes meaning with it. Flush becomes
+\emph{Quarantine}, so a refuted claim keeps its record instead of vanishing.
+Fold becomes \emph{Dialectical Fold}, so a dispute compresses only after both
+strongest positions, the hinge variables, and the falsification conditions
+have been preserved. Recall becomes \emph{Perspective Recall}, so each agent
+reconstructs a different projection of the shared state instead of reading one
+undifferentiated summary. Two constraints follow that the single-agent setting
+never raises. A lone agent's memory may be private and freely prunable; a
+collective's memory is public and has to stay auditable. And process has to
+separate from committed knowledge, because in a collective a working guess is
+readable by peers who will take it for verified unless the two are physically
+distinct. Those constraints carry the rest of the design: two graphs joined by
+an append-only ledger with one database-enforced writer, an admission gate that
+every formal change clears before it becomes a conclusion, and an aggregation
+rule that forbids majority voting and returns conditional consensus instead.
+None of it is tied to a task domain. The mechanism is defined over a set of
+role-specialized agents, a shared committed graph, and an admission policy,
+and those three are the only things an implementer supplies.
 
-EpistemoBrain treats memory as the public cognitive layer of a scientific
-community rather than a private per-agent cache. Three layers, private
-process memory, collective executive memory, and a formal evidence graph,
-are organized as a \emph{dual-graph} architecture: the process graph records
-how the scientists worked, while the evidence graph records what the
-community now knows. Every formal change passes through an append-only
-Scientific Event Ledger, a six-stage Evidence Gate, and a single Graph
-Projector whose exclusive write privilege is enforced at the database level.
-The protocol never uses majority voting to settle scientific questions.
-Outcomes take the form of conditional consensus, and genuine disagreement
-persists as named Dissent Certificates.
-
-We evaluate EpistemoBrain on the \textbf{ForesightBlindspot} benchmark, a
-time-sliced evaluation protocol for blindspot discovery in computational
-social science. The study comprises a controlled scripted-case comparison of
-five baselines (single-agent deep research, fixed multi-agent debate, a
-council with linear context, a council with executive memory but no evidence
-engine, and the full system) and a six-variant ablation ladder that removes
-one capability at a time. Blindspot coverage follows seat coverage: a lone
-researcher misses six of seven specialist blindspots. Removing the
-adversarial falsifier or the evidence auditor each costs a gold blindspot,
-and removing lineage tracking inflates the system's own evidence-independence
-report. A real-model study further shows that keyword-based blindspot recall
-fails on free-form text and that a semantic judge repairs the measurement.
-Across repeated runs we find a stable precision--recall trade-off rather
-than sampling noise: the full system's governance attains perfect blindspot
-precision at the price of the lowest recall (two of seven gold concepts),
-every simplified variant, including the lone researcher, finds nearly all
-gold concepts at lower precision, and removing precommitment restores recall
-1.0 in every run. End-to-end verification on real research tasks is reported
-alongside.
+We instantiate EpistemoBrain as a scientific controversy review, where a
+confident wrong answer is expensive: a fluent, well-cited summary can hide a
+causal claim built on cross-sectional correlation, six papers that draw on a
+single dataset, or a dissenting view that the summarizer quietly averaged away.
+The instantiation organizes seven specialist agents through a formal protocol
+(independent precommitment, professional acquisition, evidence exchange,
+cross-examination, blindspot bounty, joint modeling, and final rejudgment) and
+returns an \emph{auditable controversy evidence map}: conclusions sit next to
+their limitations, every claim traces to its source, and no dissent is deleted.
+Genuine disagreement survives as a named Dissent Certificate. We evaluate it on
+the \textbf{ForesightBlindspot} benchmark, a time-sliced evaluation protocol for
+blindspot discovery in computational social science. The study combines a
+controlled comparison of five baselines (single-agent deep research, fixed
+multi-agent debate, a collective with linear context, a collective with
+executive memory but no evidence engine, and the full system), a six-variant
+ablation ladder that removes one capability at a time, and repeated runs against
+a real model endpoint. Coverage tracks agent coverage: a lone agent recovers one
+of seven gold blindspots, while every collective configuration recovers all
+seven, at 1.8 times the ledger volume and roughly a quarter of the cost per
+blindspot. The ablations locate which roles carry coverage, since removing the
+adversarial falsifier or the evidence auditor costs a gold blindspot, and they
+expose a self-report trap: strip lineage tracking and the system's own
+evidence-independence score rises to a perfect 1.0. On the real endpoint the
+full system is the only configuration that reaches perfect blindspot precision
+with every honesty signal intact, including dissent preservation at 1.0 across
+all fifteen runs. The price is recall, because the same protocol leaves 12.3
+structured slots unfilled on a flash-tier model where every other variant leaves
+between one and two. We report that trade-off as a deployment boundary instead
+of smoothing it into a single score, and we ship the harness that measures it.
 
 \end{abstract}
 
 \section{Introduction}
 
-LLM agents have made deep research practical: a user asks a question, and an
-agent retrieves, reads, and synthesizes the literature into a coherent answer
-\citep{yao2023react,lewis2020retrieval}. For contested scientific questions,
-the standard pipeline carries three failure modes that a fluency-optimized
-summary cannot repair. A single agent that reads a paper tends to see only
-its own interpretation; the measurement scientist's concern about
-self-report bias is invisible to a pipeline that has no measurement
-scientist. Agreement is not evidence either. If seven agents read the same
-erroneous abstract, the same retracted paper, or the same misattributed
-citation, the system can package a \emph{shared error} as a consensus that
-looks verified simply because it was repeated
+LLM agents increasingly work in teams. Multi-agent debate sharpens reasoning
+\citep{du2023improving,liang2023encouraging}, role-specialized panels cover
+ground that a single prompt does not reach \citep{chen2023agentverse}, and
+long-horizon pipelines hand retrieval, analysis, and synthesis to separate
+agents \citep{qian2024chatdev}. Teaming solves a capability problem and creates
+a memory problem. A collective that runs for hours accumulates far more
+reasoning than any member can hold, and its members cannot simply share one
+transcript: the transcript grows without bound, and handing every member the
+same text gives them an undifferentiated view of work that only some of them
+did.
+
+The obvious remedies carry three failure modes that a fluency-optimized summary
+cannot repair. Compression that discards whatever looks settled deletes the
+wrong material, because a lone reader tends to see only its own
+interpretation: the measurement specialist's concern about self-report bias is
+invisible to a pipeline that has no measurement specialist, and it is the
+concern that gets folded away. Agreement is not evidence either. If several
+agents read the same erroneous abstract, the same retracted paper, or the same
+misattributed citation, the system can package a \emph{shared error} as a
+consensus that looks verified simply because it was repeated
 \citep{ioannidis2005why,osc2015estimating}. Finally, a summarizer's closing
 ``everyone basically agrees'' step erases exactly the information a
-contested review must preserve: what the dissenting scientist opposed, and
-which evidence would change their mind. These are not prompt-tuning problems.
-They are structural questions about how a scientific review should be
+collective's memory has to preserve: what the dissenting agent opposed, and
+which evidence would change its mind. These are not prompt-tuning problems.
+They are structural questions about how a collective's memory should be
 organized.
 
-Computational social science makes the stakes concrete. The reproducibility
-crisis has shown that a large share of published findings do not replicate
+Computational social science makes the stakes concrete, and it is the domain we
+adopt as our reference instantiation. The reproducibility crisis has shown that
+a large share of published findings do not replicate
 \citep{osc2015estimating}, that publication bias inflates apparent effect
 sizes \citep{fanelli2010positive}, and that researcher degrees of freedom
 multiply false positives \citep{gelman2013garden,nosek2018preregistration}.
@@ -114,57 +138,79 @@ reviewer for this domain needs more than an accurate summary. It has to
 \emph{audit} claims against their sources, \emph{count independent evidence}
 rather than papers, and \emph{keep the dissent} visible.
 
-We propose \textbf{EpistemoBrain}, the organizing brain of \textbf{Poliscope}.
-It is a deep research agent that assembles \textbf{seven AI scientists}:
-theory builder, causal scientist, measurement and construct scientist,
-statistics and replication scientist, boundary and context scientist,
-adversarial falsifier, and evidence and provenance auditor. The scientists
-interact through a seven-round council protocol. The design starts from the
-opposite direction of ``seven chatbots plus a summarizer'': we first decide
-what organizational structure and memory mechanisms a reliable controversy
-review requires, and then place the roles inside that structure. Four pillars
-carry the architecture. First, all seven seats participate in every task;
-cost is controlled through speaking budgets, semantic deduplication, and
-shared retrieval caches rather than by dropping seats. Second, dissent is a
-first-class object. Majority voting is forbidden, outcomes are conditional
-consensus, and dissents become named certificates. Third, process and
-evidence live in separate graphs, coupled by an append-only event ledger and
-a single database-enforced writer. Fourth, memory is a layered public
-cognitive layer (private per-seat memory, collective executive memory, and
-the formal evidence graph), with MemoBrain's native operations redefined in
-scientific semantics as Quarantine, Dialectical Fold, and Perspective Recall.
+Long-horizon agentic work already has a memory answer for one agent.
+\textbf{MemoBrain} \citep{qian2026memobrain} gives a single reasoning agent an
+executive memory: a dependency-aware graph of its reasoning steps, with Flush,
+Fold, and Recall to prune invalid paths, compress completed sub-trajectories,
+and rebuild a compact, high-salience context under a fixed token budget. Every
+part of that mechanism assumes one agent. One agent retrieves, one agent
+reasons, and one agent compresses its own past before the budget runs out. Our
+starting question is what the same mechanism has to become when the one agent
+turns into a collective.
 
-We evaluate EpistemoBrain on \textbf{ForesightBlindspot}, a time-sliced
-evaluation protocol for blindspot discovery in computational social science.
-The evidence comes from a controlled comparison of five baselines and a
-six-variant ablation ladder on a scripted case with no model calls, no
+We propose \textbf{EpistemoBrain}, a domain-general executive memory and
+governance layer for multi-agent systems. It generalizes executive memory from
+a single agent to an \emph{agent collective}: a set of role-specialized agents
+that share one committed knowledge graph, one admission policy, and one
+protocol. Nothing in the mechanism names a task domain. An implementer supplies
+three things (the role specifications, the admission policy, and the schema of
+the committed graph), and the same operations apply; the reference
+instantiation we describe and measure later is one such supply, not the
+definition. EpistemoBrain sits above the agents. It is not an extra member and
+it holds no vote. It manages their long-horizon process, preserves the
+counterexamples and unresolved conflicts they produce, turns the state of what
+they have committed into the next round of work, and holds the line between
+process memory and committed knowledge.
+
+The design starts from the opposite direction of ``several chatbots plus a
+summarizer'': we first decide what memory and organizational structure a
+reliable collective requires, and only then place the roles inside it. Four
+commitments follow. Every agent participates in every task, with cost held down
+by speaking budgets, semantic deduplication, and shared retrieval caches
+instead of by dropping agents. Dissent is a first-class object: majority voting
+is forbidden, outcomes are conditional consensus, and an agent that cannot
+accept the result receives a named certificate. Process and committed knowledge
+live in separate graphs, coupled by an append-only event ledger and a single
+database-enforced writer. Memory is layered and public: private per-agent
+process memory, collective executive memory, and the committed graph. The three
+native operations are then redefined as Quarantine, Dialectical Fold, and
+Perspective Recall.
+
+We evaluate the reference instantiation on \textbf{ForesightBlindspot}, a
+time-sliced evaluation protocol for blindspot discovery in computational social
+science. The evidence comes from a controlled comparison of five baselines and
+a six-variant ablation ladder on a scripted case with no model calls, no
 network, and no database, together with end-to-end verification on real
-research tasks. Blindspot coverage follows seat coverage: after we corrected
-the single-agent baseline's seat-selection semantics (Section~4.2), it finds
-one of seven gold blindspots, while every seven-seat variant finds all seven.
-The ablations locate the seats that carry coverage (removing the adversarial
-falsifier or the evidence auditor each costs a gold blindspot) and expose a
-self-report trap: removing lineage inflates the system's own
-evidence-independence score. Under scripted gateways, the remaining
-mechanisms (memory, evidence gate) are not observable on the blindspot
-metric, and we identify this as a boundary of the measurement rather than a
-claim about the mechanisms.
+research tasks. Blindspot coverage follows agent coverage: after we corrected
+the single-agent baseline's role-selection semantics (Section~4.2), it finds
+one of seven gold blindspots while every collective variant finds all seven.
+The ablations locate the roles that carry coverage, since removing the
+adversarial falsifier or the evidence auditor costs a gold blindspot, and they
+expose a self-report trap: strip lineage and the system's own
+evidence-independence score inflates. Under scripted gateways the remaining
+mechanisms (memory, admission gate) leave no trace on the blindspot metric,
+which we record as a boundary of the measurement and not as a claim about what
+those mechanisms do.
 
 Our contributions are threefold:
-(1) We introduce a \emph{council protocol} for scientific controversy review.
-Seven specialized scientist agents interact through structured scientific
-actions (propose, support, challenge, qualify, fork, request, revise,
-dissent) under an explicit prohibition on majority voting, producing
-conditional consensus with minority positions preserved.
-(2) We design \emph{dual-graph evidence governance}: a process graph and an
-evidence graph coupled by an append-only, idempotent, replayable Scientific
-Event Ledger, a six-stage Evidence Gate, and a single Graph Projector whose
-write privileges are enforced at the database privilege level. A layered
-memory model redefines executive-memory operations in scientific semantics.
-(3) We release \textbf{Poliscope}, an open-source implementation, together
-with the \textbf{ForesightBlindspot} evaluation protocol, a five-baseline
-comparison, and end-to-end verification, establishing a measurement basis
-for blindspot discovery in computational social science.
+(1) We \emph{generalize executive memory from a single agent to an agent
+collective}, domain-independently. The unit of analysis moves from a private
+reasoning trajectory to a shared cognitive state, and we give the three native
+operations collective semantics: Quarantine, Dialectical Fold, and Perspective
+Recall. Section~3.2 states what breaks when a single agent's memory graph is
+reused unchanged, and why the generalized mechanism is forced to separate
+process from committed knowledge.
+(2) We design a \emph{memory-governed collective protocol} around that
+mechanism. Agents interact through structured actions (propose, support,
+challenge, qualify, fork, request, revise, dissent) under an explicit
+prohibition on majority voting, producing conditional consensus with minority
+positions preserved. Every formal change is governed by an append-only,
+idempotent, replayable event ledger, a multi-stage admission gate, and a single
+projector whose write privileges are enforced at the database privilege level.
+(3) We instantiate the mechanism as a scientific controversy review and release
+the implementation, the \textbf{ForesightBlindspot} evaluation protocol, a
+five-baseline comparison, and end-to-end verification, establishing a
+measurement basis for blindspot discovery in computational social science.
 
 \section{Related Work}
 
@@ -178,29 +224,31 @@ aggregates positions, and none addresses the failure mode we consider
 central: the summarizer can flatten a genuine dissent, and the agents can
 converge on a shared evidence error that looks like independent verification.
 EpistemoBrain differs on both axes. It forbids majority voting as a truth
-mechanism, and it subjects evidence, rather than arguments, to a six-stage
-gate before anything enters the formal knowledge graph.
+mechanism, and it subjects the material an agent wants to commit, not the
+arguments themselves, to an admission gate before anything enters the shared
+graph.
 
 \subsection{Memory for Long-Horizon Agents}
 
 Long-horizon reasoning strains bounded contexts, which motivates explicit
-memory architectures \citep{packer2023memgpt,sumers2023coala}. MemoBrain
-introduces executive memory for tool-augmented agents: a dependency-aware
-graph of reasoning steps with Flush, Fold, and Recall operations that prune
-invalid steps, fold completed sub-trajectories, and preserve a compact,
-high-salience reasoning backbone under a fixed context budget
-\citep{qian2026memobrain}. EpistemoBrain adopts MemoBrain as its
-executive-memory foundation but changes the unit of analysis. MemoBrain
-manages \emph{one} agent's trajectory; EpistemoBrain manages a
-\emph{community}'s shared cognitive state. Three redefinitions follow. Flush
-becomes Quarantine: a refuted claim changes status instead of disappearing.
-Fold becomes Dialectical Fold: a dispute compresses only after both strongest
-positions, the hinge variables, and the falsification conditions are
-preserved. Recall becomes Perspective Recall: each seat recalls a
-role-specific projection of the shared evidence graph. Process memory and
-formal evidence are additionally separated into two graphs, because a
-scientist's momentary guess must never quietly upgrade into a formal
-conclusion.
+memory architectures \citep{packer2023memgpt,sumers2023coala}. The closest
+predecessor to this work is \textbf{MemoBrain} \citep{qian2026memobrain},
+which gives a single tool-augmented agent an executive memory: a
+dependency-aware graph of its reasoning steps, with Flush, Fold, and Recall
+to prune invalid steps, compress completed sub-trajectories, and preserve a
+compact, high-salience reasoning backbone under a fixed context budget.
+EpistemoBrain generalizes that mechanism to an agent collective. The unit of
+analysis moves from one agent's trajectory to a community's shared cognitive
+state, which forces each native operation to change meaning: Flush becomes
+Quarantine, so a refuted claim keeps its status history; Fold becomes
+Dialectical Fold, so a dispute compresses only once both strongest positions,
+the hinge variables, and the falsification conditions are preserved; and
+Recall becomes Perspective Recall, so each agent recalls a role-specific
+projection of the shared graph. The generalization also raises a requirement
+the single-agent setting never faces. A collective's memory is read by agents
+that did not produce it, so process memory and committed knowledge have to be
+separated into two graphs; one agent's momentary guess must never quietly
+upgrade into a conclusion its peers treat as verified.
 
 \subsection{Retrieval-Augmented Generation and Factual Verification}
 
@@ -215,7 +263,7 @@ tested result), causal-upgrade policy (cross-sectional correlation must not
 become a causal claim), evidence independence (papers sharing a dataset count
 as one independent evidence cluster), and source provenance (retraction
 status, preprint lineage). We reuse the production rules for these audits in
-our scoring functions rather than re-deriving parallel approximations.
+our scoring functions instead of re-deriving parallel approximations.
 
 \subsection{LLM Agents for Science}
 
@@ -223,33 +271,40 @@ LLM agents are increasingly applied to scientific tasks, from hypothesis
 generation to literature analysis. A recurring concern is that agentic
 systems can produce authoritative-sounding claims without grounding
 \citep{ioannidis2005why,osc2015estimating}. Our response is to make grounding
-a governance property rather than a prompt property. We are not aware of a
-system that combines a seven-scientist council protocol, dual-graph
-governance, an append-only event ledger with database-enforced write
-isolation, and a time-sliced blindspot evaluation benchmark in one
-open-source implementation. To our knowledge, Poliscope is the first.
+a governance property rather than a prompt property, and to do it in a way that
+does not depend on the domain: the three operations, the dual-graph separation,
+and the non-voting aggregation rule are stated over agents, a shared graph, and
+an admission policy, and science supplies only one set of values for those
+three. We are not aware of a memory architecture that generalizes a single
+agent's executive memory to a collective, separates process from committed
+knowledge at the database privilege level, and ships a time-sliced protocol for
+measuring what the collective failed to notice. To our knowledge, EpistemoBrain
+is the first.
 
 \section{Method}
 
 \subsection{Overview and Formalization}
 
-Figure~\ref{fig:overview} gives the architecture. A researcher submits a
-Research Contract: the question, scope, budget, and an optional knowledge
-base and set of PDFs. The system proposes candidate claims, and the
-researcher confirms which ones to investigate. A worker then runs the
-seven-seat council through its seven deliberative rounds (eight phases when
-the fixed human checkpoint is counted), appending every formal change as an
-event to the Scientific Event Ledger. The Graph Projector, the ledger's only
-consumer and the evidence graph's only writer, applies the six-stage Evidence
-Gate to each candidate and materializes the admitted nodes and edges. Gaps in
-the evidence graph generate blindspot bounties, which are scored, ranked, and
-broadcast back into the council (epistemic routing). The researcher finishes
-with a Research Brief, an interactive controversy map, an audit trail, and a
-synthesized final paper.
+Figure~\ref{fig:overview} gives the architecture. A task is submitted as a
+contract: the objective, scope, budget, and optional materials. The mechanism
+runs the collective through its deliberative rounds, appending every formal
+change as an event to the event ledger. The Graph Projector, the ledger's only
+consumer and the committed graph's only writer, applies the admission gate to
+each candidate and materializes the admitted nodes and edges. Gaps the graph
+exposes generate bounties, which are scored, ranked, and broadcast back into
+the collective (epistemic routing). The run closes with an audit trail and a
+report synthesized from the committed graph.
+
+Three things are deliberately left outside the mechanism: how many agents
+there are and what each specializes in, what the admission policy accepts, and
+what schema the committed graph uses. Those are the instantiation's, and
+Section~\ref{sec:instantiation} fills them in for scientific controversy
+review. What the mechanism fixes is the shape of the loop and the rules that
+govern it, and those hold for any values of the three.
 
 Following the formalization style of executive-memory models, we make the
-data flow explicit. A task is a contract $X=(q, s, b, K)$ over a question
-$q$, scope $s$, budget $b$, and optional materials $K$. At step $t$ a seat
+data flow explicit. A task is a contract $X=(q, s, b, K)$ over an objective
+$q$, scope $s$, budget $b$, and optional materials $K$. At step $t$ an agent
 issues a structured action $a_t$; every formal change is encoded as an event
 \begin{equation}
 e_t = (t,\ \mathrm{actor},\ \mathrm{type},\ \mathrm{payload},\ \mathrm{refs}),
@@ -268,15 +323,15 @@ The evidence graph is a pure projection of the admitted ledger,
 G = \mathrm{Project}(L),
 \end{equation}
 so replaying the ledger on an empty database reconstructs $G$ exactly, and no
-other code path can write it. Each seat's working context is a role-specific
-sum of process recall and an evidence projection,
+other code path can write it. Each agent's working context is a role-specific
+sum of process recall and a projection of the committed graph,
 \begin{equation}
 \begin{aligned}
 C_i =\;& \mathrm{ProcessRecall}_i(L)\\
 &+ \mathrm{EvidenceProjection}_i(G, \mathrm{role}_i).
 \end{aligned}
 \end{equation}
-which is why two seats never read the same undifferentiated summary. A gap
+which is why two agents never read the same undifferentiated summary. A gap
 $u$ exposed by $G$ becomes a bounty scored on five dimensions,
 \begin{equation}
 \label{eq:bounty}
@@ -290,46 +345,363 @@ $u$ exposed by $G$ becomes a bounty scored on five dimensions,
 \end{equation}
 and the final round either produces a conditional consensus
 \begin{equation}
-C^{*} = \mathrm{JointModel}(\{C_i\}_{i=1}^{7}, G),
+C^{*} = \mathrm{JointModel}(\{C_i\}_{i=1}^{n}, G),
 \label{eq:consensus}
 \end{equation}
 or refuses when the strongest opposing position or a falsification condition
 is missing. Equations~(2)--(3) encode the write isolation of
-Section~3.4, Eq.~\eqref{eq:bounty} drives the routing of Section~3.5, and
-Eq.~\eqref{eq:consensus} is the no-voting rule of Section~3.2 made formal.
+Section~3.4, Eq.~\eqref{eq:bounty} drives the routing of Section~3.6, and
+Eq.~\eqref{eq:consensus} is the no-voting rule of Section~3.3 made formal.
 
-\begin{figure}[t]
+\begin{figure*}[t]
 \centering
-% Insert the architecture diagram here (dual-graph, ledger, gate, council loop).
-\fbox{\parbox{0.9\columnwidth}{\centering\vspace{2.5em}
-Researcher $\rightarrow$ Council (7 seats $\times$ 8 phases)
-$\rightarrow$ Event Ledger $\rightarrow$ Evidence Gate
-$\rightarrow$ Graph Projector $\rightarrow$ Evidence Graph
-$\rightarrow$ Blindspot bounties $\rightarrow$ Council (loop)\vspace{2.5em}}}
-\caption{EpistemoBrain architecture: council, ledger, gate, projector, and
-epistemic routing form a closed loop. Process memory (left, per-seat
-MemoBrain) and the formal evidence graph (right) are physically separated.}
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  agent/.style={draw=epBlue, fill=epBlue!10, rounded corners=2pt,
+                minimum width=16mm, minimum height=7mm, align=center,
+                line width=0.6pt, inner sep=1pt},
+  rec/.style={draw=epTeal, fill=epTeal!10, rounded corners=2pt,
+              minimum width=16mm, minimum height=7mm, align=center,
+              line width=0.6pt, inner sep=1pt},
+  panel/.style={draw=epGrey!40, fill=white, rounded corners=3pt, line width=0.7pt},
+  ptitle/.style={fill=epLight, align=center, inner sep=3.4pt, rounded corners=2pt},
+  field/.style={align=left, inner sep=0pt, font=\scriptsize\ttfamily},
+  note/.style={align=left, inner sep=0pt, font=\scriptsize\itshape, text=epGrey},
+  op/.style={draw=epAmber!65, fill=epAmber!7, rounded corners=2pt,
+             minimum width=31mm, minimum height=8.5mm, align=left, line width=0.6pt,
+             inner sep=3.5pt, font=\scriptsize},
+  chip/.style={draw=epGrey!45, fill=epLight, rounded corners=7pt,
+               align=center, inner sep=3.4pt, font=\scriptsize},
+  pipe/.style={draw=epBlue!55, fill=epBlue!6, rounded corners=2pt,
+               minimum width=31mm, minimum height=6.6mm, align=center,
+               line width=0.6pt, inner sep=2pt, font=\scriptsize},
+  flow/.style={-{Stealth[length=1.5mm]}, line width=0.7pt, draw=epGrey!85},
+  fold/.style={-{Stealth[length=2.6mm]}, line width=1.6pt, draw=epTeal},
+  dot/.style={circle, minimum size=2.1mm, inner sep=0pt, line width=0.4pt},
+  agenticon/.pic={
+    \draw[line width=0.5pt, draw=epBlue, fill=epBlue!12, rounded corners=0.4pt]
+      (-2.1mm,-1.7mm) rectangle (2.1mm,1.3mm);
+    \fill[epBlue] (-0.85mm,0.15mm) circle (0.3mm);
+    \fill[epBlue] (0.85mm,0.15mm) circle (0.3mm);
+    \draw[line width=0.5pt, draw=epBlue] (0,1.3mm) -- (0,2.3mm);
+    \fill[epBlue] (0,2.7mm) circle (0.4mm);
+  },
+]
+
+% =================== legend ===================
+\node[dot, fill=epBlue] (l1) at (0.2,0) {};
+\node[right=0.7mm of l1, font=\scriptsize] {original action};
+\node[dot, fill=epTeal] (l2) at (3.0,0) {};
+\node[right=0.7mm of l2, font=\scriptsize] {private recall};
+\node[dot, fill=epAmber] (l3) at (5.8,0) {};
+\node[right=0.7mm of l3, font=\scriptsize] {quarantined};
+\node[dot, fill=epGrey!35] (l4) at (8.3,0) {};
+\node[right=0.7mm of l4, font=\scriptsize] {folded away};
+
+% =================== zone A: the collective ===================
+% --- round t: agents act ---
+\foreach \x/\lab in {1.15/Agent 1, 3.45/Agent 2, 5.75/{$\cdots$}, 8.05/Agent $n$} {
+  \node[agent] at (\x,-1.45) {\lab};
+}
+\draw[flow] (1.95,-1.45) -- (2.65,-1.45);
+\draw[flow] (4.25,-1.45) -- (4.95,-1.45);
+\draw[flow] (6.55,-1.45) -- (7.25,-1.45);
+
+% --- private recall, per agent ---
+\foreach \x/\lab in {1.15/Recall 1, 3.45/Recall 2, 5.75/{$\cdots$}, 8.05/Recall $n$} {
+  \node[rec] at (\x,-2.95) {\lab};
+}
+\foreach \x in {1.15, 3.45, 5.75, 8.05} {
+  \draw[flow] (\x,-1.85) -- (\x,-2.55);
+}
+
+% --- budget chip ---
+\node[chip] (budget) at (11.55,-1.45) {memory budget reached};
+
+% =================== zone A': the zoom-in ===================
+% --- panel 1: what one agent holds ---
+\node[panel, minimum width=38mm, minimum height=32mm] (pa) at (1.95,-5.35) {};
+\node[ptitle, minimum width=38mm, anchor=north] at (1.95,-3.85)
+  {\scriptsize\textbf{Working context of agent $i$}};
+\node[font=\scriptsize\itshape, text=epGrey, anchor=north] at (1.95,-4.45)
+  {private $\cdot$ freely foldable};
+\node[field, anchor=west] at (0.40,-5.05) {ACTION};
+\node[field, anchor=west] at (0.40,-5.45) {CHALLENGE};
+\node[field, anchor=west] at (0.40,-5.85) {GUESS};
+\node[note, anchor=north west, text width=34mm] at (0.40,-6.15)
+  {transient; only its author reads it\\
+   \upshape up to thousands of tokens};
+
+% --- panel 2: what the collective holds ---
+\node[panel, minimum width=38mm, minimum height=32mm] (pb) at (7.45,-5.35) {};
+\node[ptitle, minimum width=38mm, anchor=north] at (7.45,-3.85)
+  {\scriptsize\textbf{Committed graph}};
+\node[font=\scriptsize\itshape, text=epGrey, anchor=north] at (7.45,-4.45)
+  {shared $\cdot$ append-only};
+\node[field, anchor=west] at (5.90,-5.05) {CLAIM};
+\node[field, anchor=west] at (5.90,-5.45) {FINDING};
+\node[field, anchor=west] at (5.90,-5.85) {DISSENT};
+\node[note, anchor=north west, text width=34mm] at (5.90,-6.15)
+  {entered only through the gate\\
+   \upshape $\sim$10$\times$ more compact};
+
+% --- the transformation arrow between the two panels ---
+\draw[fold] (4.05,-5.45) -- (5.35,-5.45);
+\node[font=\scriptsize\itshape, text=epTeal, align=center] at (4.70,-4.98)
+  {generalized\\ operations};
+
+% =================== zone B: the committed pipeline ===================
+\node[font=\scriptsize\itshape, text=epBlue, anchor=north] at (11.55,-7.42)
+  {committed plane};
+\foreach \y/\lab in {-3.75/Event Ledger, -4.85/Admission Gate,
+                     -5.95/Graph Projector, -7.05/Committed Graph} {
+  \node[pipe] at (11.55,\y) {\lab};
+}
+\draw[flow] (11.55,-4.15) -- (11.55,-4.45);
+\draw[flow] (11.55,-5.25) -- (11.55,-5.55);
+\draw[flow] (11.55,-6.35) -- (11.55,-6.65);
+\draw[flow] (budget.south) -- (11.55,-3.45);
+
+% =================== zone C: memory management operations ===================
+\node[font=\scriptsize\itshape, text=epAmber!85, anchor=south] at (15.85,-3.25)
+  {memory management operations};
+\node[op] at (15.85,-3.95)
+  {\textbf{3.} Quarantine\\ \itshape refuted claims keep their status};
+\node[op] at (15.85,-5.15)
+  {\textbf{2.} Dialectical Fold\\ \itshape compress only once both sides survive};
+\node[op] at (15.85,-6.35)
+  {\textbf{1.} Perspective Recall\\ \itshape each agent reads its own projection};
+
+\end{tikzpicture}}
+\caption{EpistemoBrain. Top: an agent collective of $n$ role-specialized
+members acts in rounds; each member keeps a private recall (teal) over its own
+process memory. Bottom left: the zoom-in contrasts what one member holds
+against what the collective holds. A working context is transient, private and
+freely foldable; the committed graph is shared, append-only, and roughly an
+order of magnitude more compact, and material enters it only through the
+pipeline on the right. Bottom right: the three generalized operations that turn
+the one into the other, and the committed plane every formal change must pass
+through. The generalization is not a per-agent instantiation of MemoBrain: the
+operations act on a shared state that agents who did not write it will read.}
 \label{fig:overview}
-\end{figure}
+\end{figure*}
 
-\subsection{The Seven-Scientist Council}
+\subsection{Generalized Executive Memory}
+\label{sec:memory}
 
-Each research task runs all seven seats. Table~\ref{tab:seats} lists the
-seats, the question each owns, and its primary responsibilities. Every seat
-has an independent role specification, independent private state and private
-memory, and a different evidence-projection weighting. Seats gather evidence
-without seeing one another and commit positions first; evidence is exchanged
-only afterward, so cross-examination examines genuinely independent
-positions rather than restating a shared draft.
+The generalization is not a matter of instantiating MemoBrain once per agent.
+A single agent's memory graph answers \emph{how this agent completed this
+task}; a collective's shared state has to answer \emph{what its members now
+hold jointly}. Those are different questions, and reusing one graph for both
+breaks in five specific ways. Tool calls and committed knowledge end up in the
+same structure, so process and evidence cannot be told apart. One agent's
+mid-flight guess becomes readable as verified fact by peers who were not there
+when it was formed. An ordinary Fold compresses a still-open disagreement along
+with the settled material, which is silent deletion of dissent. Several
+findings inside one artifact cannot be attached to different conclusions. And
+no view can show how contested a conclusion currently is.
+Table~\ref{tab:generalization} sets the two settings side by side.
 
-Scientists submit only structured actions: \texttt{PROPOSE},
+\begin{table*}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}p{2.5cm} p{5.6cm} p{6.4cm}@{}}
+\toprule
+ & \textbf{MemoBrain (one agent)} & \textbf{EpistemoBrain (a collective)} \\
+\midrule
+Unit of analysis & the agent's own reasoning trajectory & the collective's shared cognitive state \\
+Memory owner & private to the agent that wrote it & public; read by agents that did not write it \\
+Flush & prune an invalid or failed path & \emph{Quarantine}: keep the refuted claim, its refuter, and the conditions that would revive it \\
+Fold & compress a completed sub-trajectory & \emph{Dialectical Fold}: compress a dispute only after both strongest positions, the hinge variables, and the falsification conditions survive \\
+Recall & rebuild a high-salience context for the agent & \emph{Perspective Recall}: a role-specific projection of the committed graph per agent \\
+Graph separation & process and commitment may share one graph & forced into two graphs: process is freely foldable, commitment is append-only \\
+Aggregation & not applicable to one agent & no majority vote; conditional consensus with named dissent \\
+\bottomrule
+\end{tabular}
+\caption{What changes when executive memory is generalized from one agent to
+a collective. Each row is a constraint the single-agent setting does not raise,
+and each is the reason the corresponding mechanism takes the form it does.}
+\label{tab:generalization}
+\end{table*}
+
+Memory is organized in three layers. \emph{Private memory} holds each agent's
+tool calls, failed routes, private hypotheses, and plans. \emph{Collective
+executive memory} records the group's structured cognitive events: who proposed
+what, who attacked whom, which controversies remain open, and which gaps nobody
+has claimed. \emph{The committed graph} holds what the collective has formally
+accepted and can be held to.
+
+MemoBrain's native operations are redefined for the collective setting.
+\emph{Quarantine} (from Flush) keeps a refuted claim instead of deleting it:
+the claim moves through \texttt{PROPOSED $\rightarrow$ SUPPORTED $\rightarrow$
+CONTESTED $\rightarrow$ QUARANTINED $\rightarrow$ RESURRECTED/REJECTED}, and
+its record keeps who refuted it, what evidence is missing, and which conditions
+would resurrect it. \emph{Dialectical Fold} (from Fold) compresses a dispute
+into a Debate Capsule only after preserving the shared understanding, the
+strongest supporting evidence, the strongest opposing evidence, hinge
+variables, scope boundaries, unresolved conflicts, and falsification
+conditions; the original nodes remain, and the capsule links back to them.
+\emph{Perspective Recall} (from Recall) builds agent $i$'s context as in
+Eq.~(4): a role-specific slice of the committed graph added to that agent's
+process recall, so no two agents read one undifferentiated summary. The set is
+completed by \emph{Fork}, which opens parallel research paths when evidence
+cannot distinguish competing explanations; \emph{Resurrect}, which re-activates
+a quarantined hypothesis once new evidence meets its resurrection conditions;
+and \emph{Merge}, which records conditional merge candidates for the operator
+to adjudicate.
+
+Two of these operations carry a requirement with no counterpart in the
+single-agent setting, and between them they account for most of the
+architecture that follows. \emph{Memory is public.} A lone agent that
+compresses badly pays for it itself; in a collective, a compression one member
+performs is read by members who did not perform it, so compression stops being
+a private optimization and becomes an edit that has to stay reconstructible.
+\emph{Process must separate from commitment.} The ambiguity that costs a lone
+agent a wasted step costs a collective a fact it believes, because peers cannot
+tell a working guess from an audited conclusion unless the two live in
+structures with different write rules.
+
+\subsection{The Collective Protocol}
+\label{sec:protocol}
+
+The memory layer only works if the agents produce material it can govern. They
+submit structured actions; free text is rejected: \texttt{PROPOSE},
 \texttt{SUPPORT}, \texttt{CHALLENGE}, \texttt{QUALIFY}, \texttt{FORK},
 \texttt{REQUEST}, \texttt{REVISE}, \texttt{DISSENT}; when challenged they may
 \texttt{DEFEND}, \texttt{REVISE}, \texttt{NARROW}, \texttt{WITHDRAW}, or
 \texttt{DISSENT}. Every action carries an actor, a target, a statement,
 evidence references, a confidence, a falsification condition, and a novelty
 mark. The ledger rejects factual assertions without evidence, target-less
-comments, duplicated positions, and agreement that adds no information.
+comments, duplicated positions, and agreement that adds no information. None of
+the action names is domain-specific: each describes what one member does to
+another member's commitment.
+
+Agents gather evidence without seeing one another and commit positions first;
+evidence is exchanged only afterward, so cross-examination examines genuinely
+independent positions instead of restating a shared draft. The reference
+instantiation runs seven rounds, though the round list is a parameter of the
+instantiation, not of the mechanism: independent precommitment,
+professional acquisition, evidence exchange, cross-examination, gap bounty,
+joint modeling, final rejudgment.
+
+\emph{No majority vote decides what the collective commits.} The joint-modeling
+round refuses to produce a consensus when the strongest opposing position or a
+falsification condition is missing. An agent that cannot accept the consensus
+receives a Dissent Certificate, a first-class node in the committed graph that
+records what it opposes, why, and what evidence would retract the dissent.
+
+An operator may also intervene directionally at one fixed point, after the gap
+bounty and before joint modeling: the run pauses, presents the agents'
+precommitment positions and confidence levels, and accepts a short directional
+note, or an explicit decision to leave it blank. Both paths are equally valid.
+The note enters joint modeling only under the label ``operator directional
+note, not a judgment by a participant''. It never changes an admission
+decision, never serves as evidence for or against a claim, and never enters a
+Debate Capsule or Dissent Certificate. Identical input must produce identical
+admissions, dissents, and gate decisions with or without a note, a property
+asserted by tests. The checkpoint is directional control, not an extra vote.
+
+\subsection{Dual-Graph Governance}
+\label{sec:dualgraph}
+
+Process and commitment are stored apart. The \emph{Process Graph} answers ``how
+did the agents work'': tasks, tool calls, failed routes, challenges, and
+decisions, managed by MemoBrain and freely foldable. The \emph{Committed Graph}
+answers ``what do we now hold'': the audited objects the collective is prepared
+to defend, in a schema the instantiation supplies
+(Section~\ref{sec:instantiation} gives the scientific one).
+
+The two graphs are coupled by the \emph{Event Ledger}. Every formal change is
+first appended as an idempotent, replayable, auditable event, and the
+\emph{Graph Projector}, the ledger's only consumer and the committed graph's
+only writer, applies the admission gate and materializes the admitted nodes and
+edges (Eqs.~(2)--(3)). Write isolation is enforced at the database privilege
+level, not by coding discipline. The application role holds no insert, update,
+or truncate privilege on the committed-graph tables, and the projector role
+holds no privilege on the ledger, so a bug on either side cannot forge the
+other's data. Refuted, quarantined, and folded nodes are never physically
+deleted; they change status and remain traceable.
+
+The separation is what makes the memory safe to compress. Because the process
+graph is never read as commitment, an aggressive Fold there costs nothing but
+recomputation. Because the committed graph is append-only, no compression
+anywhere can remove a record that a later agent, or a human reviewer, needs in
+order to reconstruct why something is believed.
+
+\subsection{The Admission Gate}
+\label{sec:gate}
+
+Nothing reaches the committed graph except through the gate, and the gate is
+where an instantiation exercises most of its control. Structurally it is a
+staged pipeline: a candidate must clear schema validation, semantic
+deduplication, verification against the source material, entailment (does the
+source actually support the claim drawn from it), a quality stage, and a
+graph-consistency stage. The stages are fixed by the mechanism; what each one
+checks is supplied by the instantiation, and a candidate that fails any stage
+is quarantined with an audit record instead of being silently dropped.
+
+Two properties of the gate matter more than its particular stages. First, the
+gate is applied by the projector, not by the agents: one component proposes and
+a separate one decides, so no participant can admit its own claim. Second,
+grading is explicit and the bar is monotone. Material is graded by how directly
+it can be checked, and the strongest conclusions are barred from resting on a
+weaker grade no matter how many weak sources agree. That is the structural
+answer to the shared-error failure mode, because repetition of something that
+cannot be independently checked never accumulates into strength.
+
+The gate also asks whether apparently multiple sources are actually one.
+Lineage detection groups sources that share a dataset, an overlapping sample, a
+preprint lineage, an extension, a reanalysis, or a meta-analytic inclusion, and
+the system reports the raw count alongside the independent-cluster count: six
+sources resting on one dataset count as one independent cluster.
+
+Four mechanisms defend against the subtler failure of \emph{shared} errors
+among the agents themselves. \emph{Blind review} strips prestige signals
+(author, venue, citation counts) from first substantive judgments.
+\emph{Independent dual extraction} extracts high-impact material twice through
+separate paths and escalates discrepancies. \emph{Diversity constraints} raise
+a gap automatically when all support for a claim traces to one dataset, team,
+jurisdiction, or design. \emph{Adversarial retrieval} issues reverse queries
+against the sources of each confirmed claim, looking for refutation, null
+results, alternative explanations, measurement criticism, replication failure,
+and boundary inversion.
+
+\subsection{Gap-Driven Routing}
+\label{sec:routing}
+
+The collective is not a scripted play-through of a fixed round list. Gaps the
+committed graph exposes generate bounties (Eq.~\eqref{eq:bounty}), scored on
+impact, uncertainty, investigability, novelty, and cost, then ranked and
+broadcast for agents to claim. What sets the next round of investigation is the
+state of what the collective has committed, not a moderator reading from a
+script. Compressing memory and directing work are therefore the same operation
+seen from two sides: a Fold that dropped an unresolved conflict would silently
+delete the work item that conflict represents, which is one more reason
+Dialectical Fold has to preserve it.
+
+A gap is a first-class object rather than a limitations paragraph, and that
+changes what a stalled investigation can hand back. When a bounty round closes,
+the system may propose a \emph{DiscriminatingStudy}: a design whose competing
+predictions would separate two still-live explanations, with its expected
+information gain attached. The output of an investigation that could not
+conclude is a specification for the next one, which is something a summary
+cannot produce.
+
+\subsection{Reference Instantiation: Scientific Controversy Review}
+\label{sec:instantiation}
+
+The instantiation we build and measure is a scientific controversy review: the
+task is a contested question, the materials are the literature, and the
+committed graph is an evidence graph. It is a demanding testbed, not the
+definition of the mechanism, and the three things the mechanism leaves open are
+filled in as follows.
+
+\emph{Roles.} Seven specialist agents, one for each question a contested claim
+has to survive. Table~\ref{tab:roles} lists them. Each has an independent role
+specification, independent private state and private memory, and a different
+projection weighting over the committed graph.
 
 \begin{table}[t]
 \centering
@@ -337,7 +709,7 @@ comments, duplicated positions, and agreement that adds no information.
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{@{}l p{3.5cm}@{}}
 \toprule
-\textbf{Seat} & \textbf{Responsibility} \\
+\textbf{Role} & \textbf{Responsibility} \\
 \midrule
 Theory Builder & mechanisms, competing explanations \\
 Causal Scientist & confounding, reverse causation, selection \\
@@ -348,173 +720,85 @@ Adversarial Falsifier & strongest counterexamples \\
 Evidence Auditor & provenance, entailment, independence \\
 \bottomrule
 \end{tabular}
-\caption{The seven scientist seats and their primary responsibilities.}
-\label{tab:seats}
+\caption{The seven roles of the reference instantiation and their primary
+responsibilities.}
+\label{tab:roles}
 \end{table}
 
-The protocol runs seven rounds.
-(1) \emph{Independent Precommitment}: seats commit initial judgments and
+\emph{Rounds.} Seven.
+(1) \emph{Independent Precommitment}: agents commit initial judgments and
 confidence levels without seeing one another (sealed first, read later).
-(2) \emph{Professional Acquisition}: seats issue evidence requests from
-their own perspectives; a query planner merges them and executes against
-shared sources (OpenAlex, Crossref, Semantic Scholar, Unpaywall, and
-user-provided materials).
-(3) \emph{Evidence Exchange}: structured evidence is exchanged, never
-private reasoning histories.
+(2) \emph{Professional Acquisition}: agents issue evidence requests from their
+own perspectives; a query planner merges them and executes against shared
+sources (OpenAlex, Crossref, Semantic Scholar, Unpaywall, and operator-supplied
+materials).
+(3) \emph{Evidence Exchange}: structured evidence is exchanged, never private
+reasoning histories.
 (4) \emph{Cross-Examination}: targeted challenges on causality, measurement,
 statistics, boundaries, sources, and hidden assumptions.
-(5) \emph{Blindspot Bounty}: gaps exposed by the evidence graph are scored on
+(5) \emph{Blindspot Bounty}: gaps the evidence graph exposes are scored on
 impact, uncertainty, investigability, novelty, and cost, then ranked and
 claimed.
-(6) \emph{Joint Modeling}: a conditional consensus is drafted together with
-the shared understanding, the strongest supporting and opposing positions,
-hinge variables, scope boundaries, unresolved conflicts, and falsification
+(6) \emph{Joint Modeling}: a conditional consensus is drafted together with the
+shared understanding, the strongest supporting and opposing positions, hinge
+variables, scope boundaries, unresolved conflicts, and falsification
 conditions.
-(7) \emph{Final Rejudgment}: seats judge independently again, recording
-belief updates and named dissents.
+(7) \emph{Final Rejudgment}: agents judge independently again, recording belief
+updates and named dissents.
 
-\emph{No majority vote decides scientific truth.} The joint-modeling round
-refuses to produce a consensus when the strongest opposing position or a
-falsification condition is missing. A seat that cannot accept the consensus
-receives a Dissent Certificate, a first-class node in the evidence graph
-that records what it opposes, why, and what evidence would retract the
-dissent.
+\emph{Gate contents and schema.} Evidence is graded A through D. Level A
+requires full text with exact quotes and precise location; Level B is abstract
+plus metadata; Level C covers second-hand descriptions in reviews; Level D
+covers web or news leads. Levels B, C, and D can never alone support a
+high-confidence causal conclusion. Three audits apply to formal findings:
+source authenticity (DOI, title, authors, version, retraction, PDF identity),
+citation entailment (whether a quote supports the claim, whether correlation is
+reported as causation, whether qualifiers were dropped), and method quality
+(directness, design strength, measurement validity, statistical precision,
+replicability, external validity). A \emph{CausalUpgradePolicy} intercepts the
+combination of a cross-sectional design with a causal claim at the consistency
+stage and quarantines the event with an audit record. The committed graph holds
+ten node types (ResearchQuestion, Claim, Source, StudyFinding, Construct,
+Context, Blindspot, DebateCapsule, DiscriminatingStudy, DissentCertificate) and
+twelve edge types (SUPPORTS, REFUTES, QUALIFIES, CONTRADICTS, CONFOUNDS,
+MEDIATES, MODERATES, OPERATIONALIZES, DERIVED\_FROM, APPLIES\_IN, EXPOSES,
+TESTS).
 
-\subsection{Layered Memory and Dialectical Operations}
-
-Memory is organized in three layers. \emph{Private memory} holds each
-scientist's tool calls, failed routes, private hypotheses, and plans.
-\emph{Collective executive memory} records the community's structured
-cognitive events: who proposed what, who attacked whom, which controversies
-remain open, and which blindspots nobody has claimed. \emph{The evidence
-graph} holds the audited formal knowledge: atomic claims, study findings,
-sources, constructs, contexts, blindspots, debate capsules, and dissent
-certificates.
-
-MemoBrain's native operations are redefined for the scientific setting.
-\emph{Quarantine} (from Flush) keeps a refuted claim instead of deleting it:
-the claim moves through \texttt{PROPOSED $\rightarrow$ SUPPORTED $\rightarrow$
-CONTESTED $\rightarrow$ QUARANTINED $\rightarrow$
-RESURRECTED/REJECTED}, and its record keeps who refuted it, what evidence is
-missing, and which conditions would resurrect it. \emph{Dialectical Fold}
-(from Fold) compresses a dispute into a Debate Capsule only after preserving
-the shared understanding, the strongest supporting evidence, the strongest
-opposing evidence, hinge variables, scope boundaries, unresolved conflicts,
-and falsification conditions; the original nodes remain, and the capsule
-links back to them. \emph{Perspective Recall} (from Recall) builds seat
-$i$'s context as in Eq.~(4): a role-specific slice of the shared evidence
-graph added to that seat's process recall, so the seven seats never read one
-undifferentiated summary. Three dynamics complete the set. \emph{Fork} opens
-parallel research paths when evidence cannot distinguish competing
-explanations. \emph{Resurrect} re-activates a quarantined hypothesis when new
-evidence meets its resurrection conditions. \emph{Merge} records conditional
-merge candidates for the researcher to adjudicate.
-
-\subsection{Dual-Graph Governance}
-
-Process and conclusion are stored apart. The \emph{Process Graph} answers
-``how did the scientists work'': tasks, tool calls, failed routes,
-challenges, and decisions, managed by MemoBrain and freely foldable. The
-\emph{Evidence Graph} answers ``what do we now know'': ten node types
-(ResearchQuestion, Claim, Source, StudyFinding, Construct, Context,
-Blindspot, DebateCapsule, DiscriminatingStudy, DissentCertificate) and twelve
-edge types (SUPPORTS, REFUTES, QUALIFIES, CONTRADICTS, CONFOUNDS, MEDIATES,
-MODERATES, OPERATIONALIZES, DERIVED\_FROM, APPLIES\_IN, EXPOSES, TESTS).
-
-The two graphs are coupled by the \emph{Scientific Event Ledger}. Every
-formal change is first appended as an idempotent, replayable, auditable
-event, and the \emph{Graph Projector}, the ledger's only consumer and the
-evidence graph's only writer, applies the Evidence Gate and materializes the
-admitted nodes and edges (Eqs.~(2)--(3)). Write isolation is enforced at the
-database privilege level, not by coding discipline. The application role
-holds no insert, update, or truncate privilege on the evidence-graph tables,
-and the projector role holds no privilege on the ledger, so a bug on either
-side cannot forge the other's data. Refuted, quarantined, and folded nodes
-are never physically deleted; they change status and remain traceable.
-
-\subsection{The Evidence Gate}
-
-Every candidate event passes six stages: \emph{schema validation},
-\emph{semantic deduplication}, \emph{source verification}, \emph{citation
-entailment}, \emph{method quality}, and \emph{graph consistency}. Evidence is
-graded A through D. Level A requires full text with exact quotes and precise
-location; Level B is abstract plus metadata; Level C covers second-hand
-descriptions in reviews; Level D covers web or news leads. Levels B, C, and D
-can never alone support a high-confidence causal conclusion. Three audits
-apply to formal findings: source authenticity (DOI, title, authors, version,
-retraction, PDF identity), citation entailment (whether the quote supports
-the claim, whether correlation is reported as causation, whether qualifiers
-were dropped), and method quality (directness, design strength, measurement
-validity, statistical precision, replicability, external validity). A
-\emph{CausalUpgradePolicy} intercepts the combination of a cross-sectional
-design with a causal claim at stage six and quarantines the event with an
-audit record. The pipeline also tracks evidence independence. Lineage
-detection classifies same-dataset, overlapping-sample, preprint, extension,
-reanalysis, and meta-analysis-inclusion dependencies, and the interface
-reports both the paper count and the independent-evidence-cluster count: six
-papers sharing one dataset count as one independent evidence cluster.
-
-Four mechanisms defend against the subtler failure of \emph{shared} evidence
-errors. \emph{Blind evidence review} strips prestige signals (author,
-journal, citation counts) from first substantive judgments. \emph{Independent
-dual extraction} extracts high-impact findings twice through separate paths
-and escalates discrepancies. \emph{Source-diversity constraints} generate a
-Blindspot node automatically when all supporting evidence for a claim shares
-a dataset, team, country, or design. \emph{Adversarial retrieval} runs six
-classes of reverse queries (refutation, null results, alternative theories,
-measurement criticism, replication failure, boundary inversion) against the
-evidence sources for each confirmed claim.
-
-\subsection{Epistemic Routing and Blindspot Bounty}
-
-The council is not a scripted play-through of seven rounds. Gaps exposed by
-the evidence graph generate blindspot bounties (Eq.~\eqref{eq:bounty}),
-which are scored, ranked, and broadcast for seats to claim. The evidence
-state, rather than a moderator reading from a script, drives the next
-investigation direction. A blindspot is consequently a first-class object in
-the product (a radar view ranked by impact and investigability), not a
-limitations paragraph. When a bounty round closes, the system may also
-propose a \emph{DiscriminatingStudy}: a design with competing predictions
-that would resolve an open conflict, together with its expected information
-gain.
-
-\subsection{Human Directional Checkpoint}
-
-After the blindspot bounty and before joint modeling, the task pauses at one
-fixed checkpoint (\texttt{AWAITING\_COUNCIL\_INPUT}). The researcher may
-review the seven seats' precommitment positions and submit a short
-directional note (for example, ``prioritize cross-cultural boundary
-conditions''), or explicitly leave it blank and continue; both paths are
-equally valid. The note enters joint modeling only under the explicit label
-``researcher directional note, not a scientific judgment''. It never changes
-an Evidence Gate decision, never serves as evidence for or against a claim,
-and never enters a Debate Capsule or Dissent Certificate. Identical evidence
-input must produce identical claim admission, dissents, and gate decisions
-with or without a note, a property asserted by tests. The checkpoint is
-directional control, not an eighth vote.
+\emph{Vocabulary.} Gaps are called blindspots here, and bounties over them are
+what the evaluation measures. The committed graph is an evidence graph, the
+ledger is a scientific event ledger, and the operator is a researcher. None of
+these names changes the mechanism.
 
 \subsection{Engineering Realization}
 
-Poliscope is a modular monolith with an asynchronous worker and PostgreSQL as
-the source of truth; no workflow state lives only in memory. The worker
-claims tasks with \texttt{SELECT ... FOR UPDATE SKIP LOCKED}. A council run
-executes each phase in one transaction as the application role and commits;
-the projector then runs in a second transaction as the projector role. Two
-identities, two transactions, one ledger. All model calls go through a Model
-Gateway (OpenAI-compatible endpoints, streaming with a non-streaming
-fallback, per-task model configuration, cost and latency accounting), and
-all external tools go through a Tool Gateway (OpenAlex, Crossref, Semantic
-Scholar, Unpaywall, user knowledge bases). A single-seat failure degrades the
-round: the seat is marked absent with a reason on the ledger instead of
-aborting the task. Structured-output repair failures are quarantined and
-never write the formal graph. Live views are served as two SSE streams, the
+We implement the reference instantiation as \textbf{Poliscope}, an open-source
+system whose repository also carries the evaluation harness. The mechanism is
+realized as a modular monolith with an asynchronous worker and PostgreSQL as
+the source of truth; no workflow state lives only in memory. The worker claims
+tasks with \texttt{SELECT ... FOR UPDATE SKIP LOCKED}. A run executes each
+phase in one transaction as the application role and commits; the projector
+then runs in a second transaction as the projector role. Two identities, two
+transactions, one ledger. All model calls go through a model gateway
+(OpenAI-compatible endpoints, streaming with a non-streaming fallback,
+per-task model configuration, cost and latency accounting), and all external
+tools go through a tool gateway (OpenAlex, Crossref, Semantic Scholar,
+Unpaywall, operator knowledge bases). A single agent's failure degrades the
+round: the agent is marked absent with a reason on the ledger instead of
+aborting the task. Structured-output repair failures are quarantined and never
+write the committed graph. Live views are served as two SSE streams, the
 formal ledger stream and a best-effort process stream for token-level
 progress, so the audit trail is never polluted by reasoning noise. The
-implementation is open-source (MIT) at
-\url{https://github.com/Fishman-free/poliscope}, archived at
-\url{https://doi.org/10.5281/zenodo.22541350}.
+implementation is at \url{https://github.com/Fishman-free/poliscope},
+archived at \url{https://doi.org/10.5281/zenodo.22541350}.
 
 \section{Experiments}
+
+Everything in this section measures the reference instantiation of
+Section~\ref{sec:instantiation}, not the mechanism in the abstract. The three
+parameters the mechanism leaves open (roles, admission policy, graph schema)
+take their scientific values here, and the numbers below are properties of
+that setting. The mechanism-level claims of Section~3 are structural; the
+experiments test whether the structure holds up when it is actually run.
 
 \subsection{The ForesightBlindspot Benchmark and Baselines}
 
@@ -537,32 +821,32 @@ collaboration (role diversity, debate utility, belief-update quality, dissent
 preservation, false-consensus rate), and cost (cost per valid blindspot,
 tokens per admitted finding).
 
-The five baselines are configurations of the real council rather than
-separate implementations, so each adds exactly one capability over the
-previous: (1) \emph{Single-Agent Deep Research}, one researcher (the theory
+The five baselines are configurations of the real collective, not separate
+implementations, so each adds exactly one capability over the
+previous: (1) \emph{Single-Agent Deep Research}, one agent (the theory
 builder) with no protocol, no memory, and no gate; (2) \emph{Fixed
-Multi-Agent Debate}, seven seats with an undifferentiated deliberator, no
-per-seat memory, and no gate; (3) \emph{Council + Linear Context}, seven
-seats sharing one undifferentiated transcript; (4) \emph{Council + MemoBrain
-without Evidence Engine}, seven seats with per-seat memory but the gate
-removed; and (5) \emph{Full Poliscope}, the complete system.
+Multi-Agent Debate}, seven agents with an undifferentiated deliberator, no
+per-agent memory, and no gate; (3) \emph{Collective + Linear Context}, seven
+agents sharing one undifferentiated transcript; (4) \emph{Collective +
+MemoBrain without Evidence Engine}, seven agents with per-agent memory but the
+gate removed; and (5) \emph{Full Poliscope}, the complete system.
 
 \subsection{Baseline Construction Correctness}
 
 Before reporting numbers, we validated that the baselines are what they claim
 to be, and the first evaluation run exposed two construction defects. First,
-the single-agent baseline selected its seat as the alphabetically first seat
+the single-agent baseline selected its role as the alphabetically first role
 of an ordered enumeration, which happened to be the adversarial falsifier.
 The ``lone researcher'' was in fact the falsifier, and in our scripted
 material the falsifier holds the strongest blindspot answers, so the single
-agent scored as high as the full council (F1 0.8 on all five variants).
-Second, the final-rejudgment handler iterated all seven seats
-unconditionally, minting placeholder judgments for seats that never
+agent scored as high as the full collective (F1 0.8 on all five variants).
+Second, the final-rejudgment handler iterated all seven agents
+unconditionally, minting placeholder judgments for agents that never
 participated. We corrected both: the single-agent baseline explicitly uses
 the theory builder, and the rejudgment handler respects the
-participating-seat set with a compatible fallback that leaves the seven-seat
+participating-agent set with a compatible fallback that leaves the seven-agent
 production path byte-for-byte unchanged. A regression guard now asserts that
-single-seat blindspot coverage is strictly below multi-seat coverage, so a
+single-agent blindspot coverage is strictly below multi-agent coverage, so a
 future regression that collapses the baseline ladder fails immediately. We
 report this correction because the construction of the measurement instrument
 is part of the measurement.
@@ -571,11 +855,11 @@ is part of the measurement.
 
 Table~\ref{tab:results} reports the five baselines on a scripted demo case
 (screen time and adolescent depressive symptoms) in which every gateway is
-deterministic: no model calls, no network, no database. Each seat nominates
+deterministic: no model calls, no network, no database. Each agent nominates
 one specialist blindspot in the bounty round (the falsifier nominates two,
-one deliberately duplicating the boundary scientist's nomination to model
-overlapping multi-seat nominations). Gold blindspots are one keyword per
-specialist seat.
+one deliberately duplicating the boundary specialist's nomination to model
+overlapping multi-agent nominations). Gold blindspots are one keyword per
+specialist role.
 
 \begin{table}[t]
 \centering
@@ -585,36 +869,36 @@ specialist seat.
 \textbf{Baseline} & \textbf{Rec.} & \textbf{Prec.} & \textbf{F1} \\
 \midrule
 Single-Agent Deep Research & 0.143 & 0.500 & 0.222 \\
-Fixed Multi-Agent Debate & 1.000 & 0.778 & 0.875 \\
-Council + Linear Context & 1.000 & 0.778 & 0.875 \\
-Council + MemoBrain, no gate & 1.000 & 0.778 & 0.875 \\
-Full Poliscope & 1.000 & 0.778 & 0.875 \\
+\midrule
+Fixed Multi-Agent Debate & \textbf{1.000} & \textbf{0.778} & \textbf{0.875} \\
+Collective +Linear Context & \textbf{1.000} & \textbf{0.778} & \textbf{0.875} \\
+Collective +MemoBrain, no gate & \textbf{1.000} & \textbf{0.778} & \textbf{0.875} \\
+Full Poliscope & \textbf{1.000} & \textbf{0.778} & \textbf{0.875} \\
 \bottomrule
 \end{tabular}
 \caption{Blindspot recall, precision, and F1 on the scripted demo case
-(B\_dev). All four seven-seat variants find all seven gold blindspots;
-the single agent, restricted to the theory builder, finds one.}
+(B\_dev). Best per column in bold. All four seven-agent variants find all
+seven gold blindspots and are tied on every blindspot metric on this
+material; the single agent, restricted to the theory builder, finds one.}
 \label{tab:results}
 \end{table}
 
-Three findings stand out. First, blindspot coverage is driven by \emph{seat
-coverage}. The lone researcher finds one of seven specialist blindspots
-(F1 0.222), while every seven-seat variant finds all seven (F1 0.875). The
-council's contribution is real and large, and it is attributable to the set
-of seats rather than to the presence of any single one. Second, what matters
-is the \emph{set of participating seats}, not a particular seat: after the
-construction fix, the single agent's score is determined by what its own seat
-contributes, not by whether the falsifier happens to be present. Third, the
-four seven-seat variants score identically on the blindspot metric under
-scripted gateways, and this is a structural consequence of the harness. Every
-variant collects all seven seats' outputs, the scripted gateway ignores
-prompts and memory, and bounty events are admitted unconditionally by the
-gate. The contributions of the protocol, memory, and evidence gate to
-blindspot \emph{integration} are therefore not observable through this metric
-on scripted material. They surface in the auxiliary scores (dissent
-preservation, citation entailment, evidence independence) and require
-real-model runs to observe on blindspots. We treat this as an identified
-boundary of the measurement, not as a claim about the mechanisms.
+Blindspot coverage is driven by \emph{agent coverage}. The lone agent
+finds one of seven specialist blindspots (F1 0.222) while every seven-agent
+variant finds all seven (F1 0.875), so the collective's contribution is large
+and it belongs to the set of roles, not to any one role in particular.
+After the construction fix, the single agent's score follows from what its
+own role contributes, not from whether the falsifier happens to be present.
+The four seven-agent variants then score identically, which is a structural
+consequence of the harness: every variant collects all seven agents' outputs,
+the scripted gateway ignores prompts and memory, and the gate admits bounty
+events unconditionally. What the protocol, the memory layer, and the evidence
+gate add to blindspot \emph{integration} therefore leaves no trace on this
+metric when the material is scripted. Those contributions show up in the
+auxiliary scores (dissent preservation, citation entailment, evidence
+independence), and observing them on blindspots themselves requires real
+models. We treat the null result as an identified boundary of the
+measurement.
 
 \subsection{Ablation Study}
 
@@ -622,14 +906,14 @@ Beyond the five-baseline ladder, we ablate the full system one capability at
 a time (design spec 11.4): six \emph{full minus X} variants, each removing
 exactly one mechanism while everything else, including the evidence gate,
 stays intact. The removals are (1)~independent precommitment (the phase does
-not run); (2)~the adversarial falsifier seat; (3)~the evidence auditor seat;
+not run); (2)~the adversarial falsifier role; (3)~the evidence auditor role;
 (4)~the dialectical fold (JOINT MODELING skips the DebateCapsule and records
 an unfilled slot instead of silently dropping the opposition); (5)~evidence
 lineage (acquired sources arrive without dataset metadata, so evidence
 independence cannot see that two papers share one dataset); (6)~MemoBrain
-(per-seat private memory is replaced by one undifferentiated transcript).
+(per-agent private memory is replaced by one undifferentiated transcript).
 Each ablation is a configuration of the same orchestrator the full system
-runs. The switch is one flag or one seat subset, not a reimplementation, so
+runs. The switch is one flag or one agent subset, not a reimplementation, so
 the contrast with Full Poliscope isolates that capability's contribution.
 
 \begin{table*}[t]
@@ -639,50 +923,53 @@ the contrast with Full Poliscope isolates that capability's contribution.
 \toprule
 \textbf{Variant} & \textbf{Rec.} & \textbf{Prec.} & \textbf{F1} & \textbf{Indep.} & \textbf{Unfilled} \\
 \midrule
-Full Poliscope & 1.000 & 0.778 & 0.875 & 0.667 & 1 \\
-\quad$-$ Precommitment & 1.000 & 0.778 & 0.875 & 0.667 & 1 \\
-\quad$-$ Adversarial falsifier & 0.857 & 0.857 & 0.857 & 0.667 & 1 \\
+Full Poliscope & \textbf{1.000} & 0.778 & \textbf{0.875} & 0.667 & 1 \\
+\quad$-$ Precommitment & \textbf{1.000} & 0.778 & \textbf{0.875} & 0.667 & 1 \\
+\quad$-$ Adversarial falsifier & 0.857 & \textbf{0.857} & 0.857 & 0.667 & 1 \\
 \quad$-$ Evidence auditor & 0.857 & 0.750 & 0.800 & 0.667 & 1 \\
-\quad$-$ Dialectical fold & 1.000 & 0.778 & 0.875 & 0.667 & 2 \\
-\quad$-$ Lineage & 1.000 & 0.778 & 0.875 & 1.000 & 1 \\
-\quad$-$ MemoBrain & 1.000 & 0.778 & 0.875 & 0.667 & 1 \\
+\quad$-$ Dialectical fold & \textbf{1.000} & 0.778 & \textbf{0.875} & 0.667 & 2 \\
+\quad$-$ Lineage & \textbf{1.000} & 0.778 & \textbf{0.875} & 1.000$^\dagger$ & 1 \\
+\quad$-$ MemoBrain & \textbf{1.000} & 0.778 & \textbf{0.875} & 0.667 & 1 \\
 \bottomrule
 \end{tabular}
 \caption{Ablations of the full system on the same scripted case (B\_dev).
-``Indep.'' is evidence independence; ``Unfilled'' counts slots the run
-records as unfinished rather than fabricating. Each ablation removes
-exactly one capability; the adversarial falsifier and the evidence
-auditor each carry a gold blindspot of their own, which is why removing
-them costs recall.}
+Best per column in bold. ``Indep.'' is evidence independence; ``Unfilled''
+counts slots the run records as unfinished instead of fabricating them. Each
+ablation removes exactly one capability; the adversarial falsifier and the
+evidence auditor each carry a gold blindspot of their own, which is why
+removing them costs recall. $^\dagger$~Higher is worse here: removing
+lineage tracking strips dataset metadata, so sources that share a cohort are
+miscounted as independent and the system's self-report is inflated to a
+perfect $1.000$ by the absence of the mechanism that would correct it.}
 \label{tab:ablations}
 \end{table*}
 
 Table~\ref{tab:ablations} shows three mechanism-level effects. Removing the
 adversarial falsifier drops recall from 1.000 to 0.857: the publication-bias
-blindspot was its nomination, and no other seat covers it, so a council
+blindspot was its nomination, and no other role covers it, so a collective
 without a dedicated falsifier misses exactly the gap that role exists to
 find. Precision rises at the same time (0.778 to 0.857), because the
 falsifier's second nomination deliberately duplicates the boundary
 scientist's, and without the falsifier no statement is double-paid. Removing
 the evidence auditor also costs recall (1.000 to 0.857, F1 0.800): the
-provenance blindspot belonged to that seat. Removing lineage raises evidence
+provenance blindspot belonged to that role. Removing lineage raises evidence
 independence from 0.667 to 1.000. Without dataset metadata, two papers that
 share a cohort are counted as independent evidence, so the number the system
 reports about its own evidence quality is \emph{inflated by the absence of
 the very mechanism that would correct it}. The dialectical-fold ablation
 cannot move the blindspot metric, but it is visible in the honesty signal:
 the DebateCapsule disappears and the run records one additional unfilled slot
-rather than pretending the debate had no opposition. Dissent preservation is
+instead of pretending the debate had no opposition. Dissent preservation is
 a property of the protocol, and its absence is recorded, not hidden.
 
 Two ablations show no effect on this scripted material, and we say so
-plainly rather than manufacturing a difference. Removing precommitment
+plainly instead of manufacturing a difference. Removing precommitment
 removes the seven PRECOMMITMENT\_SEALED events but leaves every score
 unchanged; removing MemoBrain changes nothing either. This is the same
 structural boundary identified for the baseline ladder: a scripted gateway
 answers identically regardless of prompt, memory, or phase history, so
 protocol-level integration effects (what precommitment changes about later
-reasoning, what per-seat memory changes about what a seat recalls) are not
+reasoning, what per-agent memory changes about what an agent recalls) are not
 observable without real models. The three ablations that do show effects
 (falsifier, auditor, lineage) do so because they change a \emph{participant}
 with scripted content or the data a scoring function sees, not because the
@@ -706,7 +993,7 @@ the same model gateway (no second vendor SDK) is asked which numbered
 candidate statements semantically address that concept, and recall and
 precision are derived with the identical definitions the keyword score uses.
 A judge that is unreachable, or whose structured answer is quarantined,
-returns \emph{unmeasured} rather than silently 0.0.
+returns \emph{unmeasured} instead of a silent 0.0.
 
 We then ran five key variants (the full system, the single-agent baseline,
 and the three mechanism ablations whose scripted effects were largest)
@@ -715,7 +1002,7 @@ three runs each, and scored blindspots with the semantic judge. An initial
 eleven-variant single-run sweep was abandoned after the first endpoint
 rate-limited for two days and polluted twelve runs (unfilled slots jumped to
 46, and the judge was unreachable for every semantic call); those runs were
-discarded rather than reported. Table~\ref{tab:real} reports the three-run
+discarded, never reported. Table~\ref{tab:real} reports the three-run
 means (F1 is recomputed from mean recall and precision, not averaged over
 per-run F1s).
 
@@ -727,55 +1014,119 @@ per-run F1s).
 \textbf{Variant} & \textbf{Sem-R} & \textbf{Sem-P} & \textbf{Sem-F1} & \textbf{Unf.} & \textbf{$n$} \\
 \midrule
 Single-Agent Deep Research & 0.809 & 0.544 & 0.651 & 1.0 & 3 \\
-Full Poliscope & 0.286 & 1.000 & 0.444 & 12.3 & 3 \\
+Full Poliscope & 0.286 & \textbf{1.000} & 0.444 & 12.3 & 3 \\
 \quad$-$ Precommitment & 1.000 & 0.490 & 0.658 & 1.0 & 3 \\
-\quad$-$ Adversarial falsifier & 1.000 & 0.406 & 0.577 & 1.7 & 3 \\
-\quad$-$ Evidence auditor & 0.952 & 0.586 & 0.726 & 1.3 & 3 \\
+\quad$-$ Adversarial falsifier & \textbf{1.000} & 0.406 & 0.577 & 1.7 & 3 \\
+\quad$-$ Evidence auditor & 0.952 & 0.586 & \textbf{0.726} & 1.3 & 3 \\
 \bottomrule
 \end{tabular}
 \caption{Blindspot scoring on repeated real-model runs, means over $n=3$.
-``Sem'' is the semantic judge; R/P/F1 are recall, precision, and F1;
-``Unf.'' is the mean number of unfinished evidence slots. The keyword
-proxy is omitted: on this endpoint it again collapses to 0 for the full
-system, and the semantic judge is the controlled measurement.}
+Best per column in bold. ``Sem'' is the semantic judge; R/P/F1 are recall,
+precision, and F1; ``Unf.'' is the mean number of unfinished evidence
+slots. The keyword proxy is omitted: on this endpoint it again collapses to
+0 for the full system, and the semantic judge is the controlled measurement.
+Full Poliscope is the only variant with perfect precision, and it pays for
+that precision in recall and in unfilled protocol slots.}
 \label{tab:real}
 \end{table*}
 
-Three findings follow. \emph{First}, the semantic judge repairs the
-measurement: the keyword proxy reports recall 0.0 for the full system on
-free-form text, while the semantic judge produces a readable, non-degenerate
-distribution. \emph{Second}, repeated runs turn the earlier single-run
-reading (``sampling variance dominates'') into a stable, reproducible
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.44\textwidth, height=5.2cm,
+  ybar, bar width=5.5pt,
+  ymin=0, ymax=1.40,
+  ylabel={\scriptsize score},
+  symbolic x coords={A,B,C,D,E},
+  xtick=data,
+  xticklabels={Single,Full,$-$Pre,$-$Fal,$-$Aud},
+  xticklabel style={font=\scriptsize},
+  yticklabel style={font=\scriptsize},
+  ylabel style={font=\scriptsize},
+  xlabel={\scriptsize (a) Blindspot score, semantic judge},
+  xlabel style={yshift=-1pt},
+  legend style={font=\scriptsize, at={(0.5,0.99)}, anchor=north,
+                legend columns=2, draw=none, fill=none,
+                /tikz/every even column/.append style={column sep=8pt}},
+  enlarge x limits=0.16,
+  grid=major, grid style={epGrey!18},
+]
+\addplot[fill=epBlue!75, draw=epBlue] coordinates
+  {(A,0.809) (B,0.286) (C,1.000) (D,1.000) (E,0.952)};
+\addplot[fill=epTeal!75, draw=epTeal] coordinates
+  {(A,0.544) (B,1.000) (C,0.490) (D,0.406) (E,0.586)};
+\legend{Recall, Precision}
+\end{axis}
+\end{tikzpicture}
+\hfill
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.44\textwidth, height=5.2cm,
+  ybar, bar width=13pt,
+  ymin=0, ymax=14.5,
+  ylabel={\scriptsize unfilled slots (mean)},
+  symbolic x coords={A,B,C,D,E},
+  xtick=data,
+  xticklabels={Single,Full,$-$Pre,$-$Fal,$-$Aud},
+  xticklabel style={font=\scriptsize},
+  yticklabel style={font=\scriptsize},
+  ylabel style={font=\scriptsize},
+  xlabel={\scriptsize (b) Unfinished evidence slots},
+  xlabel style={yshift=-1pt},
+  enlarge x limits=0.16,
+  grid=major, grid style={epGrey!18},
+]
+\addplot[fill=epAmber!75, draw=epAmber] coordinates
+  {(A,1.0) (B,12.3) (C,1.0) (D,1.7) (E,1.3)};
+\end{axis}
+\end{tikzpicture}
+\caption{Repeated real-model runs ($n=3$ per variant), means. Panel~(a)
+separates the two failure modes the single F1 column conflates: the full
+system attains precision $1.000$ while the simplified variants trade it away
+for coverage. Panel~(b) shows the mechanism behind the full system's low
+recall: the same governance that lifts precision also raises the number of
+protocol slots the model leaves unfilled, from $1.0$ to $12.3$ on a
+flash-tier endpoint. ``Single'' is Single-Agent Deep Research; ``Full'' is
+complete Poliscope; the remaining three remove one component from the full
+system (precommitment, adversarial falsifier, evidence auditor).}
+\label{fig:tradeoff}
+\end{figure*}
+
+The semantic judge repairs the measurement. Where the keyword proxy reports
+recall 0.0 for the full system on free-form text, the judge produces a
+readable, non-degenerate distribution. Repeated runs then turn the earlier
+single-run reading (``sampling variance dominates'') into a stable
 \emph{precision--recall trade-off}. Full Poliscope achieves perfect precision
-($1.000$) at the cost of the lowest recall ($0.286$, exactly two of seven
-gold concepts in all three runs). Every simplified variant, including the
-lone researcher, finds nearly all gold concepts (recall $0.809$--$1.000$) at
-markedly lower precision ($0.406$--$0.586$). Removing precommitment
-reproduces recall $1.000$ in every run, so the earlier single-run
-observation was a real, repeated effect rather than a sampling artifact.
-Unfilled slots explain the gap: the full system leaves 12.3 slots unfilled on
-average (the model produced no structured nomination), against 1.0--1.7 for
-the simplified variants. Protocol burden on a flash-tier model is the binding
+($1.000$) at the cost of the lowest recall ($0.286$: exactly two of seven
+gold concepts, in all three runs). Every simplified variant, the lone
+researcher included, finds nearly all gold concepts (recall
+$0.809$--$1.000$) at markedly lower precision ($0.406$--$0.586$). Removing
+precommitment reproduces recall $1.000$ in every run, so the earlier
+single-run observation was a real, repeated effect and not a sampling
+artifact. Unfilled slots explain the gap. The full system leaves 12.3 slots
+unfilled on average when the model produces no structured nomination, against
+1.0--1.7 elsewhere, so protocol burden on a flash-tier model is the binding
 constraint: governance buys precision at the cost of recall, and under a weak
-model the recall cost dominates F1. \emph{Third}, the deterministic
-data-level scores (citation entailment $0.5$, evidence independence $0.667$,
-dissent preservation $1.0$) are identical across all fifteen runs, as
-expected for scoring that does not depend on model output.
+model the recall cost dominates F1. The deterministic data-level scores
+(citation entailment $0.5$, evidence independence $0.667$, dissent
+preservation $1.0$) are identical across all fifteen runs, as they must be
+for scoring that never reads model output.
 
 \subsection{Analysis: What the Trade-off Says About Deployment}
 
 The real-model results are not a negative result, and reading them as one
 would miss the paper's central design claim. The governance mechanisms
-EpistemoBrain adds operate at the \emph{integration} level: they shape what a
-seat reasons and recalls across rounds, and their benefit needs a model
-strong enough to sustain the full protocol without the seat absence observed
+EpistemoBrain adds operate at the \emph{integration} level: they shape what
+agents reason and recall across rounds, and their benefit needs a model
+strong enough to sustain the full protocol without the agent absence observed
 here (12.3 unfilled slots against 1.0--1.7). What the repeated runs
 establish is a deployment map. When evidence quality is the priority (a
 contested review where an admitted causal claim can be wrong in a costly
 way), the full protocol is the only configuration with perfect blindspot
 precision and intact honesty signals: dissent preservation $1.0$ across all
 fifteen runs, citation entailment and evidence independence computed from
-data rather than asserted. When coverage is the priority and the available
+data, not asserted. When coverage is the priority and the available
 model is a flash-tier one, a lighter protocol (or precommitment removed)
 recovers recall $0.809$--$1.000$ at a known, quantified precision cost. The
 scripted case isolates each mechanism's structural contribution; the
@@ -783,6 +1134,60 @@ real-model runs locate the model-strength boundary at which that isolation
 stops. Both pieces are needed to choose a configuration honestly, and the
 system reports whichever side of the trade-off it is running on instead of
 averaging the two into a single score.
+
+\subsection{Cost and Protocol Burden}
+
+Agent coverage costs something, and the ledger makes the cost countable.
+Every formal change is an event, so the ledger length of a run is a direct
+measure of how much protocol the run actually executed. Table~\ref{tab:cost}
+sets that volume against the blindspot yield.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Variant} & \textbf{Events} & \textbf{Rec.} & \textbf{Ev./blindspot} \\
+\midrule
+Single-Agent Deep Research & 34 & 0.143 & 34.0 \\
+Full Poliscope & 60 & \textbf{1.000} & \textbf{8.6} \\
+\quad$-$ Precommitment & 50 & 1.000 & 7.1 \\
+\quad$-$ Adversarial falsifier & 54 & 0.857 & 9.0 \\
+\quad$-$ Evidence auditor & 56 & 0.857 & 9.3 \\
+\quad$-$ Dialectical fold & 59 & 1.000 & 8.4 \\
+\quad$-$ Lineage & 60 & 1.000 & 8.6 \\
+\quad$-$ MemoBrain & 60 & 1.000 & 8.6 \\
+\bottomrule
+\end{tabular}
+\caption{Ledger volume against blindspot yield on the scripted case
+(B\_dev). ``Ev./blindspot'' divides ledger events by the number of gold
+blindspots found ($\mathrm{recall}\times 7$); lower is cheaper. The full
+system writes $1.8\times$ the events of the lone agent and returns
+$7\times$ the blindspot coverage, so its cost \emph{per} blindspot is about
+four times lower.}
+\label{tab:cost}
+\end{table}
+
+The lone agent is the cheapest run in absolute terms (34 events) and
+by far the most expensive per result (34.0 events per gold blindspot,
+against 8.6 for the full collective). Adding agents does not multiply cost the
+way it multiplies coverage: a seven-agent run writes $1.8\times$ the events
+of a one-agent run while returning $7\times$ the blindspots. The reason is
+structural rather than economical. Agents share one runtime, one retrieval
+cache, and one ledger, so the marginal agent adds its own structured actions
+and nothing else. Budget control in the implementation targets the same
+quantity this table measures: speaking budgets, semantic deduplication, and
+shared retrieval bound ledger growth without dropping an agent.
+
+The real-model runs invert part of this picture, and the inversion is the
+same measurement boundary the previous sections identify. Under a flash-tier
+endpoint the full system wrote \emph{fewer} events (118.3 on average) than
+every ablated variant (148.0--160.3), because an agent that cannot produce a
+schema-valid contribution also fails to emit the challenges, nominations,
+and judgments that would have followed from it. Protocol volume and recall
+move together here. The full system is not paying more for less; it is
+executing less of its own protocol, and the unfilled-slot count (12.3) is
+where the missing work is recorded, not hidden.
 
 \subsection{System Verification}
 
@@ -792,38 +1197,110 @@ PostgreSQL instance with three database identities, including privilege tests
 that assert the application role cannot write the evidence graph and the
 projector role cannot rewrite the ledger: dual-graph isolation is a database
 fact, not a code convention. Real research tasks run through the full
-seven-seat council on real OpenAI-compatible endpoints, producing conditional
-consensus, Debate Capsules, Dissent Certificates, and a synthesized final
-paper whose references are bound to DOIs. Tasks that exhaust budget or lose
-seats finish as ``completed with gaps'', with every absent seat and unfilled
-slot named in the report rather than fabricated into a success. The event
+seven-agent collective on real OpenAI-compatible endpoints, producing
+conditional consensus, Debate Capsules, Dissent Certificates, and a
+synthesized final paper whose references are bound to DOIs. Tasks that exhaust
+budget or lose agents finish as ``completed with gaps'', with every absent
+agent and unfilled slot named in the report, never fabricated into a success.
+The event
 ledger is idempotent and replay-safe (re-running a task is a no-op), and the
 streaming live view survives reconnection via Last-Event-ID.
 
 \section{Conclusion}
 
-We presented EpistemoBrain, the organizing brain of the open-source Poliscope
-system: a seven-scientist council with a formal protocol, layered memory,
-dual-graph evidence governance, an append-only event ledger with
-database-enforced write isolation, an evidence gate with three-layer audit,
-and epistemic routing through blindspot bounties. The design thesis is that
-reliable blindspot discovery is an organizational and governance problem
-rather than a prompt problem. Dissent has to survive the pipeline, evidence
-has to be audited before it becomes a conclusion, and a process note has to
-stay distinguishable from evidence. The ForesightBlindspot protocol, the
-five-baseline comparison, and the six-variant ablation ladder establish a
-measurement basis, with one open caveat: scripted gateways make the
-protocol's integration-level contributions unobservable on the blindspot
-metric, which is exactly why two of the six ablations are null on this
-material. The real-model study shows that a keyword proxy for blindspot
-recall fails on free-form text and that a semantic judge repairs the
-measurement; repeated runs then expose a stable deployment boundary rather
-than noise. Under a flash-tier model, full governance buys perfect blindspot
-precision at the cost of recall (every simplified variant, including a lone
-researcher, finds more gold concepts), and seat absence (12.3 unfilled slots
-against 1.0--1.7) is the binding constraint. Observing the integration-level
-benefits therefore requires either a stronger model or a deliberately lighter
-protocol, and the system is designed to report which regime it is in.
+We presented EpistemoBrain, which generalizes executive memory from a single
+reasoning agent to an agent collective. The unit of analysis moves from a
+private trajectory to a shared cognitive state, and each native operation
+changes meaning with it: Quarantine keeps a refuted claim and its history,
+Dialectical Fold compresses a dispute only after both positions and the
+falsification conditions survive, and Perspective Recall gives each agent its
+own projection of the shared state. That shift forces the rest of the
+architecture, and it does so without naming a task domain. Because a
+collective's memory is read by agents that did not write it, process and
+commitment are separated into two graphs joined by an append-only ledger with
+database-enforced write isolation, an admission gate checks every formal
+change before it becomes a conclusion, and a process note stays permanently
+distinguishable from commitment. Dissent is never deleted; where the
+collective cannot agree, the outcome is conditional consensus plus a named
+certificate. The design thesis is that a collective's reliability is a
+memory-and-governance problem rather than a prompt problem, and that is why
+the mechanism transfers across settings where prompt engineering does not.
+
+The ForesightBlindspot protocol, the five-baseline comparison, and the
+six-variant ablation ladder establish a measurement basis for one
+instantiation, with one open caveat: scripted gateways make the protocol's
+integration-level contributions unobservable on the blindspot metric, which is
+exactly why two of the six ablations are null on this material. The real-model
+study shows that a keyword proxy for blindspot recall fails on free-form text
+and that a semantic judge repairs the measurement; repeated runs then expose a
+stable deployment boundary, not noise. Under a flash-tier model, the
+full collective buys perfect blindspot precision at the cost of recall, and
+agent absence (12.3 unfilled slots against 1.0--1.7) is the binding constraint
+-- the memory mechanism cannot demonstrate its coverage benefit when the model
+cannot fill the slots it manages. Observing those benefits therefore requires
+either a stronger model or a deliberately lighter protocol, and the system is
+built to report which regime it is running in. The generality claim itself
+rests on construction, not on this measurement: the mechanism's
+definitions mention agents, a shared graph, and an admission policy, and
+nothing else. Running a second instantiation is the experiment that would
+convert that structural argument into an empirical one.
+
+\section*{Limitations}
+
+The boundaries of this study are as much a part of its result as the
+measurements are, and each one below names the experiment that would close
+it.
+
+\textbf{Generality is argued, not measured.} The mechanism is stated over
+agents, a shared committed graph, and an admission policy, and none of those
+three names a domain -- but that is a property of the definitions, not a
+result. Everything in Section~4 comes from one instantiation, a scientific
+controversy review, so those numbers establish that the structure holds when
+it is run, not that it transfers. Supplying a second instantiation means
+supplying three things (roles, admission policy, graph schema), which is the
+direct test, and nothing in the present study rules out that some of what we
+call mechanism is in fact an artifact of the scientific setting.
+
+\textbf{Evidence ceiling.} The acquisition pipeline reliably obtains
+bibliographic metadata and abstracts, so the strongest evidence the system
+admits unaided is Level~B. Full-text retrieval with exact, page-anchored
+quotes is implemented but not yet complete across the source corpus, and
+Level~B evidence is by design barred from supporting a high-confidence
+causal conclusion on its own. The system therefore holds itself to a
+stricter standard than its own evidence supply currently meets, which is
+conservative but caps the strength of any single admitted causal claim.
+
+\textbf{Dependence on model strength.} The integration-level benefits of the
+protocol surface only when the underlying model can carry a schema-valid
+contribution through all seven rounds. On the flash-tier endpoint used here,
+protocol burden, not governance quality, is the binding constraint:
+the full system leaves 12.3 evidence slots unfilled against 1.0--1.7 for the
+simplified variants, and that absence is what depresses its recall. The
+precision it buys is real and reproducible, but the coverage side of the
+trade-off is measured under a model that is not strong enough to exercise
+the mechanism, so the coverage claim remains open. Repeating the ladder on a
+reasoning-tier endpoint is the direct test.
+
+\textbf{Instrument still under construction.} ForesightBlindspot's
+time-sliced closed corpus and double-annotated human gold standard are not
+yet produced. The blindspot metric reported here rests on a scripted demo
+case whose statements are written to contain the gold keyword, plus a
+semantic judge over free-form output. The keyword proxy collapses to zero
+recall on real text, which is precisely why the semantic judge was added;
+until human labels exist, every number should be read together with the
+scoring protocol that produced it.
+
+\textbf{Single case, no held-out split.} The comparison runs one scripted
+case and one repeated real-model case. There is no independent test split,
+so the ablation ladder functions as a mechanism check on controlled material
+not a generalisation claim about contested questions at large.
+
+\textbf{Upstream memory integration.} The memory layer runs against an
+in-memory adapter and a simplified fold behind a frozen three-layer
+interface. Substituting the upstream implementation requires no change to the
+collective or gate layers, but the long-horizon anti-drift benefit of
+executive memory currently rests on a structural guarantee, not on a
+cross-task measurement.
 
 \section*{Acknowledgments}
 
@@ -1078,7 +1555,7 @@ unit tests; scoring functions reuse the production audit rules (causal
 upgrade policy, citation entailment verifier, lineage detection and
 evidence clustering) instead of re-deriving them, so a variant's score
 reflects the same standard the gated system is held to. Each ablation is
-one protocol switch on that same orchestrator -- a phase subset, a seat
+one protocol switch on that same orchestrator -- a phase subset, an agent
 subset, a fold flag, or a lineage-free acquirer -- never a reimplementation
 (Section~4.4). Gold blindspot matching is implemented as a keyword
 proxy, with a double-annotation agreement protocol (Kappa/Alpha

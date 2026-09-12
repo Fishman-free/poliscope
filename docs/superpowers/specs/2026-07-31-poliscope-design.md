@@ -18,14 +18,13 @@ Poliscope 不以生成更长、更流畅的文献综述为目标。它重点回�
 
 ### 1.2 核心方法
 
-系统核心方法命名为 **EpistemoBrain**。它是科学议会的集体执行记忆与组织控制层，负责：
+系统核心**算法**命名为 **EpistemoBrain**：以 MemoBrain 的依赖感知记忆图与 `Flush` / `Fold` / `Recall` 为工程基座，把它从**单智能体**的执行记忆扩展为多智能体科学共同体共享的**集体执行记忆与认识论控制器**。它由三部分构成：
 
-- 管理 7 名科学家的长期研究过程；
-- 保存重要反例、少数意见和未解决冲突；
-- 根据证据状态生成调查任务；
-- 在固定预算下控制议会轮次；
-- 维护过程记忆与正式科研证据之间的边界；
-- 形成条件化共识，而不是强制投票共识。
+1. **集体执行记忆**——记忆的所有者从「写它的人」变为「没有写它的同伴」；在固定预算下管理 7 名科学家的长期研究过程，并维护过程记忆与正式科研证据之间的边界。
+2. **异议保真记忆操作**——`Quarantine`（隔离保留重要反例与少数意见）、`Dialectical Fold`（辩证折叠，保留未解决冲突）、`Fork`（认知分叉）、`Resurrect`（假设复活）、`Perspective Recall`（角色化召回）。
+3. **盲点驱动调度**——根据证据图暴露的缺口生成调查任务，决定下一步查什么、由哪些席位查。
+
+EpistemoBrain 是 Poliscope 的**核心算法**，但不是 Poliscope 的全部：决定「谁在研究、如何互相质询」的七人科学议会协议（第 4 章），与决定「什么算证据、怎么强制」的双图证据治理（第 6 章），是本项目的另外两块设计。这一点是**结论性表述**：不得把议会协议或双图治理写成 EpistemoBrain 的组成部分。
 
 ### 1.3 核心价值主张
 
@@ -96,16 +95,21 @@ MemoBrain 原始能力包括：
 
 ### 3.2 Poliscope 扩展
 
-以下机制属于本项目设计，不得误写为 MemoBrain 原论文贡献：
+以下机制属于本项目设计，不得误写为 MemoBrain 原论文贡献。按归属分两组：
 
-- 7 人完整科学议会；
-- 私人、议会和正式证据的分层记忆；
-- Process Graph 与 Evidence Graph 双图架构；
-- Scientific Event Ledger；
-- Quarantine、Dialectical Fold、Perspective Recall；
-- Fork、Merge、Resurrect；
-- 盲点悬赏与认识论路由；
-- 条件化共识与 Dissent Certificate；
+**EpistemoBrain 的五个扩展**（核心算法的组成部分，见 1.2 与第 5 章）：
+
+- 集体执行记忆：私人 / 集体两层记忆的划分；
+- 异议保真压缩：`Dialectical Fold`；
+- 证据隔离：`Quarantine`；
+- 认知分叉：`Fork`、`Merge`、`Resurrect`；
+- 角色化召回：`Perspective Recall`；
+- 盲点驱动调度：盲点悬赏与认识论路由。
+
+**Poliscope 的其余设计**（属于系统，不属于 EpistemoBrain）：
+
+- 7 人完整科学议会协议、条件化共识与 Dissent Certificate；
+- Process Graph 与 Evidence Graph 双图架构、Scientific Event Ledger；
 - Evidence Lineage Graph；
 - ForesightBlindspot 时间切片评测。
 
@@ -125,7 +129,7 @@ MemoBrain 的 `ReasoningGraph`、`Flush`、`Fold`、`Recall` 是为**一个** Ag
 
 ## 4. 七人完整科学议会
 
-每个研究任务中，7 名科学家全程参与。EpistemoBrain 是无投票权组织脑，不是第 8 名科学家。
+每个研究任务中，7 名科学家全程参与。议会之上没有第八名科学家：调度、记录与组装由编排层承担，它无投票权，不代表任何学术立场；`EpistemoBrain` 位于编排层之下的记忆层，只负责记忆的压缩与重建，同样不参与任何裁决。
 
 **设计决策记录：为什么是「七人全程」而不是「按任务动态选组」。** 早期方案曾设计过一个 `CoalitionScore(T,B) = αCoverage(T,B) + βDiversity(T) + γConflictPotential(T) + δHistorySuccess(T,B) − λRedundancy(T) − μCost(T)`，用于给每个研究任务动态挑选一个「最适合」的科学家子集，以降低成本并体现调度智能。该方案已被否决：任何一次省略某个席位的调度决策，本质上都是在赌「这个维度这次用不上」，而争议问题的盲点恰恰经常出现在被判断为「不相关」的维度上——测量专家看似与因果争议无关，但自报告偏差往往正是该因果争议的真正根源。最终决策是**每个任务七人全程参与，成本通过其他手段控制**：每轮发言设预算（一个主动作 + 一个质询，无新增信息则 `PASS`）、语义去重后才触发重推理、复杂判断路由至强模型/格式化与抽取路由至轻量模型（见 9.4）、七人共享同一份检索与解析缓存（见 7.3）而非各自独立检索。
 
@@ -190,7 +194,7 @@ MemoBrain 的 `ReasoningGraph`、`Flush`、`Fold`、`Recall` 是为**一个** Ag
 
 ### 4.5 JOINT_MODELING 前的人类方向性引导检查点
 
-盲点悬赏（第 5 轮）结束、联合建模（第 6 轮）开始之前，存在一个**唯一、固定**的可选检查点，供研究者提供方向性引导。这不是通用的"议会任意时点快照/暂停/恢复"（那需要重构 `CouncilOrchestrator` 的阶段循环与事务边界，超出本版范围，见第 15 章与 README「已知缺口」），而是复用 Research Contract 确认流程已验证过的"状态置为等待态 → 人类调用 HTTP 接口 → 置回 `QUEUED` → Worker 重新认领"模式。
+盲点悬赏（第 5 轮）结束、联合建模（第 6 轮）开始之前，存在一个**唯一、固定**的可选检查点，供研究者提供方向性引导。这不是通用的"议会任意时点快照/暂停/恢复"（那需要重构 `CouncilOrchestrator` 的阶段循环与事务边界，超出本版范围，见第 15 章），而是复用 Research Contract 确认流程已验证过的"状态置为等待态 → 人类调用 HTTP 接口 → 置回 `QUEUED` → Worker 重新认领"模式。
 
 **状态机：**
 

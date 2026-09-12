@@ -37,6 +37,22 @@
 % amsmath for \text{...} in math mode (math in epistemobrain.tex)
 \usepackage{amsmath}
 
+% TikZ for the architecture diagram (Figure 1) and the result chart
+% (Figure 2). Both are drawn inline so the manuscript stays self-contained:
+% no external image files are required to build it.
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,shapes.geometric}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+% Colours used by both figures, kept muted so the figures read as
+% instrumentation rather than decoration (CLAUDE.md 11).
+\definecolor{epBlue}{HTML}{2F5C8F}
+\definecolor{epTeal}{HTML}{2E7D74}
+\definecolor{epAmber}{HTML}{B07D2B}
+\definecolor{epGrey}{HTML}{5A5A5A}
+\definecolor{epLight}{HTML}{F2F4F7}
+
 \begin{document}
 
 % \title / \author / \maketitle / abstract / sections / bibliography all live

@@ -3,6 +3,8 @@
 
 \subsection{记忆是公共认知层，不是私有缓存}
 
+这是多智能体推广带来的第一处变化。MemoBrain 的记忆是\textbf{私有}的：一个智能体写、同一个智能体读，压缩错了自己承担后果。议会里的记忆是\textbf{公共}的：一个席位写下的东西会被其他六个席位和研究者读到，所以压缩不再只是内部优化，而是一次\textbf{必须留痕的编辑}——这正是 Flush 要变成 Quarantine、Fold 要变成 Dialectical Fold 的原因。
+
 Poliscope 把「记得什么」分成三层，各层回答不同的问题，也遵守不同的写入规则。
 
 \begin{table}[ht]
@@ -56,7 +58,9 @@ load_snapshot(agent_id)
 \end{tcolorbox}
 \end{center}
 
-六项有一项丢失，折叠结果即标记为 rejected、原快照保留。普通 Fold 只能作用于过程图；证据图只允许保留异议的辩证折叠（Dialectical Fold，第 6.7 节），两条折叠路径不可混用。
+六项有一项丢失，折叠结果即标记为 rejected、原快照保留。
+
+这里有一条容易忽略的分界：普通 Fold 只能作用于过程图。证据图只允许保留异议的辩证折叠（Dialectical Fold，第 6.7 节），两条折叠路径不可混用——它们保护的东西不同，一条守着上下文预算，另一条守着异议本身。
 
 \subsection{Perspective Recall：同一份证据，不同的排序}
 
@@ -64,7 +68,9 @@ load_snapshot(agent_id)
 \[
 \text{Context}_i = \text{ProcessRecall}_i + \text{EvidenceProjection}_i
 \]
-这同时避开了多智能体两个常见失败：每个 Agent 重复阅读全部材料，以及所有 Agent 最终收敛出相同观点。去重的是检索成本，不是认知视角。
+这同时避开了多智能体两个常见失败：每个 Agent 重复阅读全部材料，以及所有 Agent 最终收敛出相同观点。
+
+去重的是检索成本，不是认知视角。
 
 \subsection{认识论路由：让证据状态调度调查}
 
