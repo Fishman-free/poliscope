@@ -97,7 +97,19 @@ function summarise(event: LedgerEvent): string {
   }
   const assignments = payload.assignments;
   if (Array.isArray(assignments)) {
-    parts.push(t("{0} 项分派", assignments.length));
+    // One row stands for the whole division table. The bare count reads as
+    // "some work went out"; naming how many blindspots it covers and how many
+    // assignments it took is what makes the seven-seat split visible in a
+    // single line (design doc 6: every blindspot goes to all seven seats).
+    const blindspots = new Set<string>();
+    for (const item of assignments) {
+      const id =
+        typeof item === "object" && item !== null
+          ? (item as Record<string, unknown>).blindspot_id
+          : undefined;
+      if (typeof id === "string") blindspots.add(id);
+    }
+    parts.push(t("{0} 条盲点 · {1} 项分派", blindspots.size, assignments.length));
   }
   const consensus = payload.conditional_consensus;
   if (typeof consensus === "string" && consensus) parts.push(consensus);

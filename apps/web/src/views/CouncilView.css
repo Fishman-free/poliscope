@@ -152,6 +152,42 @@
   word-break: break-word;
 }
 
+/* 悬赏分派：席位拿到的那批盲点，折叠起来免得把时间线撑成一堵墙。 */
+.council__bounty-list {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2) var(--space-3);
+  list-style: none;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.council__bounty-list li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: var(--text-small);
+  color: var(--ink-2);
+  line-height: 1.45;
+  border-top: 1px solid var(--line);
+}
+
+.council__bounty-list li:first-child {
+  border-top: none;
+}
+
+.council__bounty-list li > span:last-child {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.council__bounty-rank {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
 /* 最终立场汇总：七位科学家独立复判并排，非投票裁决（CLAUDE.md 4）。 */
 .council__stance {
   margin-bottom: var(--space-5);
@@ -268,25 +304,30 @@
 
 /* Round-12 恢复：模型思考过程（原始模型输出，折叠、等宽、明确标注为
  * 过程数据而非证据）。不做任何动画。 */
-.council__tl-item > .council__reasoning {
+.council__tl-item > .council__reasoning,
+.council__tl-item > .council__bounty {
   width: 100%;
 }
 
-.council__tl-item > .council__reasoning + .council__reasoning {
+.council__tl-item > .council__reasoning + .council__reasoning,
+.council__tl-item > .council__bounty + .council__bounty {
   margin-top: 0;
 }
 
-.council__reasoning {
+.council__reasoning,
+.council__bounty {
   border: 1px solid var(--app-hairline, var(--line));
   border-radius: var(--radius-2);
   background: var(--app-surface, var(--surface-0));
 }
 
-.council__reasoning + .council__reasoning {
+.council__reasoning + .council__reasoning,
+.council__bounty + .council__bounty {
   margin-top: var(--space-2);
 }
 
-.council__reasoning summary {
+.council__reasoning summary,
+.council__bounty summary {
   display: flex;
   align-items: baseline;
   justify-content: space-between;

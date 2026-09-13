@@ -90,9 +90,17 @@ interface SeatTimelineEntry {
   payload: Record<string, unknown>;
 }
 
+/** One seat's share of a bounty: its fixed angle on the blindspots, plus the
+ * blindspots themselves in priority order. */
+interface BountyAssignment {
+  rank: number;
+  task: string;
+  statement: string;
+}
+
 /** Every seat's timeline entries, keyed by seat value. BOUNTY_ASSIGNED is
- * expanded per assignment (its payload carries an array of target seats),
- * so bounty work shows up on each assigned scientist's own line. */
+ * regrouped per seat (its payload carries one row per seat per blindspot), so
+ * bounty work shows up on each assigned scientist's own line. */
 function timelineBySeat(events: LedgerEvent[]): Map<string, SeatTimelineEntry[]> {
   const spans = phaseSpans(events);
   const map = new Map<string, SeatTimelineEntry[]>();
@@ -101,22 +109,55 @@ function timelineBySeat(events: LedgerEvent[]): Map<string, SeatTimelineEntry[]>
     list.push(entry);
     map.set(seat, list);
   };
+  // An assignment names its blindspot by id only, so the statement a seat was
+  // asked to look at is resolved from the blindspot's own node event in this
+  // ledger. Without the join a seat's line could show its angle but not what
+  // the angle was aimed at (design doc 6: the whole council investigates the
+  // same blindspot from seven complementary roles).
+  const blindspotStatements = new Map<string, string>();
+  for (const event of events) {
+    if (event.kind !== "Blindspot") continue;
+    const payload = event.payload as Record<string, unknown>;
+    if (typeof payload.node_id === "string" && typeof payload.statement === "string") {
+      blindspotStatements.set(payload.node_id, payload.statement);
+    }
+  }
   for (const event of events) {
     const payload = event.payload as Record<string, unknown>;
     if (event.kind === "BOUNTY_ASSIGNED") {
       const assignments = payload.assignments;
       if (Array.isArray(assignments)) {
+        // Every blindspot is handed to all seven seats, and a seat's angle is
+        // fixed by its role -- so one row per blindspot would repeat the same
+        // angle dozens of times down a card (a 46-blindspot run produces 322
+        // rows). Group by seat: the angle is stated once, and the blindspots
+        // it applies to are listed under it.
+        const grouped = new Map<string, BountyAssignment[]>();
         for (const item of assignments) {
           if (typeof item !== "object" || item === null) continue;
-          const target = (item as Record<string, unknown>).target_seat;
-          if (typeof target === "string") {
-            push(target, {
-              sequence: event.workspace_version,
-              kind: event.kind,
-              phase: phaseFor(spans, event.workspace_version),
-              payload: item as Record<string, unknown>,
-            });
-          }
+          const assignment = item as Record<string, unknown>;
+          const target = assignment.target_seat;
+          if (typeof target !== "string") continue;
+          const blindspotId = assignment.blindspot_id;
+          const list = grouped.get(target) ?? [];
+          list.push({
+            rank: typeof assignment.priority_rank === "number" ? assignment.priority_rank : 0,
+            task: typeof assignment.task === "string" ? assignment.task : "",
+            statement:
+              typeof blindspotId === "string"
+                ? (blindspotStatements.get(blindspotId) ?? "")
+                : "",
+          });
+          grouped.set(target, list);
+        }
+        for (const [seat, items] of grouped) {
+          items.sort((a, b) => a.rank - b.rank);
+          push(seat, {
+            sequence: event.workspace_version,
+            kind: event.kind,
+            phase: phaseFor(spans, event.workspace_version),
+            payload: { assignments: items },
+          });
         }
       }
       continue;
@@ -225,13 +266,35 @@ function TimelineEntry({ entry }: { entry: SeatTimelineEntry }) {
   }
 
   if (kind === "BOUNTY_ASSIGNED") {
-    const rank = payload.priority_rank;
+    const items: BountyAssignment[] = Array.isArray(payload.assignments)
+      ? (payload.assignments as BountyAssignment[])
+      : [];
+    // The angle is fixed per role, so it is the same on every row -- state it
+    // once from the seat's own assignments rather than per blindspot.
+    const task = items.find((item) => item.task)?.task ?? "";
     return (
       <li className="council__tl-item">
-        <span className="council__tl-label">{t("认领盲点悬赏")}</span>
+        <span className="council__tl-label">{t("盲点悬赏分派")}</span>
         <span className="council__tl-meta">
-          {typeof rank === "number" ? t("优先级 #{0}", rank) : ""}
+          {items.length ? t("{0} 项分派", items.length) : ""}
         </span>
+        {task ? <p className="council__tl-text">{t("角度：{0}", task)}</p> : null}
+        {items.length ? (
+          <details className="council__bounty">
+            <summary>
+              {t("被分派的盲点")}
+              <span className="council__reasoning-hint">{t("按优先级排序")}</span>
+            </summary>
+            <ol className="council__bounty-list">
+              {items.map((item) => (
+                <li key={item.rank}>
+                  <span className="council__bounty-rank mono">#{item.rank}</span>
+                  <span>{item.statement || t("（未记录盲点内容）")}</span>
+                </li>
+              ))}
+            </ol>
+          </details>
+        ) : null}
       </li>
     );
   }
