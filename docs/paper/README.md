@@ -9,7 +9,7 @@ https://aclanthology.org/2026.findings-acl.127/ ）的章节结构与文风撰�
 - `epistemobrain.tex` — 论文正文（标题、作者、摘要、正文、参考文献、附录都在此文件内），是 self-contained body：不含 `\documentclass`，编译时接入官方 ACL 模板的 `.sty`
 - `epistemobrain_main.tex` — 编译驱动（wrapper）：提供 ACL 模板 preamble 与 `\begin{document}`，`\input{epistemobrain}` 引入正文
 - `acl.sty` — 官方 ACL 模板（来自 https://github.com/acl-org/acl-style-files ，仓库根目录），编译依赖
-- `epistemobrain_main.pdf` — 已编译的 PDF（ACL Findings 2026 版式，11 页，由 `epistemobrain_main.tex` 编译生成；旧的独立构建 `epistemobrain.pdf` 已删除）
+- `epistemobrain_main.pdf` — 已编译的 PDF（ACL Findings 2026 版式，16 页，由 `epistemobrain_main.tex` 编译生成；旧的独立构建 `epistemobrain.pdf` 已删除）
 - `README.md` — 本文件
 
 ## 作者信息（按要求填写）
