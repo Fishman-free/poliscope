@@ -18,7 +18,7 @@
 import { flushSync } from "react-dom";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
-import { cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout, reResearch, rerunFresh, resumeTask } from "./api/client";
+import { ApiError, cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout, reResearch, rerunFresh, resumeTask } from "./api/client";
 import type { ResearchBrief, TaskSummary } from "./api/types";
 import { SEAT_LABELS, type Seat } from "./api/types";
 import { useWorkspace } from "./api/useWorkspace";
@@ -26,6 +26,7 @@ import { ReResearchDialog } from "./components/ReResearchDialog";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Spinner, TaskStatusBadge } from "./components/primitives";
 import { LOCALE_LABELS, LOCALES, setLocale, t, useLocale } from "./i18n";
+import { shareTokenFromPath } from "./routing";
 import { AccountMenu } from "./views/AccountMenu";
 import { AuditView } from "./views/AuditView";
 import { AuthView } from "./views/AuthView";
@@ -34,7 +35,6 @@ import { BriefView } from "./views/BriefView";
 import { CheckpointGate } from "./views/CheckpointGate";
 import { CouncilView } from "./views/CouncilView";
 import { EvolutionView } from "./views/EvolutionView";
-import { AnnotationView } from "./views/AnnotationView";
 import { FollowUpView } from "./views/FollowUpView";
 
 import { ResearchToolsView } from "./views/ResearchToolsView";
@@ -62,8 +62,7 @@ type Tab =
   | "knowledge"
   | "followup"
 
-  | "tools"
-  | "annotations";
+  | "tools";
 
 /** No-task home has two screens behind a small segmented control. */
 type HomeView = "newtask" | "knowledge";
@@ -84,7 +83,6 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "followup", label: "Follow-up", hint: "完成后追问模型" },
 
   { id: "tools", label: "Research Tools", hint: "成本、裁决、分享与时间旅行" },
-  { id: "annotations", label: "Annotations", hint: "人工标注与评分者一致性" },
 ];
 
 /** While the task sits at this checkpoint, poll for the status change that
@@ -516,6 +514,10 @@ export function App() {
   // busyTask 绑定具体正在变动的任务：让「重新研究/继续研究/停止」的 loading
   // 只落在那一行的按钮上，而不是禁用整片界面。值为 null 表示没有任务在变动。
   const [busyTask, setBusyTask] = useState<string | null>(null);
+  // 操作失败的原因（原始消息，渲染时再翻译，切换语言才能跟着变）。这些
+  // 操作都会改任务状态，静默失败会让研究者以为点了没反应，所以失败必须
+  // 在界面上留痕；下一次操作开始时清掉。
+  const [actionError, setActionError] = useState<string | null>(null);
 
   function isStatusIn(
     set: Set<string>,
@@ -531,6 +533,7 @@ export function App() {
   const runMutation = useCallback(
     async (target: string, mutate: (id: string) => Promise<unknown>): Promise<boolean> => {
       if (busyTask) return false;
+      setActionError(null);
       setBusyTask(target);
       try {
         await mutate(target);
@@ -539,8 +542,12 @@ export function App() {
         }
         return true;
       } catch (cause) {
-        // 失败保留现状，不把界面推进到一个没发生的状态。
+        // 失败保留现状，不把界面推进到一个没发生的状态——而且必须**说出来**。
+        // 只写 console 等于告诉研究者「点了没反应」：生产上「重新研究点两个
+        // 按钮都没反应」就是这么来的，服务端 500 了四次的请求在界面上一次
+        // 痕迹都没有。宁可给一句朴素的原因，也不给一片沉默。
         console.error(cause);
+        setActionError(cause instanceof ApiError ? cause.message : String(cause));
         return false;
       } finally {
         setBusyTask(null);
@@ -594,14 +601,17 @@ export function App() {
   /** 「停止研究」（round-10）：停止当前正在运行或排队的任务。 */
   async function handleStopResearch() {
     if (!taskId || busyTask) return;
+    setActionError(null);
     setBusyTask(taskId);
     try {
       await cancelTask(taskId);
       // 状态由 stream / snapshot 驱动刷新；这里立即拉一次让界面快速反映。
       await refresh();
     } catch (cause) {
-      // 停止失败保留现状，不把界面推进到一个没发生的状态。
+      // 停止失败保留现状，不把界面推进到一个没发生的状态（同 runMutation：
+      // 失败要说出来，不能让「停止研究」看着像点了没反应）。
       console.error(cause);
+      setActionError(cause instanceof ApiError ? cause.message : String(cause));
     } finally {
       setBusyTask(null);
     }
@@ -663,10 +673,12 @@ export function App() {
 
   // A2 public read-only share: /shared/{token} renders WITHOUT the auth gate
   // or the workspace chrome. The server has already redacted the snapshot, so
-  // no token, sidebar, follow-up or model panel is offered.
-  const sharedMatch = window.location.pathname.match(/^\/shared\/([^/]+)\/?$/);
-  if (sharedMatch) {
-    return <SharedView token={decodeURIComponent(sharedMatch[1] ?? "")} />;
+  // no token, sidebar, follow-up or model panel is offered. The path shape
+  // lives in routing.ts because main.tsx has to agree with this branch for the
+  // view to be reachable at all.
+  const shareToken = shareTokenFromPath(window.location.pathname);
+  if (shareToken !== null) {
+    return <SharedView token={shareToken} />;
   }
 
   if (auth !== "authed") {
@@ -882,6 +894,18 @@ export function App() {
                   </div>
                 </div>
 
+                {/* 重新研究/继续研究/停止失败的可见痕迹。这些操作都会改任务
+                    状态，静默失败会直接被读成「按钮没反应」，所以失败停在
+                    任务头上，直到下一次操作。 */}
+                {actionError ? (
+                  <p className="app__action-error" role="alert">
+                    {t(
+                      "操作没有生效：{0}。任务状态保持不变，可以重试。",
+                      actionError,
+                    )}
+                  </p>
+                ) : null}
+
                 <nav className="app__tabs" aria-label={t("视图")}>
                   {TABS.map((item) => (
                     <button
@@ -1049,9 +1073,6 @@ export function App() {
                         onChanged={refresh}
                         onOpenTask={open}
                       />
-                    ) : null}
-                    {tab === "annotations" && taskId ? (
-                      <AnnotationView taskId={taskId} snapshot={snapshot} />
                     ) : null}
                     </ErrorBoundary>
                   </div>

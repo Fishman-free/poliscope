@@ -1,5 +1,15 @@
 """ORM models for the ForesightBlindspot human-annotation workflow (C9).
 
+**The workflow itself was removed** — ``annotation_store.py``, the API router
+and the workbench view are gone, so nothing reads or writes these tables any
+more. The mappings stay because the tables do: migrations are immutable
+history, and dropping the tables was a deliberate "later, if ever" call rather
+than part of removing the feature. They must stay in ``Base.metadata`` for as
+long as the tables exist, or the next ``alembic revision --autogenerate``
+would emit ``drop_table`` for all three and the schema-drift test would fail
+(see ``tests/integration/test_schema_drift.py``). Deleting this file means
+also writing a migration that drops the tables.
+
 These tables (migration 0026) back the missing pipeline that
 ``packages.evaluation.agreement`` was always written to consume but had no way
 to collect:

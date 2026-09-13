@@ -295,26 +295,6 @@ class ModelOverrideRequest(ContractModel):
     clear: bool = False
 
 
-class AnnotationItemInput(ContractModel):
-    ref_kind: str
-    ref_node_id: str
-    statement: str
-    position: FrozenDict[str, object] | None = None
-
-
-class AnnotationCreateRequest(ContractModel):
-    title: str = ""
-    note: str = ""
-    items: tuple[AnnotationItemInput, ...] = ()
-
-
-class AnnotationLabelRequest(ContractModel):
-    item_id: UUID
-    rater_name: str
-    label: str
-    note: str = ""
-
-
 class SaveToKnowledgeRequest(ContractModel):
     """Body for A4: distil a finished task into one knowledge-base document."""
 

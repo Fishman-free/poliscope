@@ -5,7 +5,6 @@ Covers the HTTP surface added for A1-A4 / B6 / C9-C10 / D12:
 - A3 replay status gate and the deterministic claim-set compare;
 - A4 save-to-knowledge terminal-state gate;
 - B6 researcher adjudication appending a PROCESS-only ledger event;
-- C9 annotation batch lifecycle with inter-rater agreement;
 - C10 model hot-swap state gate (draft editable, RUNNING refused 409).
 
 Everything goes over HTTP against the real ASGI app and a real PostgreSQL
@@ -14,15 +13,19 @@ container, so routing, dependency injection and role grants are all exercised.
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from packages.epistemo.contracts import TaskStatus
 from packages.evidence.models import ScientificEventModel
+from packages.research.models import ResearchTaskModel
+from packages.research.repository import ResearchRepository
 from tests.factories import make_research_contract
 
 
@@ -80,6 +83,55 @@ async def test_replay_refuses_a_task_that_is_not_finished(
         f"/api/tasks/{task_id}/replay", json={"corpus_cutoff": "2018-12-31"}
     )
     assert response.status_code == 409, response.text
+
+
+async def test_replay_clones_a_finished_task_with_a_knowledge_base(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """时间旅行复跑必须真的跑得起来（生产 500 回归）。
+
+    ``replay_at_cutoff`` 只是 ``rerun_fresh`` 的薄封装，所以它继承了同一个
+    缺陷：从数据库读回的 UUID 是 asyncpg 的子类，重建契约时被
+    ``ContractModel`` 的精确类型叶子检查拒绝，接口 500。之前这里只测了
+    「未完成任务被拒」（409），成功路径从未跑过，缺陷因此躲过了整套测试。
+    """
+    knowledge_base = await api_client.post(
+        "/api/knowledge-bases", json={"name": "replay-kb"}
+    )
+    assert knowledge_base.status_code == 201, knowledge_base.text
+    knowledge_base_id = knowledge_base.json()["id"]
+
+    contract = make_research_contract().model_dump(mode="json")
+    contract["knowledge_base_id"] = knowledge_base_id
+    created = await api_client.post("/api/tasks", json=contract)
+    assert created.status_code == 201, created.text
+    task_id = created.json()["task_id"]
+    chosen = created.json()["suggested_claims"][0]["id"]
+    await api_client.post(
+        f"/api/tasks/{task_id}/confirm-claims", json={"claim_ids": [chosen]}
+    )
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(status=TaskStatus.COMPLETED)
+        )
+        await session.commit()
+
+    response = await api_client.post(
+        f"/api/tasks/{task_id}/replay", json={"corpus_cutoff": "2018-12-31"}
+    )
+    assert response.status_code == 200, response.text
+    replay_id = response.json()["task_id"]
+    assert replay_id != task_id
+
+    async with app_sessions() as session:
+        replay = await ResearchRepository(session).get_task(UUID(replay_id))
+    assert replay.status == TaskStatus.QUEUED
+    assert replay.corpus_cutoff == date(2018, 12, 31)
+    assert replay.replay_of_task_id == UUID(task_id)
+    assert replay.knowledge_base_id == UUID(knowledge_base_id)
 
 
 async def test_compare_two_owned_tasks_returns_set_difference(
@@ -148,65 +200,6 @@ async def test_adjudication_rejects_blank_target(
         json={"target_key": "  ", "decision": ""},
     )
     assert response.status_code == 422
-
-
-# --- C9 human annotation ---------------------------------------------------
-
-
-async def test_annotation_batch_labels_and_agreement(
-    api_client: httpx.AsyncClient,
-) -> None:
-    task_id = await _create_task(api_client)
-    created = await api_client.post(
-        f"/api/tasks/{task_id}/annotation-batches",
-        json={
-            "title": "batch",
-            "note": "",
-            "items": [
-                {
-                    "ref_kind": "blindspot",
-                    "ref_node_id": str(uuid4()),
-                    "statement": "Possible publication bias",
-                    "position": {},
-                },
-                {
-                    "ref_kind": "claim",
-                    "ref_node_id": str(uuid4()),
-                    "statement": "Correlation is not causation here",
-                    "position": {},
-                },
-            ],
-        },
-    )
-    assert created.status_code == 201, created.text
-    batch_id = created.json()["batch_id"]
-    assert created.json()["item_count"] == 2
-
-    listed = await api_client.get(f"/api/tasks/{task_id}/annotation-batches")
-    assert listed.status_code == 200
-    assert any(b["id"] == batch_id for b in listed.json())
-
-    # Two raters agree on both items -> Cohen's kappa is 1.0.
-    detail_url = f"/api/annotation-batches/{batch_id}"
-    detail = (await api_client.get(detail_url)).json()
-    item_ids = [item["id"] for item in detail["items"]]
-    for rater in ("alice", "bob"):
-        for item_id in item_ids:
-            labelled = await api_client.post(
-                f"/api/annotation-batches/{batch_id}/labels",
-                json={
-                    "item_id": item_id,
-                    "rater_name": rater,
-                    "label": "relevant",
-                    "note": "",
-                },
-            )
-            assert labelled.status_code == 200, labelled.text
-
-    final = (await api_client.get(detail_url)).json()
-    assert final["agreement"]["rater_count"] == 2
-    assert final["agreement"]["method"] == "cohen_kappa"
-    assert final["agreement"]["score"] == 1.0
 
 
 # --- C10 model hot-swap ----------------------------------------------------

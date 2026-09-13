@@ -26,8 +26,6 @@ import type {
   TaskSummary,
   UploadedPaper,
   VerificationResponse,
-  AnnotationBatchDetail,
-  AnnotationBatchSummary,
   TaskCompare,
   WorkspaceSnapshot,
 } from "./types";
@@ -1010,34 +1008,3 @@ export function setTaskModelOverride(
   });
 }
 
-/** C9: create an annotation batch from frozen blindspot/claim items. */
-export function createAnnotationBatch(
-  taskId: string,
-  items: { ref_kind: string; ref_node_id: string | null; statement: string; position?: Record<string, unknown> }[],
-  title?: string,
-): Promise<{ batch_id: string; item_count: number }> {
-  return postJson(`/api/tasks/${taskId}/annotation-batches`, { items, title: title ?? null, note: "" });
-}
-
-export function listAnnotationBatches(taskId: string): Promise<AnnotationBatchSummary[]> {
-  return getJson<AnnotationBatchSummary[]>(`/api/tasks/${taskId}/annotation-batches`);
-}
-
-export function fetchAnnotationBatch(batchId: string): Promise<AnnotationBatchDetail> {
-  return getJson<AnnotationBatchDetail>(`/api/annotation-batches/${batchId}`);
-}
-
-export function addAnnotationLabel(
-  batchId: string,
-  itemId: string,
-  raterName: string,
-  label: string,
-  note = "",
-): Promise<{ ok: boolean; agreement: AnnotationBatchDetail["agreement"] }> {
-  return postJson(`/api/annotation-batches/${batchId}/labels`, {
-    item_id: itemId,
-    rater_name: raterName,
-    label,
-    note,
-  });
-}

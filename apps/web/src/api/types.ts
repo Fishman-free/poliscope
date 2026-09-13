@@ -514,44 +514,6 @@ export interface UsageViewData {
   } | null;
 }
 
-/** C9 human-annotation batch. Labels are per-rater judgments about the
- * system's output; agreement is Cohen's kappa (2 raters) or Krippendorff's
- * alpha (3+). */
-export interface AnnotationLabel {
-  rater_name: string;
-  label: string;
-  note: string;
-}
-
-export interface AnnotationItemData {
-  id: string;
-  ref_kind: string;
-  ref_node_id: string | null;
-  statement: string;
-  position: Record<string, unknown>;
-  labels: AnnotationLabel[];
-}
-
-export interface AnnotationBatchSummary {
-  batch_id: string;
-  task_id: string;
-  title: string | null;
-  created_by: string;
-  created_at: string;
-  item_count: number;
-  rater_count: number;
-}
-
-export interface AnnotationBatchDetail extends AnnotationBatchSummary {
-  items: AnnotationItemData[];
-  agreement: {
-    method: string;
-    value: number | null;
-    raters: number;
-    note: string | null;
-  };
-}
-
 /** A3 deterministic claim-set diff between two owned tasks. */
 export interface TaskCompare {
   task_a: { task_id: string; claim_count: number };

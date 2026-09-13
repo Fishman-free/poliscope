@@ -615,6 +615,20 @@
   color: var(--app-ink-3);
 }
 
+/* 任务头下的操作失败提示（重新研究/继续研究/停止）。用与工作台加载失败
+   同一套 failed 令牌，留在任务头上而不是弹层：这是一条状态信息，研究员
+   要能对照着按钮读完，再决定重试还是换个入口。 */
+.app__action-error {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--app-op-failed-border);
+  background: var(--app-op-failed-soft);
+  border-radius: var(--radius-2);
+  color: var(--app-ink-2);
+  font-size: var(--text-small);
+  max-width: 68ch;
+}
+
 /* Loading escape + error recovery actions: a wedged history open must always
    leave the researcher a way out (never a dead "载入中…" trap). */
 .app__loading {

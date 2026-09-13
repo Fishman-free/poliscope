@@ -24,6 +24,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.epistemo.contracts import TaskStatus
+from packages.kernel.database import canonical_uuid
 from packages.research.atomization import AtomicClaimCandidate
 from packages.research.contracts import (
     EvidenceDemandType,
@@ -107,6 +108,32 @@ class StoredTask:
     share_created_at: datetime | None = None
     # C10 hot-swap override applied on top of the creation snapshot.
     model_config_override: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        """Normalise the identity fields asyncpg handed back.
+
+        ``PGUUID`` columns come back as ``asyncpg.pgproto.pgproto.UUID``, a
+        *subclass* of ``uuid.UUID``. That is invisible nearly everywhere --
+        it compares and hashes identically -- but not to ``ContractModel``,
+        whose leaf check is exact-type on purpose (a scalar subclass can
+        carry mutable state). So rebuilding a ``ResearchContract`` out of a
+        stored task (「从头研究」/「重新研究」/ 时间旅行复跑) raised a
+        ValidationError and answered 500, on exactly the tasks that carried a
+        knowledge base or skills, while the same contract built from an HTTP
+        body worked -- which is how it escaped the suite. Normalising here is
+        the fix ``packages.kernel.database`` prescribes: convert at the
+        database boundary, not at every consumer.
+        """
+        for name in ("task_id", "knowledge_base_id", "user_id", "replay_of_task_id"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, canonical_uuid(value))
+        if self.skill_ids:
+            object.__setattr__(
+                self,
+                "skill_ids",
+                tuple(canonical_uuid(value) for value in self.skill_ids),
+            )
 
 
 class TaskNotFound(Exception):

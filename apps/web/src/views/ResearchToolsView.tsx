@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   adjudicate,
   compareTasks,
+  createKnowledgeBase,
   fetchKnowledgeBases,
   mintShareToken,
   replayAtCutoff,
@@ -449,6 +450,11 @@ function SaveToKnowledgeSection({
   const [bases, setBases] = useState<KnowledgeBaseSummary[]>([]);
   const [kbId, setKbId] = useState("");
   const { busy, message, run } = useBusy();
+  // 就地新建：沉淀是「读完研究、决定留下来」的那一刻，这一刻把研究者推去
+  // 知识库页新建、再回来重选，是一段没有必要的往返。
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
   useEffect(() => {
     void fetchKnowledgeBases()
       .then((list) => {
@@ -458,6 +464,24 @@ function SaveToKnowledgeSection({
       .catch(() => undefined);
   }, []);
   const canSave = TERMINAL.has(status);
+
+  async function createBase() {
+    const name = newName.trim();
+    if (!name) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const created = await createKnowledgeBase(name);
+      setBases((list) => [...list, created]);
+      setKbId(created.id);
+      setNewName("");
+      setCreating(false);
+    } catch (cause) {
+      setCreateError(cause instanceof Error ? cause.message : String(cause));
+      setCreating(false);
+    }
+  }
+
   return (
     <Section title={t("沉淀到知识库")}>
       <p className="rt-note">
@@ -487,7 +511,48 @@ function SaveToKnowledgeSection({
         >
           {canSave ? t("沉淀本次研究") : t("任务完成后才能沉淀")}
         </button>
+        <button
+          type="button"
+          disabled={busy || creating}
+          onClick={() => {
+            setCreateError(null);
+            setCreating((value) => !value);
+          }}
+        >
+          {t("新建知识库")}
+        </button>
       </div>
+      {creating ? (
+        <div className="rt-actions">
+          <input
+            type="text"
+            value={newName}
+            autoFocus
+            placeholder={t("新知识库名称")}
+            aria-label={t("新知识库名称")}
+            onChange={(event) => setNewName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void createBase();
+              if (event.key === "Escape") setCreating(false);
+            }}
+          />
+          <button
+            type="button"
+            disabled={creating || !newName.trim()}
+            onClick={() => void createBase()}
+          >
+            {creating ? t("创建中…") : t("创建知识库")}
+          </button>
+          <button type="button" onClick={() => setCreating(false)}>
+            {t("取消")}
+          </button>
+        </div>
+      ) : null}
+      {createError ? (
+        <p className="rt-message" role="alert">
+          {t("新建知识库失败：{0}", createError)}
+        </p>
+      ) : null}
       {message ? <p className="rt-message">{message}</p> : null}
     </Section>
   );

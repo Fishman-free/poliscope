@@ -589,7 +589,6 @@ Skill 场景可用 curl 直接调用该接口（见上表）。上传的字节�
 | `POST` | `/api/tasks/{id}/adjudicate` | 研究者裁决（合并候选等争议动力学收口） |
 | `POST` | `/api/tasks/{id}/save-to-knowledge` | 把任务结论存入知识库 |
 | `PUT` | `/api/tasks/{id}/model-override` | 任务级模型覆盖（对已创建任务换端点） |
-| `POST` / `GET` | `/api/tasks/{task_id}/annotation-batches`、`/api/annotation-batches/{id}`、`/labels` | 人工标注批次（评测体系） |
 
 工作台是**一个**端点而不是每个面板一个，这样 Research Brief、Controversy Map 和议会状态不可能显示三个不同时刻的状态。`workspace_version` 是快照对应的账本序号。
 

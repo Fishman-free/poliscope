@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from apps.api.schemas import ConfirmClaimsRequest, CreateTaskRequest
 from packages.epistemo.contracts import TaskStatus
 from packages.research.models import ResearchTaskModel
+from packages.research.repository import ResearchRepository
 from tests.factories import make_research_contract
 
 
@@ -307,6 +308,54 @@ async def test_rerun_fresh_creates_a_brand_new_queued_task(
     # 从头克隆后删除当前任务：原 id 不再可读。
     original = await api_client.get(f"/api/tasks/{task_id}")
     assert original.status_code == 404
+
+
+async def test_rerun_fresh_keeps_a_knowledge_base_task_runnable(
+    api_client: httpx.AsyncClient,
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """连了知识库的任务必须仍然能重新研究（生产 500 回归）。
+
+    ``rerun_fresh`` 用刚读出的行重建 ``ResearchContract``，而 asyncpg 交回的
+    是 ``asyncpg.pgproto.pgproto.UUID``——``uuid.UUID`` 的**子类**。
+    ``ContractModel`` 只在类型完全一致时才承认一个叶子（标量子类可以携带
+    可变状态，所以这条是刻意的），于是重建出的契约校验失败、接口 500：凡是
+    带知识库的任务，两种「重新研究」和时间旅行复跑全部打不通，而同样内容
+    从 HTTP 请求体构造的契约却一切正常——这正是它躲过测试的原因。
+
+    克隆还必须继承知识库：否则新一轮会静默地不再读研究者的自有文档。
+    """
+    knowledge_base = await api_client.post(
+        "/api/knowledge-bases", json={"name": "rerun-fresh-kb"}
+    )
+    assert knowledge_base.status_code == 201, knowledge_base.text
+    knowledge_base_id = knowledge_base.json()["id"]
+
+    payload = _contract_payload()
+    payload["knowledge_base_id"] = knowledge_base_id
+    created = await api_client.post("/api/tasks", json=payload)
+    assert created.status_code == 201, created.text
+    task_id = created.json()["task_id"]
+    chosen = created.json()["suggested_claims"][0]["id"]
+    await api_client.post(
+        f"/api/tasks/{task_id}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(status=TaskStatus.FAILED)
+        )
+        await session.commit()
+
+    response = await api_client.post(f"/api/tasks/{task_id}/rerun-fresh")
+    assert response.status_code == 200, response.text
+    fresh_id = response.json()["task_id"]
+
+    async with app_sessions() as session:
+        fresh = await ResearchRepository(session).get_task(UUID(fresh_id))
+    assert fresh.knowledge_base_id == UUID(knowledge_base_id)
 
 
 async def test_rerun_fresh_refused_for_non_failed_task(
