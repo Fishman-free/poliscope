@@ -16,7 +16,7 @@ Poliscope 面向计算社会科学争议问题（首版领域：数字行为、�
 \item \textbf{多智能体执行记忆（EpistemoBrain）。}把 MemoBrain 为\textbf{单个}智能体设计的执行记忆推广到多智能体，由三部分构成：\textbf{集体执行记忆}——记忆的所有者从「写它的人」变成「没有写它的同伴」；\textbf{异议保真记忆操作}——\code{Quarantine} 隔离保留、\code{Dialectical Fold} 辩证折叠、\code{Fork} 认知分叉、\code{Resurrect} 假设复活、\code{Perspective Recall} 角色化召回；\textbf{盲点驱动调度}——由证据图暴露的缺口决定下一步查什么、由谁查。这条推广暴露了单智能体场景从不存在的硬约束：记忆由私有变为公共，于是压缩不再只是内部优化，而是一次必须留痕、且必须与正式结论分图存放的编辑。它是后面所有治理机制的前置条件（第 2、5 章）。
 \item \textbf{七人科学议会（Council Protocol）。}七个固定席位按八阶段协议工作，只允许提交八类结构化科研动作；协议明确禁止多数投票裁决科研真理，最终产物是保留具名异议与证伪条件的条件化共识，而不是「6:1 通过」。
 \item \textbf{双图证据治理（Dual-Graph Governance）。}过程图与证据图物理分离，所有正式修改先进入追加写、幂等、可重放的科学事件账本，再由数据库层唯一有权限的图投影器写入证据图。过程材料在结构上不可能自动升级为证据。
-\item \textbf{可证伪的实现与评测。}系统以模块化单体完整落地（14 个内部包、4 个应用、43 个数据库迁移、1206 项自动化测试），并配套 ForesightBlindspot 时间切片评测协议：五条能力递增基线、六项单机制消融，真实模型上的对照结果与其边界一并公开。
+\item \textbf{可证伪的实现与评测。}系统以模块化单体完整落地（14 个内部包、4 个应用、43 个数据库迁移、1210 项自动化测试），并配套 ForesightBlindspot 时间切片评测协议：五条能力递增基线、六项单机制消融，真实模型上的对照结果与其边界一并公开。
 \end{enumerate}
 
 \subsection*{\sffamily\color{accentdk}关键事实}
@@ -30,7 +30,7 @@ Poliscope 面向计算社会科学争议问题（首版领域：数字行为、�
 \thd{证据门} & 6 阶段 + 三层审计 & \thd{证据分级} & A–D 四级，B 级不得独撑因果结论 \\
 \thd{后端技术栈} & Python 3.12 / FastAPI / PostgreSQL & \thd{前端} & React + TypeScript + React Flow \\
 \thd{学术数据源} & OpenAlex、Crossref、Unpaywall、Semantic Scholar & \thd{模型接入} & 任意 OpenAI 兼容端点，支持 BYOK \\
-\thd{自动化测试} & 1206 项（单元 / 集成 / Golden / E2E / 评测） & \thd{许可证} & MIT \\
+\thd{自动化测试} & 1210 项（单元 / 集成 / Golden / E2E / 评测） & \thd{许可证} & MIT \\
 \end{tabularx}
 \end{tcolorbox}
 
