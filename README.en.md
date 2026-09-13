@@ -44,7 +44,7 @@ Six papers sharing one dataset are one piece of evidence told six times. The Evi
 
 ### 1.8 Epistemic Routing
 
-Gaps exposed by the evidence graph become **blindspot bounties**, scored by impact, uncertainty, and investigability, then claimed by the seven — the evidence state drives the next investigation, not a moderator reading from a script. Blindspot is a first-class object, not a "limitations" paragraph.
+Gaps exposed by the evidence graph become **blindspot bounties**, scored by impact, uncertainty, and investigability, then **dispatched to all seven seats** — the same blindspot, seven fixed role angles, investigated concurrently rather than claimed by whoever gets there first. The evidence state drives the next investigation, not a moderator reading from a script. Blindspot is a first-class object, not a "limitations" paragraph.
 
 ### 1.9 Method and Provenance: from MemoBrain to EpistemoBrain
 

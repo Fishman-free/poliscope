@@ -56,7 +56,7 @@ Poliscope 把这三件事当成要用架构解决的问题，而不是补一行�
 - **证据分层 A–D，绝不用摘要撑因果结论。** 只有全文与精确原文可得才算 Level A；仅有摘要、二手描述或网页线索的证据会被诚实标注为「仅元数据」「仅讨论」「仅线索」，不会被包装成同等强度的支持证据。
 - **论文数量 ≠ 独立证据数量。** 证据谱系自动识别共享数据集与重叠作者，界面同时显示论文篇数与独立证据簇数——六篇论文如果共享一个数据集，只算一份证据。
 - **异议永久保留，不靠多数票压下去。** 联合建模禁止用投票裁决科研真理；被反驳、隔离或折叠的观点仍可追溯，持异议的科学家会拿到一份具名的 `DissentCertificate`。
-- **盲点驱动下一步调查，不是主持人按台本点名。** 证据图发现的缺口会生成「盲点悬赏」，按影响、不确定性、可调查性打分排出优先级，再由七人认领——Blindspot 是产品里的一等公民对象，不是报告末尾一段「局限性」文字。
+- **盲点驱动下一步调查，不是主持人按台本点名。** 证据图发现的缺口会生成「盲点悬赏」，按影响、不确定性、可调查性打分排出优先级，再分派给**全部七席**——同一条盲点七个角色角度同时查，不是「谁认领归谁」——Blindspot 是产品里的一等公民对象，不是报告末尾一段「局限性」文字。
 - **每个关键判断都能点回原文。** Source → Study → Section → 原文定位 → 抽取 Agent → 核验状态，六阶段证据门逐条审核来源真实性、引用蕴含与方法质量。
 - **议会跑完后有一份可下载的最终论文。** 任务终态时由一次独立模型调用整合七席终审、条件化共识与全部参考文献，产出结构化论文（摘要/正文/参考文献/局限/调查过程），在「最终论文」标签页展示并可导出 Markdown——论文是表达层，不改变任务终态，也不进入证据图（账本留痕可审计）。
 - **每个缺口都被点名，不只是一个计数。** 任务头常驻的「N 处未完成」徽标旁就是明细行：哪个席位缺席、哪个轮次未执行或失败，全部用科学家与阶段的中文名写出。
@@ -139,7 +139,7 @@ MemoBrain 的三个原生动作，在证据层面必须被重新定义，否则�
 
 ### 认识论路由：让证据图自己提出下一步该查什么
 
-七人议会不是机械地跑满七轮就算完成。证据图发现缺口后会生成「盲点悬赏」，按影响、不确定性、可调查性、新颖度和成本打分排出优先级，再广播给七人认领——**是证据状态在驱动下一步调查方向，而不是主持人按预定台本依次点名发言**。这也是为什么产品里 Blindspot 是一等公民对象，而不是报告末尾的一段「局限性」文字。
+七人议会不是机械地跑满七轮就算完成。证据图发现缺口后会生成「盲点悬赏」，按影响、不确定性、可调查性、新颖度和成本打分排出优先级，再**广播给全部七席、每人一个固定的角色角度**——**是证据状态在驱动下一步调查方向，而不是主持人按预定台本依次点名发言**。这也是为什么产品里 Blindspot 是一等公民对象，而不是报告末尾的一段「局限性」文字。
 
 ### 争议动力学机制：Fork、Merge、Resurrect
 
@@ -833,7 +833,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 1. **六阶段证据门全链路生效。** `GRAPH_CONSISTENCY` 阶段真正调用 `consistency.py::check_graph_consistency()`（`gate.py:378-395`），判定所需的两个布尔值来自 `SqlGraphConsistencyQuery`（在 `sql_projector.py:245-247` 挂接）对数据库会话的真实查询——既有矛盾节点类型、既有重复分叉谱系都会被真正检出，不是恒真的空检查。
 2. **四种防「共享证据错误」机制（设计规格 §7.9）。** 来源多样性约束（`packages/evidence/source_diversity.py`）、盲证据评审（`packages/council/deliberation.py` 构造 prompt 时结构性去掉 author/journal/citation_count）、独立双抽取（`FindingExtractor.extract(dual_extraction=True)` 比较两次抽取的 `exact_quote`/`effect_direction`）三项为完整闭环，均有端到端验证。对抗式检索（`packages/evidence/adversarial_retrieval.py`）为每个 confirmed claim 生成 6 类反向检索意图字符串，经 `packages/tools` 网关对免密钥数据源（OpenAlex、Semantic Scholar 等）发起真实查询，命中结果回填 `CandidatePool`；查不到的（数据源覆盖有限，或确实没有反例）诚实记录在 `ADVERSARIAL_RETRIEVAL_ATTEMPTED` 事件的未解析计数里——不伪造命中，并保持在审计轨迹上可见。
 3. **Fork / Merge / Resurrect。** `Resurrect`（`packages/evidence/lifecycle.py::check_resurrection_conditions()`，接入 `run_evidence_exchange`）与 `Fork`（`run_cross_examination` 里致命质询产出平行 `Claim` + `CONTRADICTS` 边）均为完整闭环，各有集成测试端到端验证。`Merge` 的接入方式是「记录合并候选，由研究者裁决」：`run_joint_modeling` 产出的事件把未解决冲突列为 `merge_candidates`，是否合并留给研究者在前端判断（CLAUDE.md 第 8 条）。
-4. **检索相关性治理。** ACQUISITION 阶段的检索意图由模型生成，系统侧有边界约束（强相关、少而精、禁止跨领域跑题、每条意图须可执行，见 `packages/council/deliberation.py` 的 `PHASE_INSTRUCTIONS`），并修复了「DOI + 中文说明」混合串被整段当作 DOI 查询的提取缺陷（`packages/papers/candidate_pool.py` 正则提取）。检索结果继续走证据门六阶段审核，弱相关命中会在证据层面被拦下。
+4. **检索相关性治理。** ACQUISITION 阶段的检索意图由模型生成，系统侧有边界约束（强相关、少而精、禁止跨领域跑题、每条意图须可执行，见 `packages/council/deliberation.py` 的 `PHASE_INSTRUCTIONS`）；「DOI + 中文说明」的混合串由 `packages/papers/candidate_pool.py` 单独提取 DOI，不会整段被当作 DOI 查询。检索结果继续走证据门六阶段审核，弱相关命中会在证据层面被拦下。
 5. **最终论文合成。** 论文合成（`packages/reports/synthesis.py`）只使用账本已记录的材料（终审、条件化共识、被采纳来源与发现、局限）——论文成文质量由模型能力决定，素材则全部来自已入账证据；论文是表达层，任务终态不因论文成功或失败而改变（失败记 `FINAL_PAPER_FAILED` 事件，前端展示诚实空态）。
 
 ### 评测体系
