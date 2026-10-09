@@ -158,22 +158,32 @@ export function FollowUpView({
         { role: "user" as const, content: item.question },
         { role: "assistant" as const, content: item.answer },
       ]);
+    let pendingDelta = "";
+    let pendingFrame: number | null = null;
+    const flushDelta = () => {
+      if (pendingFrame !== null) window.cancelAnimationFrame(pendingFrame);
+      pendingFrame = null;
+      if (!pendingDelta) return;
+      const delta = pendingDelta;
+      pendingDelta = "";
+      setExchanges((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.pending) {
+          next[next.length - 1] = { ...last, answer: last.answer + delta };
+        }
+        return next;
+      });
+    };
     try {
       await followUpStream(
         taskId,
         text,
         (delta) => {
-          setExchanges((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.pending) {
-              next[next.length - 1] = {
-                ...last,
-                answer: last.answer + delta,
-              };
-            }
-            return next;
-          });
+          pendingDelta += delta;
+          if (pendingFrame === null) {
+            pendingFrame = window.requestAnimationFrame(flushDelta);
+          }
         },
         undefined,
         {
@@ -182,6 +192,7 @@ export function FollowUpView({
           history,
         },
       );
+      flushDelta();
       setExchanges((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -191,6 +202,7 @@ export function FollowUpView({
         return next;
       });
     } catch (cause) {
+      flushDelta();
       setError(cause instanceof Error ? cause.message : String(cause));
       // 失败时把 pending 那条标记为失败，不让它一直转圈。
       setExchanges((prev) => {
@@ -199,7 +211,8 @@ export function FollowUpView({
         if (last && last.pending) {
           next[next.length - 1] = {
             question: last.question,
-            answer: "",
+            // Keep the partial text visible, clearly marked as incomplete.
+            answer: last.answer,
             ok: false,
             pending: false,
           };

@@ -571,8 +571,13 @@ export async function followUpStream(
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        throw new ApiError(0, "流式回答连接提前结束，回答可能不完整，请重试。");
+      }
       buffer += decoder.decode(value, { stream: true });
+      // Proxies may rewrite SSE line endings to CRLF. A CR at a chunk edge
+      // remains in the buffer until the next read, then normalizes here.
+      buffer = buffer.replace(/\r\n/g, "\n");
       // SSE frames end with a blank line; split on it and process whole frames.
       let sep = buffer.indexOf("\n\n");
       while (sep !== -1) {

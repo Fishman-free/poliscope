@@ -401,13 +401,13 @@ class FullEvidenceGate:
 
         # Stage 4: Citation Entailment
         #
-        # A failed entailment (empty quote, claim not entailed, or qualifiers
-        # dropped) is a scientific *defect*, not a fabrication: it downgrades
-        # the finding one tier instead of quarantining it.
+        # Without a quote there is no anchor to audit at all. A present quote
+        # whose entailment fails is downgraded rather than treated as forged.
         if candidate.finding_id:
+            exact_quote = str(candidate.payload.get("exact_quote", "")).strip()
             citation = verify_citation_entailment(
                 candidate.finding_id,
-                exact_quote=str(candidate.payload.get("exact_quote", "")),
+                exact_quote=exact_quote,
             )
             citation_ok = citation.passed
         else:
@@ -415,6 +415,8 @@ class FullEvidenceGate:
         findings.append(
             AuditFinding(stage=AuditStage.CITATION_ENTAILMENT, passed=citation_ok)
         )
+        if candidate.finding_id and not exact_quote:
+            return self._quarantine(findings, "StudyFinding missing exact quote")
         if not citation_ok:
             majors += 1
 
@@ -477,7 +479,9 @@ class FullEvidenceGate:
         # true for every caller that never wires one.
         consistency_ok = True
         consistency_detail = ""
-        if candidate.claim_id:
+        # A StudyFinding can assert a causal claim_type without linking a
+        # Claim node. Its study design still has to pass the causal policy.
+        if candidate.claim_id or candidate.payload.get("claim_type") is not None:
             claim_type_payload = candidate.payload.get("claim_type")
             claim_type = (
                 ClaimType(str(claim_type_payload))
@@ -489,7 +493,7 @@ class FullEvidenceGate:
             if violation:
                 consistency_ok = False
                 consistency_detail = violation
-            elif self._graph_query is not None:
+            elif self._graph_query is not None and candidate.claim_id is not None:
                 node_id = _candidate_node_id(candidate)
                 existing_type = await self._graph_query.existing_node_type(node_id)
                 no_contradictory_admitted = (

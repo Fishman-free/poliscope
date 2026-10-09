@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.models.audit import _request_hash, _safe_summary
+from packages.models.audit import _request_hash
 from packages.models.contracts import (
     ModelClass,
     ModelMessage,
@@ -77,7 +77,8 @@ async def test_each_gateway_attempt_is_audited(
     assert row.output_hash
     assert row.latency_ms >= 0
     assert row.retries == 0
-    assert "signed_url" not in (row.request_summary or {})
+    assert row.request_summary["tool_name"] == "openalex"
+    assert "arguments" not in row.request_summary
 
 
 async def test_model_gateway_attempt_is_audited(
@@ -95,12 +96,8 @@ async def test_model_gateway_attempt_is_audited(
     assert row.input_hash
     assert row.output_hash
     assert row.schema_status == "ok"
-
-
-def test_safe_summary_strips_signed_url() -> None:
-    summary = _safe_summary({"query": "test", "signed_url": "https://example.com"})
-    assert "signed_url" not in summary
-    assert summary["query"] == "test"
+    assert row.request_summary["message_count"] == 1
+    assert "messages" not in row.request_summary
 
 
 def test_request_hash_is_stable() -> None:

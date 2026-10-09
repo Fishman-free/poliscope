@@ -120,7 +120,7 @@ async def test_trial_task_inherits_marker_and_confirm_consumes_one_slot(
     assert row is not None
     model_config = row.model_config or {}
     assert model_config["is_free_trial"] is True
-    assert model_config["extra_body"] == {"enable_thinking": True}
+    assert model_config.get("extra_body") is None
 
     # 确认一次：扣减一个额度。
     response = await trial_client.post(
@@ -212,7 +212,7 @@ async def test_quota_exhausted_blocks_new_tasks_and_confirmations(
                 source_limit=10,
                 user_evidence={},
                 model_config={
-                    "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    "base_url": "https://api.deepseek.com",
                     "api_key": "sk-freetrial-test",
                     "is_free_trial": True,
                 },

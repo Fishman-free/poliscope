@@ -16,7 +16,7 @@
  */
 
 import { flushSync } from "react-dom";
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { ApiError, cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout, reResearch, rerunFresh, resumeTask } from "./api/client";
 import type { ResearchBrief, TaskSummary } from "./api/types";
@@ -41,7 +41,6 @@ import { ResearchToolsView } from "./views/ResearchToolsView";
 import { SharedView } from "./views/SharedView";
 import { KnowledgeBaseView } from "./views/KnowledgeBaseView";
 import { LiveView } from "./views/LiveView";
-import { MapView } from "./views/MapView";
 import { ModelSettingsPanel } from "./views/ModelSettingsPanel";
 import { NewTaskView } from "./views/NewTaskView";
 import { PaperView } from "./views/PaperView";
@@ -49,6 +48,12 @@ import { SessionHistory } from "./views/SessionHistory";
 import { SkillsPanel } from "./views/SkillsPanel";
 
 import "./App.css";
+
+// React Flow and graph export are only needed after the researcher opens the
+// evidence map. Keep that large dependency out of the first workspace load.
+const MapView = lazy(() =>
+  import("./views/MapView").then((module) => ({ default: module.MapView })),
+);
 
 type Tab =
   | "live"
@@ -1018,7 +1023,9 @@ export function App() {
                       />
                     ) : null}
                     {tab === "map" ? (
-                      <MapView graph={snapshot.graph} taskId={taskId ?? ""} />
+                      <Suspense fallback={<Spinner label={t("正在载入证据地图…")} />}>
+                        <MapView graph={snapshot.graph} taskId={taskId ?? ""} />
+                      </Suspense>
                     ) : null}
                     {tab === "council" ? (
                       <CouncilView

@@ -145,6 +145,50 @@ async def test_stream_invoke_raises_on_schema_rejection() -> None:
         await gateway.stream_invoke(_request(), noop)
 
 
+async def test_stream_invoke_rejects_valid_json_without_done_marker() -> None:
+    """A dropped vendor connection must not promote a partial run to success."""
+    chunk = {"choices": [{"delta": {"content": '{"final_judgment":"ok"}'}}]}
+    config = OpenAICompatibleConfig.from_env(FULL_ENV)
+    gateway = OpenAICompatibleModelGateway(
+        config,
+        client=httpx.AsyncClient(
+            base_url=config.base_url,
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200, text=f"data: {json.dumps(chunk)}\n\n"
+                )
+            ),
+        ),
+    )
+
+    async def noop(_event: StreamEvent) -> None:
+        return None
+
+    with pytest.raises(ValueError, match="without.*DONE"):
+        await gateway.stream_invoke(_request(), noop)
+
+
+async def test_stream_invoke_rejects_length_finish_reason() -> None:
+    gateway = _sse_gateway(
+        [
+            {
+                "choices": [
+                    {
+                        "delta": {"content": '{"final_judgment":"ok"}'},
+                        "finish_reason": "length",
+                    }
+                ]
+            }
+        ]
+    )
+
+    async def noop(_event: StreamEvent) -> None:
+        return None
+
+    with pytest.raises(ValueError, match="length"):
+        await gateway.stream_invoke(_request(), noop)
+
+
 def test_streamed_schema_is_registered() -> None:
     """The streamed output schema must be a registered phase schema, same as
     the non-streaming path's."""

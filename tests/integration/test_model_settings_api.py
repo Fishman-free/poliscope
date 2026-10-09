@@ -560,8 +560,8 @@ async def test_free_trial_activation_saves_the_trial_endpoint(
 
         assert response.status_code == 200
         body = response.json()
-        assert body["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        assert body["model_name"] == "qwen3.8-max"
+        assert body["base_url"] == "https://api.deepseek.com"
+        assert body["model_name"] == "deepseek-v4-flash"
         assert body["free_trial"]["active"] is True
         assert body["free_trial"]["used"] == 0
         assert body["free_trial"]["limit"] == 1

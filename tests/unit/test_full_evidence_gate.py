@@ -67,6 +67,15 @@ async def test_full_gate_blocks_missing_source() -> None:
     assert decision.disposition == AdmissionDisposition.QUARANTINE
 
 
+async def test_full_gate_quarantines_missing_exact_quote() -> None:
+    decision = await FullEvidenceGate().audit(
+        _candidate(payload={"exact_quote": "   "})
+    )
+    assert decision.disposition == AdmissionDisposition.QUARANTINE
+    assert decision.audit_findings[-1].stage == AuditStage.CITATION_ENTAILMENT
+    assert decision.audit_findings[-1].passed is False
+
+
 async def test_stage_source_itself_fails_for_sourceless_study_finding() -> None:
     """Regression: Stage 3 used to compare event_type against the literal
     string "FINDING", which never equals EvidenceNodeType.STUDY_FINDING's

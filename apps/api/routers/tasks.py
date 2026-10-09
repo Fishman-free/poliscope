@@ -709,8 +709,12 @@ async def follow_up_stream(
             "max_tokens": FOLLOWUP_MAX_TOKENS,
             "stream": True,
         }
+        saw_done = False
+        finish_reason: str | None = None
         try:
-            async with httpx.AsyncClient(
+            # Per-read timeouts cannot stop a provider that sends endless
+            # heartbeats or reasoning deltas; cap the entire follow-up.
+            async with asyncio.timeout(180.0), httpx.AsyncClient(
                 base_url=base_url,
                 timeout=120.0,
                 headers={"Authorization": f"Bearer {api_key}"},
@@ -725,6 +729,7 @@ async def follow_up_stream(
                         continue
                     raw = line[5:].strip()
                     if raw == "[DONE]":
+                        saw_done = True
                         break
                     try:
                         chunk = json.loads(raw)
@@ -733,11 +738,16 @@ async def follow_up_stream(
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
+                    finish_reason = choices[0].get("finish_reason") or finish_reason
                     delta = choices[0].get("delta") or {}
                     text = delta.get("content")
                     if text:
                         frame = json.dumps({"text": text}, ensure_ascii=False)
                         yield f"data: {frame}\n\n"
+            if not saw_done:
+                raise ValueError("模型流式连接提前结束，未收到完成标记")
+            if finish_reason == "length":
+                raise ValueError("模型输出达到 token 上限，回答可能不完整")
             yield "data: [DONE]\n\n"
         except httpx.HTTPStatusError as error:
             detail = _followup_error_detail(error.response)
@@ -745,6 +755,12 @@ async def follow_up_stream(
                 f"模型调用失败（HTTP {error.response.status_code}）：{detail}"
             )
             frame = json.dumps({"detail": message}, ensure_ascii=False)
+            yield f"event: error\ndata: {frame}\n\n"
+        except TimeoutError:
+            frame = json.dumps(
+                {"detail": "模型流式输出超过 180 秒，回答未完成，请重试。"},
+                ensure_ascii=False,
+            )
             yield f"event: error\ndata: {frame}\n\n"
         except (httpx.HTTPError, ValueError) as error:
             message = f"模型调用失败：{error}"

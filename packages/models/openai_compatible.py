@@ -375,6 +375,8 @@ class OpenAICompatibleModelGateway:
         reasoning_parts: list[str] = []
         tool_call_parts: dict[int, dict[str, Any]] = {}
         usage: dict[str, Any] = {}
+        saw_done = False
+        finish_reason: str | None = None
 
         async with self._client.stream(
             "POST", "/chat/completions", json=body
@@ -385,6 +387,7 @@ class OpenAICompatibleModelGateway:
                     continue
                 raw = line[5:].strip()
                 if raw == "[DONE]":
+                    saw_done = True
                     break
                 try:
                     chunk = json.loads(raw)
@@ -392,6 +395,7 @@ class OpenAICompatibleModelGateway:
                     continue
                 choices = chunk.get("choices") or []
                 if choices:
+                    finish_reason = choices[0].get("finish_reason") or finish_reason
                     delta = choices[0].get("delta") or {}
                     text = delta.get("content")
                     if text:
@@ -418,6 +422,10 @@ class OpenAICompatibleModelGateway:
                 if chunk.get("usage"):
                     usage = chunk["usage"]
 
+        if not saw_done:
+            raise ValueError("model stream ended without a [DONE] marker")
+        if finish_reason == "length":
+            raise ValueError("model stream stopped at the token length limit")
         message: dict[str, Any] = {
             "content": "".join(content_parts),
             "tool_calls": list(tool_call_parts.values()),

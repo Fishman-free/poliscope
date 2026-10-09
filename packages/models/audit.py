@@ -19,10 +19,26 @@ def _request_hash(
     return hashlib.sha256(normalized).hexdigest()
 
 
-def _safe_summary(payload: dict[str, object]) -> dict[str, object]:
-    """Strip sensitive fields before persistence."""
-    forbidden = {"signed_url", "pdf_binary", "local_path", "full_text"}
-    return {k: v for k, v in payload.items() if k not in forbidden}
+def _model_request_summary(request: ModelRequest) -> dict[str, object]:
+    """Persist call metadata, never prompt text or material from a source."""
+    return {
+        "actor": request.actor,
+        "purpose": request.purpose,
+        "model_class": request.model_class.value,
+        "output_schema": request.output_schema,
+        "message_count": len(request.messages),
+        "evidence_ref_count": len(request.evidence_refs),
+    }
+
+
+def _tool_request_summary(request: ToolRequest) -> dict[str, object]:
+    """Keep the tool identity without persisting user supplied arguments."""
+    return {
+        "actor": request.actor,
+        "tool_name": request.tool_name,
+        "operation": request.operation,
+        "argument_count": len(request.arguments),
+    }
 
 
 async def record_model_call(
@@ -48,7 +64,7 @@ async def record_model_call(
         latency_ms=result.latency_ms,
         retries=result.retries,
         schema_status=result.schema_status.value,
-        request_summary=_safe_summary(request_payload),
+        request_summary=_model_request_summary(request),
     )
     session.add(row)
     await session.commit()
@@ -76,7 +92,7 @@ async def record_tool_call(
         error_code=result.error_code,
         evidence_refs=[],
         schema_status=SchemaStatus.OK.value,
-        request_summary=_safe_summary(request_payload),
+        request_summary=_tool_request_summary(request),
     )
     session.add(row)
     await session.commit()
