@@ -324,73 +324,106 @@ STUDY_FINDING_EXTRACTION: Final[dict[str, Any]] = {
     ],
 }
 
-# The report synthesizer's output (packages/reports/synthesis.py). It is not
-# a seat's answer and no round consumes it -- the worker stores the parsed
-# result as FINAL_PAPER_DRAFTED, so the schema's only job is to keep the
-# model honest about the paper's shape. `references[*].id` must name a
-# source/finding id from the materials the synthesizer was given.
-FINAL_PAPER_OUTPUT: Final[dict[str, Any]] = {
+_REFS: Final[dict[str, Any]] = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": "Catalogue ids the statement rests on, e.g. B3, L12, J2",
+}
+_BULLETS: Final[dict[str, Any]] = {"type": "array", "items": {"type": "string"}}
+
+# The deep-research synthesizer's output (packages/reports/reasoning_map.py):
+# one connected argument over the council's numbered catalogue. Short text
+# plus catalogue ids -- the material itself is never re-written, which is
+# what keeps the call well inside the gateway's deadline.
+REASONING_MAP_OUTPUT: Final[dict[str, Any]] = {
     "type": "object",
     "properties": {
-        "title": {"type": "string"},
-        "abstract": {"type": "string"},
-        "sections": {
+        "bottom_line": {"type": "string"},
+        "verdicts": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "heading": {"type": "string"},
-                    "paragraphs": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["heading", "paragraphs"],
-            },
-        },
-        "references": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "doi": {"type": ["string", "null"]},
-                },
-                "required": ["id", "title"],
-            },
-        },
-        "limitations": {"type": "array", "items": {"type": "string"}},
-        "investigation_process": {"type": "array", "items": {"type": "string"}},
-        # Round-12 「整合结论详细化」: each side's position and weakness, the
-        # overall conclusion, and the admitted evidence it rests on. Optional
-        # so a vendor that omits them still produces a valid paper (the
-        # parser defaults the fields to empty).
-        "standpoints": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "seat": {"type": "string"},
-                    "position": {"type": "string"},
-                    "weakness": {"type": "string"},
-                    "supporting_evidence": {
-                        "type": "array",
-                        "items": {"type": "string"},
+                    "claim": {"type": "string"},
+                    "verdict": {
+                        "type": "string",
+                        "enum": [
+                            "supported",
+                            "partially_supported",
+                            "not_supported",
+                            "undetermined",
+                        ],
                     },
-                    "disagreement": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "refs": _REFS,
                 },
-                "required": ["seat", "position", "weakness"],
+                "required": ["claim", "verdict", "reason"],
             },
         },
-        "overall_conclusion": {"type": "string"},
-        "conclusion_evidence": {"type": "array", "items": {"type": "string"}},
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "dimension": {
+                        "type": "string",
+                        "enum": [
+                            "evidence",
+                            "measurement",
+                            "robustness",
+                            "causality",
+                            "boundary",
+                            "mechanism",
+                        ],
+                    },
+                    "question": {"type": "string"},
+                    "answer": {"type": "string"},
+                    "support": _BULLETS,
+                    "limits": _BULLETS,
+                    "unknowns": _BULLETS,
+                    "resolve": {"type": "string"},
+                    "refs": _REFS,
+                },
+                "required": ["dimension", "question", "answer"],
+            },
+        },
+        "cruxes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "positions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "holders": {"type": "string"},
+                                "view": {"type": "string"},
+                            },
+                            "required": ["view"],
+                        },
+                    },
+                    "decider": {"type": "string"},
+                    "refs": _REFS,
+                },
+                "required": ["question"],
+            },
+        },
+        "next_steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "why": {"type": "string"},
+                    "refs": _REFS,
+                },
+                "required": ["action"],
+            },
+        },
     },
-    "required": [
-        "title",
-        "abstract",
-        "sections",
-        "references",
-        "limitations",
-        "investigation_process",
-    ],
+    "required": ["bottom_line", "steps"],
 }
 
 # The paper-review task's one-shot understanding call (round-7,
@@ -446,7 +479,7 @@ PAPER_UNDERSTANDING_OUTPUT: Final[dict[str, Any]] = {
 }
 
 # The paper-review task's final report shape (round-7,
-# packages/reports/synthesis.py). Same machinery as FINAL_PAPER_OUTPUT, but
+# packages/reports/synthesis.py). Same machinery as REASONING_MAP_OUTPUT, but
 # the subject is the *uploaded paper*: the report must state what the paper
 # argues, then where its argument is not rigorous or well-evidenced, then how
 # to improve it.
@@ -618,10 +651,10 @@ PHASE_OUTPUT_JSON_SCHEMAS: Final[dict[str, dict[str, Any]]] = {
     "FinalJudgment": FINAL_JUDGMENT,
     "BlindspotSemanticMatch": BLINDSPOT_SEMANTIC_MATCH,
     "StudyFindingExtraction": STUDY_FINDING_EXTRACTION,
-    # Not a council round: the report synthesizer's one-shot paper output
+    # Not a council round: the report synthesizer's one-shot output
     # (packages/reports/synthesis.py). Same repair/quarantine machinery as the
-    # rounds; a paper that cannot be repaired becomes FINAL_PAPER_FAILED.
-    "FinalPaper": FINAL_PAPER_OUTPUT,
+    # rounds; an output that cannot be repaired becomes FINAL_PAPER_FAILED.
+    "ReasoningMap": REASONING_MAP_OUTPUT,
     # Round-7 system-level schemas: the paper-review task's one-shot
     # understanding call (packages/papers/understanding.py) and final report
     # (packages/reports/synthesis.py). Neither is a seat's answer.

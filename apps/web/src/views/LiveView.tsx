@@ -326,6 +326,93 @@ function phaseProgress(events: LedgerEvent[]): {
   return { current, done };
 }
 
+/** 结论整合（报告生成阶段的模型调用）的实时状态，来自过程流的
+ * synthesis_started / synthesis_working / synthesis_done（packages/reports/
+ * synthesis.py）。以前这一步在界面上完全静默，长达数分钟像是卡死。 */
+interface SynthesisState {
+  running: boolean;
+  /** 发起时的方式：model = 调用模型整合；deterministic = 无模型，直接归档。 */
+  mode: string;
+  /** 结束时实际得到的结论：model / deterministic / unavailable。 */
+  outcome: string | null;
+  elapsed: number;
+}
+
+function synthesisState(processEvents: ProcessEvent[]): SynthesisState | null {
+  const state: SynthesisState = {
+    running: false,
+    mode: "model",
+    outcome: null,
+    elapsed: 0,
+  };
+  let seen = false;
+  for (const event of processEvents) {
+    const payload = event.payload as Record<string, unknown>;
+    const elapsed = typeof payload.elapsed === "number" ? payload.elapsed : 0;
+    if (event.kind === "synthesis_started") {
+      // A re-run starts the card over.
+      seen = true;
+      state.running = true;
+      state.mode = String(payload.mode ?? "model");
+      state.outcome = null;
+      state.elapsed = 0;
+    } else if (seen && event.kind === "synthesis_working") {
+      state.elapsed = elapsed;
+    } else if (seen && event.kind === "synthesis_done") {
+      state.running = false;
+      state.outcome = String(payload.outcome ?? "");
+      state.elapsed = elapsed;
+    }
+  }
+  return seen ? state : null;
+}
+
+const SYNTHESIS_OUTCOME_NOTES: Record<string, string> = {
+  model: "已整合为推理链式结论：一句话回答 → 逐步推理（每步结论与边界、未知并排）→ 关键分歧 → 下一步研究。",
+  deterministic:
+    "模型未能完成整合，系统已把专家终审与全部讨论条目按推理链机械归档 —— 结论完整可读，每一步以专家原话为准。",
+  unavailable: "结论整合未能完成，详见审计轨迹。",
+};
+
+function SynthesisCard({
+  state,
+  onOpenPaper,
+}: {
+  state: SynthesisState;
+  onOpenPaper?: () => void;
+}) {
+  return (
+    <section
+      className={"live__synthesis" + (state.running ? " live__synthesis--running" : "")}
+      role="status"
+      aria-label={t("结论整合")}
+    >
+      <div className="live__synthesis-head">
+        <span className="live__synthesis-title">{t("结论整合")}</span>
+        <span className="live__synthesis-time mono">
+          {state.running
+            ? state.mode === "deterministic"
+              ? t("正在归档…")
+              : t("正在整合 · 已等待 {0}s", state.elapsed)
+            : t("用时 {0}s", state.elapsed)}
+        </span>
+      </div>
+      <p className="live__synthesis-note">
+        {state.running
+          ? t(
+              "七位专家已给出终审。正在把全部讨论条目编号，并沿「证据基础 → 测量 → 稳健性 → 因果 → 适用边界 → 机制」组织成一条论证。",
+            )
+          : t(SYNTHESIS_OUTCOME_NOTES[state.outcome ?? ""] ?? SYNTHESIS_OUTCOME_NOTES.unavailable!)}
+      </p>
+      {!state.running && state.outcome !== "unavailable" && onOpenPaper ? (
+        <button type="button" className="button button--primary" onClick={onOpenPaper}>
+          {t("查看研究结论")}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* 席位思考流：按「席位 × 阶段」分段、有界地聚合过程流 token 片段。      */
 /* ------------------------------------------------------------------ */
@@ -1067,6 +1154,7 @@ export function LiveView({
   claims,
   graph,
   onGuidanceSubmitted,
+  onOpenPaper,
 }: {
   events: LedgerEvent[];
   processEvents: ProcessEvent[];
@@ -1081,9 +1169,12 @@ export function LiveView({
   claims?: ConfirmedClaim[];
   graph?: EvidenceGraph | null;
   onGuidanceSubmitted?: () => void;
+  /** 结论整合完成后跳到「最终结论」。 */
+  onOpenPaper?: () => void;
 }) {
   const { current, done } = useMemo(() => phaseProgress(events), [events]);
   const streams = useMemo(() => seatStreams(processEvents), [processEvents]);
+  const synthesis = useMemo(() => synthesisState(processEvents), [processEvents]);
   const phaseStarted = current !== null || done.size > 0;
   const durableById = useMemo(() => {
     const map = new Map<string, SeatSummary>();
@@ -1357,6 +1448,10 @@ export function LiveView({
                 "研究者干预窗口：盲点悬赏结束后会到达方向性检查点，届时可在本页提交备注调整后续讨论重点 —— 备注不进入任何证据判定，也不改变异议保留（CLAUDE.md 4.1）。",
               )}
             </p>
+          ) : null}
+
+          {synthesis ? (
+            <SynthesisCard state={synthesis} onOpenPaper={onOpenPaper} />
           ) : null}
 
           <div className="live__grid">

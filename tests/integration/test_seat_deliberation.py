@@ -82,17 +82,20 @@ class _ScriptedGateway:
         self._reasoning = reasoning
 
     def _payload(self, request: ModelRequest) -> dict[str, object]:
-        if request.output_schema == "FinalPaper":
+        if request.output_schema == "ReasoningMap":
             # The report synthesizer's one-shot call (packages/reports/
             # synthesis.py) -- request.purpose is "FINAL_SYNTHESIS", not a
             # TaskPhase value, so this must be checked before the conversion.
             return {
-                "title": "综合论文",
-                "abstract": "议会证据整合摘要。",
-                "sections": [{"heading": "发现", "paragraphs": ["相关性一致。"]}],
-                "references": [],
-                "limitations": ["样本局限。"],
-                "investigation_process": ["7 席参与"],
+                "bottom_line": "相关性一致，因果方向未解决。",
+                "steps": [
+                    {
+                        "dimension": "causality",
+                        "question": "能否从关联推到因果？",
+                        "answer": "现有证据只支持关联。",
+                        "limits": ["样本局限。"],
+                    }
+                ],
             }
         if request.output_schema == "StudyFindingExtraction":
             # A system-level call from FindingExtractor, not one of the seven

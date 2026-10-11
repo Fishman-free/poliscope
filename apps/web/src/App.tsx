@@ -83,7 +83,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "radar", label: "Blindspot Radar", hint: "影响 x 可调查性" },
   { id: "evolution", label: "Evolution View", hint: "主张分叉与异议时间线" },
   { id: "audit", label: "Audit Trail", hint: "事件账本与拒绝记录" },
-  { id: "paper", label: "Final Paper", hint: "整合结论与参考文献" },
+  { id: "paper", label: "Final Paper", hint: "推理链式研究结论" },
   { id: "knowledge", label: "Knowledge Base", hint: "长期记忆与检索" },
   { id: "followup", label: "Follow-up", hint: "完成后追问模型" },
 
@@ -1012,6 +1012,7 @@ export function App() {
                         claims={brief?.confirmed_claims ?? []}
                         graph={snapshot.graph}
                         onGuidanceSubmitted={refresh}
+                        onOpenPaper={() => selectTab("paper")}
                       />
                     ) : null}
                     {tab === "brief" ? (
@@ -1063,6 +1064,7 @@ export function App() {
                     {tab === "paper" ? (
                       <PaperView
                         paper={snapshot.paper}
+                        question={snapshot.task.question}
                         onExport={exportPaperMarkdown}
                         onViewBrief={() => selectTab("brief")}
                       />

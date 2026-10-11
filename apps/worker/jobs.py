@@ -767,8 +767,16 @@ async def _deliberate_impl(
         TaskStatus.COMPLETED,
         TaskStatus.COMPLETED_WITH_GAPS,
     ):
+        # The process writer makes the synthesis visible on the live view
+        # (start, heartbeat, which kind of summary came out) -- otherwise the
+        # REPORTING phase sits silent for as long as the model writes.
         outcome = await synthesize_paper(
-            session, task_id, gateway, output_language=output_language
+            session,
+            task_id,
+            gateway,
+            output_language=output_language,
+            on_process=None if process is None else process.emit,
+            on_flush=None if process is None else process.flush,
         )
         if not outcome.available:
             logger.warning(

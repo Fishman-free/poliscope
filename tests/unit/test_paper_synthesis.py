@@ -186,8 +186,9 @@ def _finding(statement: str) -> BriefNode:
 
 def test_fallback_abstract_uses_findings_not_placeholder_claims() -> None:
     """The reported case: no real claims, only scaffolding placeholders, but
-    admitted findings exist. The abstract must state the findings, not echo the
-    research question, and must not leak English claim-type tokens."""
+    admitted findings exist. The summary must state the findings (as the
+    evidence step's support), never echo the research question, and must not
+    leak English claim-type tokens."""
     question = "中国青少年抑郁症的影响因素"
     brief = ResearchBrief(
         task_id=uuid4(),
@@ -200,11 +201,14 @@ def test_fallback_abstract_uses_findings_not_placeholder_claims() -> None:
         findings=(_finding("屏幕使用时长与焦虑水平显著相关。"),),
     )
     paper = _fallback_integrated_paper(brief, {}, question)
-    assert "causal" not in paper.abstract
-    assert "correlational" not in paper.abstract
-    assert "关联主张：" not in paper.abstract
-    assert "因果主张：" not in paper.abstract
-    assert "屏幕使用时长与焦虑水平显著相关" in paper.abstract
+    for text in (paper.abstract, *(p for s in paper.sections for p in s.paragraphs)):
+        assert "causal" not in text
+        assert "correlational" not in text
+        assert "关联主张：" not in text
+        assert "因果主张：" not in text
+    assert paper.reasoning_map is not None
+    support = [line for step in paper.reasoning_map.steps for line in step.support]
+    assert "屏幕使用时长与焦虑水平显著相关。" in support
     assert "尚不足以形成统一因果推断" not in paper.abstract
 
 

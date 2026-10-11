@@ -53,6 +53,103 @@ class Standpoint:
 
 
 @dataclass(frozen=True, slots=True)
+class MapItem:
+    """One council output the reasoning map can point at.
+
+    ``id`` is a short catalogue id (``J1``, ``B3``, ``L12`` …) whose letter is
+    the kind; ``headline`` is the one-line form the map and the model prompt
+    use, ``text`` the original statement kept for the provenance chips. The
+    item is a pointer to material the council already produced -- the map
+    never creates an item of its own.
+    """
+
+    id: str
+    kind: str
+    headline: str
+    text: str
+    seat: str | None = None
+    score: str | None = None
+    has_dissent: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimVerdict:
+    """Where one confirmed claim stands after the council, in one sentence."""
+
+    claim: str
+    verdict: str
+    reason: str
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningStep:
+    """One link in the argument chain.
+
+    A step answers one question and carries, *beside* that answer, what
+    supports it, where it stops holding, and what is still unknown about it --
+    so a blindspot is read as the doubt hanging over a specific conclusion,
+    not as a free-floating list item (CLAUDE.md 11: conclusions and limits side
+    by side). ``refs`` are the items the step cites; ``related`` the further
+    council items filed under the same step so nothing is silently dropped.
+    """
+
+    dimension: str
+    question: str
+    answer: str
+    support: tuple[str, ...] = ()
+    limits: tuple[str, ...] = ()
+    unknowns: tuple[str, ...] = ()
+    resolve: str = ""
+    refs: tuple[str, ...] = ()
+    related: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CruxPosition:
+    holders: str
+    view: str
+
+
+@dataclass(frozen=True, slots=True)
+class Crux:
+    """A disagreement the evidence has not settled, with what would settle it."""
+
+    question: str
+    positions: tuple[CruxPosition, ...] = ()
+    decider: str = ""
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class NextStep:
+    action: str
+    why: str = ""
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningMap:
+    """The final summary as one connected argument instead of parallel lists.
+
+    ``mode`` is ``"model"`` when the synthesizer organised it and
+    ``"deterministic"`` when it was filed mechanically (no model, a failed
+    call, or a pre-map paper reorganised on read) -- the renderer says which,
+    so a mechanical filing is never mistaken for an integrated judgment.
+    ``items`` is the full catalogue; ``unassigned`` lists items no step holds.
+    """
+
+    mode: str
+    bottom_line: str
+    verdicts: tuple[ClaimVerdict, ...] = ()
+    steps: tuple[ReasoningStep, ...] = ()
+    cruxes: tuple[Crux, ...] = ()
+    next_steps: tuple[NextStep, ...] = ()
+    items: tuple[MapItem, ...] = ()
+    unassigned: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class FinalPaper:
     """The synthesised paper: one model call's integration of the council's
     already-admitted outputs. An expression-layer document, never evidence.
@@ -66,6 +163,11 @@ class FinalPaper:
     council's overall view is, and ``conclusion_evidence`` lists the admitted
     evidence the overall conclusion rests on. All three default to empty so a
     model that did not emit them still produces a valid paper.
+
+    ``reasoning_map`` is the structured summary the workspace renders first;
+    the prose fields above are derived from it for the Markdown export and
+    for readers of older payloads. ``None`` only on a paper stored before the
+    map existed (the API reorganises those on read).
     """
 
     title: str
@@ -77,6 +179,7 @@ class FinalPaper:
     standpoints: tuple[Standpoint, ...] = ()
     overall_conclusion: str = ""
     conclusion_evidence: tuple[str, ...] = ()
+    reasoning_map: ReasoningMap | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,3 +254,6 @@ class SynthesisOutcome:
 
     available: bool
     reason: str | None = None
+    # True when the stored summary is the deterministic fallback rather than
+    # the model's integration (the live view says which one the reader got).
+    fallback: bool = False

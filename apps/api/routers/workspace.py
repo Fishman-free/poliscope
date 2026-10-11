@@ -45,7 +45,7 @@ from packages.papers.models import SourceModel
 from packages.reports.json_export import to_dict
 from packages.reports.safety import sanitize_export
 from packages.reports.service import ReportService
-from packages.reports.synthesis import FINAL_PAPER_DRAFTED
+from packages.reports.synthesis import FINAL_PAPER_DRAFTED, ensure_reasoning_map
 from packages.research.repository import (
     ResearchRepository,
     StoredTask,
@@ -532,7 +532,8 @@ async def _assemble_snapshot(
     # The brief is built from the same session and the same moment as the graph
     # below, so the Research Brief panel cannot show a different conclusion from
     # the Controversy Map beside it.
-    brief = to_dict(await ReportService(session).build(task_id))
+    research_brief = await ReportService(session).build(task_id)
+    brief = to_dict(research_brief)
     lineage = await _lineage(session, task_id)
     paper_count = int(cast(int, lineage["paper_count"]))
     cluster_count = int(
@@ -580,6 +581,15 @@ async def _assemble_snapshot(
         task_id,
         (FINAL_PAPER_DRAFTED, CONSENSUS_DRAFTED),
     )
+    # A paper stored before the reasoning map existed is filed on read, from
+    # the same brief and consensus this snapshot already holds.
+    paper = await ensure_reasoning_map(
+        session,
+        task_id,
+        latest_payloads[FINAL_PAPER_DRAFTED],
+        brief=research_brief,
+        consensus=latest_payloads[CONSENSUS_DRAFTED] or {},
+    )
     snapshot = WorkspaceSnapshot(
         task=FrozenDict(task_payload),
         brief=FrozenDict(brief),
@@ -603,7 +613,7 @@ async def _assemble_snapshot(
         usage=None if usage is None else FrozenDict(usage),
         workspace_version=version,
         safety_notice=SafetyNotice(),
-        paper=latest_payloads[FINAL_PAPER_DRAFTED],
+        paper=None if paper is None else FrozenDict(paper),
         consensus=latest_payloads[CONSENSUS_DRAFTED],
     )
     if not public:

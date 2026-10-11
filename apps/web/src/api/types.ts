@@ -391,6 +391,78 @@ export interface FinalPaper {
   overall_conclusion?: string;
   /** The admitted evidence the overall conclusion rests on. */
   conclusion_evidence?: string[];
+  /** The structured summary the workspace renders first (one connected
+   * argument). Absent only on payloads the API could not reorganise. */
+  reasoning_map?: ReasoningMap;
+}
+
+/** Reasoning-map summary (packages/reports/reasoning_map.py). Every `refs`
+ * entry is a catalogue id (`J1`, `B3`, `L12` …) resolvable in `items`. */
+export type MapDimension =
+  | "evidence"
+  | "measurement"
+  | "robustness"
+  | "causality"
+  | "boundary"
+  | "mechanism";
+
+export type MapItemKind =
+  | "judgment"
+  | "finding"
+  | "blindspot"
+  | "boundary"
+  | "conflict"
+  | "test"
+  | "dissent"
+  | "study";
+
+export type MapVerdict =
+  | "supported"
+  | "partially_supported"
+  | "not_supported"
+  | "undetermined";
+
+export interface MapItem {
+  id: string;
+  kind: MapItemKind;
+  headline: string;
+  text: string;
+  seat: string | null;
+  score: string | null;
+  has_dissent: boolean;
+}
+
+export interface ReasoningStep {
+  dimension: MapDimension;
+  question: string;
+  answer: string;
+  support: string[];
+  limits: string[];
+  unknowns: string[];
+  resolve: string;
+  refs: string[];
+  related: string[];
+}
+
+export interface ReasoningMap {
+  version: number;
+  /** "model": the synthesizer organised it; "deterministic": filed
+   * mechanically (no model, a failed call, or a pre-map paper). */
+  mode: "model" | "deterministic";
+  /** Set when the API reorganised a paper stored before the map existed. */
+  derived_on_read?: boolean;
+  bottom_line: string;
+  verdicts: { claim: string; verdict: MapVerdict; reason: string; refs: string[] }[];
+  steps: ReasoningStep[];
+  cruxes: {
+    question: string;
+    positions: { holders: string; view: string }[];
+    decider: string;
+    refs: string[];
+  }[];
+  next_steps: { action: string; why: string; refs: string[] }[];
+  items: MapItem[];
+  unassigned: string[];
 }
 
 /** One claim the reviewed paper makes, with the paper's own support for it. */

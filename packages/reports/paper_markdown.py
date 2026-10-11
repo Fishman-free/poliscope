@@ -12,8 +12,20 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from packages.reports.contracts import FinalPaper, PaperReviewReport
+from packages.reports.contracts import (
+    FinalPaper,
+    MapItem,
+    PaperReviewReport,
+    ReasoningMap,
+)
 from packages.reports.markdown import AI_ASSISTANCE_NOTICE
+from packages.reports.reasoning_map import (
+    DETERMINISTIC_NOTICE,
+    KIND_LABELS,
+    MODE_DETERMINISTIC,
+    VERDICT_LABELS,
+    seat_display,
+)
 from packages.reports.safety import apply_safety_notice, sanitize_export
 
 
@@ -21,6 +33,116 @@ def _doi_link(doi: str | None) -> str:
     if not doi:
         return ""
     return f" <https://doi.org/{doi}>"
+
+
+def _ref_list(refs: tuple[str, ...]) -> str:
+    return f"（溯源：{'、'.join(refs)}）" if refs else ""
+
+
+def _render_map_markdown(paper: FinalPaper, rmap: ReasoningMap) -> list[str]:
+    """Render the reasoning map in the same order as the workspace view:
+    answer → verdicts → the step-by-step chain (each step's conclusion with
+    its support, limits and unknowns directly beneath it) → cruxes → next
+    steps → appendix. Limitations sit beside the conclusions inside every
+    step, and again in full right after the chain (CLAUDE.md 11)."""
+    items: dict[str, MapItem] = {item.id: item for item in rmap.items}
+    lines = [f"# {paper.title}", ""]
+
+    lines += ["## 一句话回答", ""]
+    if rmap.mode == MODE_DETERMINISTIC:
+        lines += [f"> {DETERMINISTIC_NOTICE}", ""]
+    if rmap.bottom_line:
+        lines += [rmap.bottom_line, ""]
+    for verdict in rmap.verdicts:
+        lines.append(
+            f"- **{verdict.claim}**：{VERDICT_LABELS[verdict.verdict]}。"
+            f"{verdict.reason}{_ref_list(verdict.refs)}"
+        )
+    if rmap.verdicts:
+        lines.append("")
+
+    lines += ["## 推理链", ""]
+    for number, step in enumerate(rmap.steps, start=1):
+        lines += [f"### {number}. {step.question}", "", step.answer, ""]
+        for label, values in (
+            ("依据", step.support),
+            ("边界与反例", step.limits),
+            ("尚未知道", step.unknowns),
+        ):
+            if values:
+                lines.append(f"**{label}**")
+                lines.extend(f"- {value}" for value in values)
+                lines.append("")
+        if step.resolve:
+            lines += [f"**如何验证**：{step.resolve}", ""]
+        if step.refs:
+            lines += [_ref_list(step.refs), ""]
+        if step.related:
+            count = len(step.related)
+            lines += [f"<details><summary>同一环节的其余条目（{count}）</summary>", ""]
+            lines.extend(
+                f"- [{ref}] {items[ref].headline}"
+                for ref in step.related
+                if ref in items
+            )
+            lines += ["", "</details>", ""]
+
+    if rmap.cruxes:
+        lines += ["## 关键分歧", ""]
+        for crux in rmap.cruxes:
+            lines.append(f"### {crux.question}")
+            lines.append("")
+            lines.extend(
+                f"- **{position.holders or '一方'}**：{position.view}"
+                for position in crux.positions
+            )
+            if crux.decider:
+                lines.append(f"- **什么证据能裁决**：{crux.decider}")
+            lines.append("")
+
+    if rmap.next_steps:
+        lines += ["## 下一步研究", ""]
+        lines.extend(
+            f"{index}. {action.action}" + (f" —— {action.why}" if action.why else "")
+            for index, action in enumerate(rmap.next_steps, start=1)
+        )
+        lines.append("")
+
+    lines += ["## 局限", ""]
+    if paper.limitations:
+        lines += [f"- {item}" for item in paper.limitations]
+    else:
+        lines.append("_无记录局限。_")
+    lines.append("")
+
+    lines += ["## 附录", ""]
+    judgments = [item for item in rmap.items if item.kind == "judgment"]
+    if judgments:
+        lines += ["### 专家终审原文", ""]
+        for item in judgments:
+            dissent = "（保留异议）" if item.has_dissent else ""
+            heading = f"#### [{item.id}] {seat_display(item.seat)}{dissent}"
+            lines += [heading, "", item.text, ""]
+    if rmap.unassigned:
+        lines += ["### 未归入推理链的条目", ""]
+        lines.extend(
+            f"- [{ref}] {KIND_LABELS.get(items[ref].kind, items[ref].kind)}："
+            f"{items[ref].headline}"
+            for ref in rmap.unassigned
+            if ref in items
+        )
+        lines.append("")
+    if paper.investigation_process:
+        lines += ["### 调查过程", ""]
+        lines += [f"- {item}" for item in paper.investigation_process]
+        lines.append("")
+    lines += ["### 参考文献", ""]
+    if not paper.references:
+        lines.append("_本次没有可绑定 DOI 的已采纳研究发现。_")
+    for ref in paper.references:
+        lines.append(f"- {ref.title}{_doi_link(ref.doi)}")
+    lines.append("")
+    return lines
 
 
 def _render_review_markdown(paper: PaperReviewReport) -> list[str]:
@@ -121,6 +243,8 @@ def render_paper_markdown(
 
     if isinstance(paper, PaperReviewReport):
         lines = _render_review_markdown(paper)
+    elif paper.reasoning_map is not None:
+        lines = _render_map_markdown(paper, paper.reasoning_map)
     else:
         lines = [f"# {paper.title}", ""]
         if paper.abstract:

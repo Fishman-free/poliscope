@@ -624,3 +624,48 @@
       visibility 0s linear var(--duration-fast);
   }
 }
+
+/* 结论整合：七席终审之后、最终结论出现之前的那一步。以前这里一片静默。
+   运行中只用一条左边线标出状态，不加动画（CLAUDE.md 11：无无意义动画）。 */
+.live__synthesis {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--admitted);
+  border-radius: var(--radius-3);
+  background: var(--surface-0);
+}
+
+.live__synthesis--running {
+  border-left-color: var(--accent);
+}
+
+.live__synthesis-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.live__synthesis-title {
+  font-weight: 600;
+  color: var(--ink-1);
+}
+
+.live__synthesis-time {
+  font-size: var(--text-micro);
+  color: var(--ink-3);
+}
+
+.live__synthesis-note {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+
+.live__synthesis .button {
+  justify-self: start;
+}

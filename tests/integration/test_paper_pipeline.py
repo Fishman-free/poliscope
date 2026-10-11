@@ -22,6 +22,7 @@ from packages.council.contracts import Seat
 from packages.council.rounds.registry import PhaseContext
 from packages.epistemo.contracts import TaskPhase, TaskStatus
 from packages.evidence.models import GraphNodeModel, ScientificEventModel
+from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
 from packages.models.contracts import (
     ModelGateway,
@@ -35,24 +36,35 @@ from packages.research.service import ResearchService
 
 QUESTION = "Does adolescent social media use cause depressive symptoms?"
 
-PAPER_PAYLOAD: dict[str, object] = {
-    "title": "社交媒体使用与青少年抑郁：议会证据整合",
-    "abstract": "七位科学家独立预承诺、交叉质询后形成的整合结论。",
-    "sections": [
+MAP_PAYLOAD: dict[str, object] = {
+    "bottom_line": "重度使用与抑郁症状呈弱相关，但因果方向未解决。",
+    "verdicts": [
         {
-            "heading": "发现",
-            "paragraphs": [
-                "相关性一致，因果方向未解决。",
-                "混杂与反向因果是主要威胁。",
-            ],
+            "claim": "重度使用预测更高的抑郁症状得分",
+            "verdict": "partially_supported",
+            "reason": "方向一致但效应很小。",
+            "refs": ["J1"],
         }
     ],
-    "references": [
-        {"id": str(uuid4()), "title": "A cohort study", "doi": "10.1000/x"}
+    "steps": [
+        {
+            "dimension": "causality",
+            "question": "能否从关联推到因果？",
+            "answer": "混杂与反向因果仍是主要威胁。",
+            "support": ["相关性一致。"],
+            "limits": ["仅一项纵向研究。"],
+            "unknowns": ["反向因果未被排除。"],
+            "resolve": "预注册的纵向队列研究。",
+            "refs": ["J1", "NOT-AN-ID"],
+        },
+        {
+            "dimension": "evidence",
+            "question": "证据从哪来？",
+            "answer": "证据来自少量队列研究。",
+        },
     ],
-    "limitations": ["仅一项纵向研究。"],
-    "investigation_process": ["7 席全部参与", "证据门拒绝 3 项提交"],
 }
+EXPECTED_TITLE = f"关于「{QUESTION}」的研究结论"
 
 
 async def _seed_queued_task(
@@ -114,7 +126,7 @@ class _ScriptedDeliberator:
 
 
 class _PaperGateway:
-    """ModelGateway that answers FINAL_SYNTHESIS with the paper payload."""
+    """ModelGateway that answers FINAL_SYNTHESIS with a reasoning map."""
 
     def __init__(self, *, fail: bool = False) -> None:
         self._fail = fail
@@ -127,7 +139,7 @@ class _PaperGateway:
         if request.purpose == "FINAL_SYNTHESIS":
             return ModelResult(
                 call_id=uuid4(),
-                payload=FrozenDict(PAPER_PAYLOAD),
+                payload=FrozenDict(MAP_PAYLOAD),
                 input_tokens=50,
                 output_tokens=120,
                 cost_usd=Decimal("0.0010"),
@@ -221,10 +233,21 @@ async def test_a_completed_task_writes_the_paper_event(
     assert len(paper_events) == 1
     assert paper_events[0].status == "process_only"
     payload = dict(paper_events[0].payload)
-    assert payload["title"] == PAPER_PAYLOAD["title"]
+    assert payload["title"] == EXPECTED_TITLE
+    rmap = payload["reasoning_map"]
+    assert rmap["mode"] == "model"
+    assert rmap["bottom_line"] == MAP_PAYLOAD["bottom_line"]
+    # Steps come back in spine order (evidence before causality), and an id
+    # the catalogue never issued is dropped rather than rendered.
+    assert [step["dimension"] for step in rmap["steps"]] == [
+        "evidence",
+        "causality",
+    ]
+    assert "NOT-AN-ID" not in rmap["steps"][1]["refs"]
+    # The prose fields are derived from the map, step for step.
     sections = payload["sections"]
     assert isinstance(sections, list)
-    assert sections[0]["heading"] == "发现"
+    assert sections[0]["heading"].startswith("1. ")
 
     # The paper is not a graph node: the graph holds only evidence nodes
     # (the ResearchQuestion the run itself projects). The paper events were
@@ -317,7 +340,7 @@ async def test_the_paper_endpoint_serves_paper_and_stub(
     assert json_response.status_code == 200, json_response.text
     body = json_response.json()
     assert body["available"] is True
-    assert body["paper"]["title"] == PAPER_PAYLOAD["title"]
+    assert body["paper"]["title"] == EXPECTED_TITLE
     assert body["reason"] is None
 
     markdown_response = await api_client.get(
@@ -325,7 +348,11 @@ async def test_the_paper_endpoint_serves_paper_and_stub(
     )
     assert markdown_response.status_code == 200
     assert "text/markdown" in markdown_response.headers["content-type"]
-    assert "https://doi.org/10.1000/x" in markdown_response.text
+    text = markdown_response.text
+    assert "## 一句话回答" in text
+    assert str(MAP_PAYLOAD["bottom_line"]) in text
+    # Conclusion and limits travel together inside the step.
+    assert text.index("混杂与反向因果仍是主要威胁") < text.index("仅一项纵向研究")
 
 
 async def test_the_paper_endpoint_answers_with_a_fallback_when_missing(
@@ -356,7 +383,7 @@ async def test_the_paper_endpoint_answers_with_a_fallback_when_missing(
         f"/api/reports/{task_id}/paper", params={"format": "markdown"}
     )
     assert markdown_response.status_code == 200
-    assert "整合结论" in markdown_response.text
+    assert "未经模型整合" in markdown_response.text
 
 
 async def test_the_workspace_snapshot_carries_paper_and_consensus(
@@ -374,6 +401,53 @@ async def test_the_workspace_snapshot_carries_paper_and_consensus(
     assert response.status_code == 200
     body = response.json()
     assert body["paper"] is not None
-    assert body["paper"]["title"] == PAPER_PAYLOAD["title"]
+    assert body["paper"]["title"] == EXPECTED_TITLE
+    assert body["paper"]["reasoning_map"]["mode"] == "model"
     # consensus is either the joint-modeling text or null -- the key exists.
     assert "consensus" in body
+
+
+async def test_a_pre_map_paper_is_reorganised_on_read(
+    api_client: Any,
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+    account: dict[str, Any],
+) -> None:
+    """A paper stored before the reasoning map existed gets one on read.
+
+    The stored event is left untouched (append-only ledger); the workspace
+    and the paper endpoint file the same catalogue deterministically and mark
+    the map ``derived_on_read``.
+    """
+    task_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
+    await _run_to_completion(app_sessions, projector_sessions, task_id)
+    legacy = {
+        "title": "旧版论文",
+        "abstract": "旧版摘要。",
+        "sections": [{"heading": "发现", "paragraphs": ["相关性一致。"]}],
+        "references": [],
+        "limitations": [],
+        "investigation_process": [],
+        "overall_conclusion": "旧版结论：弱相关。",
+    }
+    async with app_sessions() as session:
+        await SqlEventLedger(session).append(
+            task_id, "FINAL_PAPER_DRAFTED", legacy, "test:legacy_paper"
+        )
+        await session.commit()
+
+    response = await api_client.get(f"/api/workspace/{task_id}")
+    assert response.status_code == 200
+    rmap = response.json()["paper"]["reasoning_map"]
+    assert rmap["derived_on_read"] is True
+    assert rmap["mode"] == "deterministic"
+    assert rmap["bottom_line"] == "旧版结论：弱相关。"
+
+    paper_response = await api_client.get(f"/api/reports/{task_id}/paper")
+    assert paper_response.json()["paper"]["reasoning_map"]["derived_on_read"] is True
+    stored = [
+        event
+        for event in await _events(app_sessions, task_id)
+        if event.idempotency_key == "test:legacy_paper"
+    ]
+    assert "reasoning_map" not in stored[0].payload

@@ -21,6 +21,7 @@ import type {
 import { Badge, Empty, Panel } from "../components/primitives";
 import { Markdown } from "../components/Markdown";
 import { t } from "../i18n";
+import { ReasoningMapView } from "./ReasoningMapView";
 
 import "./PaperView.css";
 
@@ -213,10 +214,13 @@ function ReferenceList({ references }: { references: PaperReference[] }) {
 
 export function PaperView({
   paper,
+  question,
   onExport,
   onViewBrief,
 }: {
   paper: FinalPaper | PaperReviewReport | null;
+  /** 研究问题：推理图谱以它为根节点。 */
+  question: string;
   onExport: () => void;
   onViewBrief: () => void;
 }) {
@@ -242,6 +246,19 @@ export function PaperView({
 
   if ("paper_overview" in paper) {
     return <ReviewReportView paper={paper} onExport={onExport} />;
+  }
+
+  // 深度研究的结论以推理图谱呈现（一条论证而非平行清单）；下方旧版论文
+  // 视图只为 API 未能补出图谱的极少数载荷保留。
+  if (paper.reasoning_map && paper.reasoning_map.steps) {
+    return (
+      <ReasoningMapView
+        paper={paper}
+        map={paper.reasoning_map}
+        question={question}
+        onExport={onExport}
+      />
+    );
   }
 
   return (

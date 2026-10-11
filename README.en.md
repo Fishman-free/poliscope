@@ -81,7 +81,7 @@ EpistemoBrain generalizes that to multiple agents. Once the owner of a memory ch
 - **Blind spots drive the next investigation**: Blindspot is a first-class object, not a "limitations" paragraph.
 - **The reasoning chain is visible, the chain-of-thought is not exposed**: raw model reasoning is collapsed under each round and labeled "process data, not evidence."
 - **Correlation does not automatically upgrade to causation**: cross-sectional data + causal claim is intercepted by the evidence gate.
-- **A downloadable final paper**: the seven seats' final judgments and references are synthesized into a structured paper, exportable as Markdown.
+- **The conclusion is one chain of reasoning, not a pile of lists**: the final summary walks evidence → measurement → robustness → causality → boundary → mechanism; each step states its judgment first, with its support, limits and open unknowns side by side -- a blindspot sits under the step it threatens instead of in a list at the end. Every judgment carries a provenance id such as [B3] that opens the expert's original text; exportable as Markdown.
 - **Four entrances, one protocol**: web / API / CLI and the Agent Skill all run the same seven-round council protocol and evidence rules. The first three enforce the gate in database privileges (event ledger + single-writer Graph Projector); the Agent Skill runs the same rules inside your own agent and writes its artifacts into your repository.
 
 ## 4. Capabilities
@@ -96,7 +96,7 @@ The center of the product is the **evidence map**, not a chatbox. Eight views:
 | Council | The seven scientists' full trajectory plus the conditional-consensus panel |
 | Blindspot Radar | Blind spots ranked by impact and investigability |
 | Evolution View | The timeline of claims and blind spots as evidence accumulates |
-| Final Paper | A downloadable paper-form synthesis |
+| Final conclusion | Reasoning map: short answer → claim verdicts → step-by-step chain (conclusion beside limits and unknowns) → key disagreements → next steps |
 | Knowledge Base | Your long-term memory; retrieval hits participate directly in council reasoning |
 
 ## 5. How to Use
@@ -140,7 +140,7 @@ docs/poliscope/<slug>/
 ├── council.md     the seven rounds
 ├── blindspots.md  the blindspot radar
 ├── dissent.md     the dissent certificates
-├── paper.md       the synthesised final paper
+├── paper.md       the final conclusion (reasoning chain)
 └── scientists/    one file per seat
 ```
 

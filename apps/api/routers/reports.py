@@ -28,6 +28,7 @@ from packages.reports.service import ReportService, ResearchBrief
 from packages.reports.synthesis import (
     FINAL_PAPER_DRAFTED,
     FINAL_PAPER_FAILED,
+    ensure_reasoning_map,
     paper_payload_to_dataclass,
 )
 from packages.research.repository import ResearchRepository, TaskNotFound
@@ -121,7 +122,11 @@ async def get_paper(
             detail=f"unknown task {task_id}",
         ) from error
 
-    paper_payload, failure_reason = await _paper_state(session, task_id)
+    stored_payload, failure_reason = await _paper_state(session, task_id)
+    # Same read-side reorganisation as the workspace, so the export and the
+    # screen never disagree about how a pre-map paper is laid out.
+    upgraded = await ensure_reasoning_map(session, task_id, stored_payload)
+    paper_payload = None if upgraded is None else dict(upgraded)
     reason = failure_reason
     paper = None
     if paper_payload is not None:

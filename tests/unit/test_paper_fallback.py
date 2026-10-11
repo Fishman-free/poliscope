@@ -3,6 +3,8 @@
 When the synthesis model call fails, is quarantined, or no gateway is
 connected, the worker must still end the task with an integrated conclusion
 assembled from the Research Brief alone -- never the "综合论文尚未生成" stub.
+Since the reasoning-map rework the fallback is a deterministic reasoning map
+(packages/reports/reasoning_map.py) with the prose fields derived from it.
 These tests cover the pure assembler; the ledger write path lives in the
 integration tests (test_worker_pipeline.py).
 """
@@ -13,6 +15,7 @@ from typing import cast
 from uuid import uuid4
 
 from packages.reports.contracts import FinalPaper
+from packages.reports.reasoning_map import MODE_DETERMINISTIC, JudgmentRow
 from packages.reports.service import BriefNode, ResearchBrief
 from packages.reports.synthesis import (
     _fallback_integrated_paper,
@@ -60,6 +63,13 @@ def _node(node_type: str, payload: dict[str, object]) -> BriefNode:
     )
 
 
+def _all_text(paper: FinalPaper) -> str:
+    return paper.abstract + "\n" + "\n".join(
+        "\n".join((section.heading, *section.paragraphs))
+        for section in paper.sections
+    )
+
+
 def test_fallback_paper_always_produces_sections() -> None:
     paper = _fallback_integrated_paper(
         _brief(), {}, "社交媒体使用是否会降低青少年心理健康水平？"
@@ -68,16 +78,15 @@ def test_fallback_paper_always_produces_sections() -> None:
     assert paper.title
     assert paper.abstract
     assert len(paper.sections) >= 4
-    # References are empty (no model, no source registry in the assembler) --
-    # an honest absence, not a fabricated citation.
+    assert paper.reasoning_map is not None
+    assert paper.reasoning_map.mode == MODE_DETERMINISTIC
+    # No finding carries a DOI, so there is nothing honest to cite -- an
+    # absence, not a fabricated citation.
     assert paper.references == ()
 
 
 def test_fallback_paper_embeds_findings_and_claims() -> None:
-    paper = _fallback_integrated_paper(_brief(), {}, "Q")
-    all_text = "\n".join(
-        "\n".join(section.paragraphs) for section in paper.sections
-    )
+    all_text = _all_text(_fallback_integrated_paper(_brief(), {}, "Q"))
     assert "纵向队列" in all_text
     assert "测量偏差" in all_text
     assert "社交媒体使用与抑郁呈正相关" in all_text
@@ -85,15 +94,25 @@ def test_fallback_paper_embeds_findings_and_claims() -> None:
     assert "证据不足，拒绝下结论" in all_text
 
 
+def test_fallback_files_each_doubt_under_a_reasoning_step() -> None:
+    """The blindspot is not a free-floating list item: it hangs under the step
+    whose conclusion it threatens (age -> the boundary step)."""
+    paper = _fallback_integrated_paper(_brief(), {}, "Q")
+    assert paper.reasoning_map is not None
+    boundary = next(
+        step for step in paper.reasoning_map.steps if step.dimension == "boundary"
+    )
+    assert "未调查年龄组差异" in boundary.unknowns
+
+
 def test_fallback_paper_reports_gaps_honestly() -> None:
     paper = _fallback_integrated_paper(_brief(), {}, "Q")
     process = "\n".join(paper.investigation_process)
     assert "3 篇论文" in process
-    # 席位使用更面向读者的人类化表述
-    assert "对抗性证伪者" in process or "adversarial_falsifier" in process
-    # 缺席席位的科学家缺席记录在 process 里，但不伪装成无缺席的完整运行。
+    assert "对抗性证伪者" in process
+    # The absent expert is a stated limitation, not a silently complete run.
     limitations = "\n".join(paper.limitations)
-    assert "adversarial_falsifier" in limitations or "对抗性证伪者" in limitations or "缺席" in limitations
+    assert "缺席" in limitations
 
 
 def test_fallback_paper_without_gaps_is_clean() -> None:
@@ -112,47 +131,37 @@ def test_fallback_paper_consensus_lines_are_included() -> None:
         "boundary_conditions": ["仅适用于社交媒体重度用户"],
     }
     paper = _fallback_integrated_paper(_brief(), consensus, "Q")
-    all_text = "\n".join(
-        "\n".join(section.paragraphs) for section in paper.sections
-    )
+    all_text = _all_text(paper)
     assert "证据指向弱正相关" in all_text
+    assert "仅适用于社交媒体重度用户" in all_text
 
 
 def test_fallback_without_consensus_lists_each_position() -> None:
-    """未达成共识时，总体结论与结论与局限板块必须逐观点展开，而不是
-    一句「未记录到形成中的条件化共识」了事；每个立场带其局限。"""
+    """未达成共识时，每位专家的终审观点都署名出现在它负责的推理环节里，
+    而不是一句「未形成统一结论」了事。"""
     judgments = (
-        ("causal_scientist", "相关可解释为反向因果 (confidence: 0.6)"),
-        ("theory_builder", "机制上可能存在正向效应 (confidence: 0.5)"),
+        JudgmentRow("causal_scientist", "相关可解释为反向因果", 0.6),
+        JudgmentRow("theory_builder", "机制上可能存在正向效应", 0.5),
     )
     paper = _fallback_integrated_paper(_brief(), {}, "Q", judgments=judgments)
-    all_text = "\n".join(
-        "\n".join(section.paragraphs) for section in paper.sections
-    )
-    # 逐观点列出：观点 + 局限
-    assert "未形成统一结论" in all_text
-    assert "相关可解释为反向因果" in all_text
-    assert "机制上可能存在正向效应" in all_text
-    assert "局限：" in all_text
-    # 不再有「整合结论如上；局限如下」式的占位废话
-    assert "整合结论如上" not in all_text
-    # 不再用议会流程措辞描述结论
-    assert "各席位在联合建模中形成了" not in all_text
+    assert paper.reasoning_map is not None
+    answers = {step.dimension: step.answer for step in paper.reasoning_map.steps}
+    assert answers["causality"].startswith("因果推断专家：相关可解释为反向因果")
+    assert answers["mechanism"].startswith("理论建构者：机制上可能存在正向效应")
+    # Without a real consensus the map invents no bottom line.
+    assert paper.reasoning_map.bottom_line == ""
+    assert "未经模型整合" in paper.abstract
 
 
 def test_fallback_with_consensus_keeps_consensus_wording() -> None:
-    """达成共识时总体结论用共识文本，且措辞面向读者而非流程。"""
+    """达成共识时，共识原文就是一句话回答。"""
     consensus: dict[str, object] = {
         "conditional_consensus": "证据指向弱正相关，但因果方向未决。",
         "boundary_conditions": ["仅适用于社交媒体重度用户"],
     }
     paper = _fallback_integrated_paper(_brief(), consensus, "Q")
-    all_text = "\n".join(
-        "\n".join(section.paragraphs) for section in paper.sections
-    )
-    assert "证据指向弱正相关" in all_text
-    # Plain reader-facing lead-in (Bug 8: no process jargon in the body).
-    assert "总体判断" in all_text
+    assert paper.overall_conclusion == "证据指向弱正相关，但因果方向未决。"
+    assert paper.abstract.startswith("证据指向弱正相关")
 
 
 def test_fallback_body_avoids_internal_jargon() -> None:
@@ -162,14 +171,12 @@ def test_fallback_body_avoids_internal_jargon() -> None:
         "conditional_consensus": "证据指向弱正相关，但因果方向未决。",
     }
     judgments = (
-        ("causal_scientist", "相关可解释为反向因果 (confidence: 0.6) [DISSENT]"),
+        JudgmentRow("causal_scientist", "相关可解释为反向因果", 0.6, True),
     )
     paper = _fallback_integrated_paper(
         _brief(), consensus, "Q", judgments=judgments
     )
-    body = "\n".join(
-        "\n".join(section.paragraphs) for section in paper.sections
-    )
+    body = _all_text(paper)
     banned = (
         "原子主张",
         "条件化共识",
@@ -181,12 +188,10 @@ def test_fallback_body_avoids_internal_jargon() -> None:
         "议会",
         "最终复判",
         "预承诺",
+        "causal_scientist",
     )
     for term in banned:
         assert term not in body, f"internal jargon leaked into paper: {term}"
-    # 社科论文摘要规范（round-19）：研究问题 → 方法 → 发现 → 结论，自包含且结论明确。
-    assert "【研究问题】" in paper.abstract
-    assert "【结论】" in paper.abstract
 
 
 def test_phase_coverage_summary() -> None:

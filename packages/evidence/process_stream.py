@@ -106,7 +106,17 @@ def _coalesce_batch(
 # render). Structural rows are tiny (a handful per seat per phase plus tool
 # calls), so replay keeps them even when they sit before the heavy tail.
 STRUCTURAL_KINDS = frozenset(
-    {"seat_deliberation", "model_done", "seat_absent", "tool_call", "tool_result"}
+    {
+        "seat_deliberation",
+        "model_done",
+        "seat_absent",
+        "tool_call",
+        "tool_result",
+        # The summary-synthesis card opens and closes on these two
+        # (packages/reports/synthesis.py), after every seat's token tail.
+        "synthesis_started",
+        "synthesis_done",
+    }
 )
 
 
