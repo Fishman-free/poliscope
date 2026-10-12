@@ -9,12 +9,23 @@
 #
 FROM python:3.12-slim AS base
 WORKDIR /app
-RUN pip install --no-cache-dir --disable-pip-version-check uv
+# PyPI mirror for the mainland-China host: files.pythonhosted.org runs at
+# ~13 KB/s there (a dependency sync took over an hour), Alibaba's mirror at
+# ~3 MB/s. uv.lock pins absolute files.pythonhosted.org URLs, so the lock's
+# file host is rewritten to the mirror's identical path before syncing; every
+# wheel is still checked against the lock's sha256, so a mirror can only be
+# faster, never different. Build with --build-arg PYPI_MIRROR= to use PyPI.
+ARG PYPI_MIRROR=https://mirrors.aliyun.com/pypi
+RUN pip install --no-cache-dir --disable-pip-version-check \
+    ${PYPI_MIRROR:+--index-url "$PYPI_MIRROR/simple/"} uv
 
 # Dependencies first, so an unrelated code change does not invalidate this
 # layer -- `uv sync` here only needs the lock file, not the source tree.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN if [ -n "$PYPI_MIRROR" ]; then \
+        sed -i "s|https://files.pythonhosted.org/packages/|$PYPI_MIRROR/packages/|g" uv.lock; \
+    fi; \
+    uv sync --frozen --no-install-project --no-dev
 
 COPY packages ./packages
 COPY apps ./apps

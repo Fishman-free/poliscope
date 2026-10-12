@@ -9,10 +9,17 @@
 #
 FROM python:3.12-slim AS base
 WORKDIR /app
-RUN pip install --no-cache-dir --disable-pip-version-check uv
+# Same PyPI mirror rewrite as apps/api/Dockerfile (see the reasoning there):
+# hash-checked against uv.lock, overridable with --build-arg PYPI_MIRROR=.
+ARG PYPI_MIRROR=https://mirrors.aliyun.com/pypi
+RUN pip install --no-cache-dir --disable-pip-version-check \
+    ${PYPI_MIRROR:+--index-url "$PYPI_MIRROR/simple/"} uv
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN if [ -n "$PYPI_MIRROR" ]; then \
+        sed -i "s|https://files.pythonhosted.org/packages/|$PYPI_MIRROR/packages/|g" uv.lock; \
+    fi; \
+    uv sync --frozen --no-install-project --no-dev
 
 COPY packages ./packages
 COPY apps ./apps
