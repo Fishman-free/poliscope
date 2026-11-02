@@ -409,6 +409,7 @@ export type MapDimension =
 export type MapItemKind =
   | "judgment"
   | "finding"
+  | "challenge"
   | "blindspot"
   | "boundary"
   | "conflict"
@@ -430,6 +431,25 @@ export interface MapItem {
   seat: string | null;
   score: string | null;
   has_dissent: boolean;
+  /** Judgments only: the expert's answer to the question. */
+  stance?: MapStance | null;
+}
+
+/** An expert's answer to the research question, in debate order. */
+export type MapStance = "affirmative" | "negative" | "conditional" | "undetermined";
+
+/** One side of the question argued on its own terms: thesis, the chain of
+ * reasoning, what backs it and where it is blind. Never ranked by how many
+ * experts hold it. */
+export interface MapPosition {
+  stance: MapStance;
+  label: string;
+  thesis: string;
+  reasoning: string[];
+  evidence: string[];
+  blindspots: string[];
+  holders: string;
+  refs: string[];
 }
 
 export interface ReasoningStep {
@@ -453,6 +473,10 @@ export interface ReasoningMap {
   derived_on_read?: boolean;
   bottom_line: string;
   verdicts: { claim: string; verdict: MapVerdict; reason: string; refs: string[] }[];
+  /** The debate the chain weighs; absent on maps stored before it existed. */
+  positions?: MapPosition[];
+  /** Set when the API filed the positions from stored judgments on read. */
+  positions_derived_on_read?: boolean;
   steps: ReasoningStep[];
   cruxes: {
     question: string;

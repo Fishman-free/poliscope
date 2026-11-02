@@ -70,6 +70,10 @@ class MapItem:
     seat: str | None = None
     score: str | None = None
     has_dissent: bool = False
+    # Judgments only: the expert's own answer to the question (affirmative /
+    # negative / conditional / undetermined), so positions can be grouped
+    # without anyone counting votes.
+    stance: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +126,29 @@ class Crux:
 
 
 @dataclass(frozen=True, slots=True)
+class Position:
+    """One answer to the research question, argued on its own terms.
+
+    A contested question ("does X help or not help Y?") is laid out as a
+    debate before the reasoning chain weighs it: the affirmative and the
+    negative case always appear, and every further angle from which experts
+    reach a different conclusion gets its own entry. Each carries its chain
+    of reasoning, what backs it and where it is blind, side by side
+    (CLAUDE.md 11). Positions are never ranked by how many experts hold them
+    (CLAUDE.md 4); ``holders`` may say that no expert holds a side at all.
+    """
+
+    stance: str
+    label: str
+    thesis: str
+    reasoning: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
+    blindspots: tuple[str, ...] = ()
+    holders: str = ""
+    refs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class NextStep:
     action: str
     why: str = ""
@@ -137,16 +164,22 @@ class ReasoningMap:
     call, or a pre-map paper reorganised on read) -- the renderer says which,
     so a mechanical filing is never mistaken for an integrated judgment.
     ``items`` is the full catalogue; ``unassigned`` lists items no step holds.
+    ``positions`` is the debate the chain then weighs (empty on maps stored
+    before positions existed).
     """
 
     mode: str
     bottom_line: str
     verdicts: tuple[ClaimVerdict, ...] = ()
+    positions: tuple[Position, ...] = ()
     steps: tuple[ReasoningStep, ...] = ()
     cruxes: tuple[Crux, ...] = ()
     next_steps: tuple[NextStep, ...] = ()
     items: tuple[MapItem, ...] = ()
     unassigned: tuple[str, ...] = ()
+    # True when the positions were filed from the stored judgments on read
+    # (a map written before positions existed), never by the synthesizer.
+    positions_derived_on_read: bool = False
 
 
 @dataclass(frozen=True, slots=True)

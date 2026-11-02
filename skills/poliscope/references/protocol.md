@@ -124,8 +124,15 @@ under which it would fail.
 **Input:** everything in the shared frontier — the graph, the consensus draft,
 the blindspot list — plus each seat's own sealed round-1 precommitment.
 
-**Each seat returns:** its final position, its confidence, and — where the
-position moved — **which piece of evidence moved it**, citing the finding.
+**Each seat returns:** its final position, its confidence, its **stance** on
+the research question (`affirmative` — the claim holds; for a question naming
+two answers, such as "helps / does not help", the first-named one —
+`negative`, `conditional`, or `undetermined`), and — where the position moved
+— **which piece of evidence moved it**, citing the finding. The position
+opens with its answer in one sentence, argues it step by step (premise →
+inference → conclusion, naming what each step rests on), and ends with the
+strongest point against itself. The stance is decided independently; it is
+never adjusted to how many other seats hold a view.
 
 **Orchestrator:** record every seat's round 1 → round 7 movement. A seat whose
 position did not move says so explicitly; held ground after cross-examination

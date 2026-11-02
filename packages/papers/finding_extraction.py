@@ -30,6 +30,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
+from packages.kernel.database import DatabaseSessionLost
 from packages.knowledge.extractors import InvalidDocument, extract_text
 from packages.knowledge.models import KnowledgeDocumentModel
 from packages.models.contracts import (
@@ -174,6 +175,7 @@ class _SessionWriter(Protocol):
     def add(self, instance: object) -> None: ...
     async def flush(self) -> None: ...
     async def execute(self, statement: Any) -> Any: ...
+    async def get(self, entity: Any, ident: Any) -> Any: ...
 
 
 class FindingExtractor:
@@ -250,6 +252,8 @@ class FindingExtractor:
         unpaywall = UnpaywallAdapter(self._tools, self._task_id)
         try:
             normalized = await unpaywall.lookup_doi(doi)
+        except DatabaseSessionLost:
+            raise
         except Exception as error:
             return _gap(f"open access lookup failed: {error!r}")
         if not normalized.controlled_fulltext_urls:
@@ -350,46 +354,56 @@ class FindingExtractor:
         # only returns the SourceVersion contract value, never persists it,
         # so without this add() studies.source_version_id would reference a
         # row that was never created.
-        self._session.add(
-            SourceVersionModel(
-                id=packet.source_version.id,
-                source_id=packet.source_version.source_id,
-                version_hash=packet.source_version.version_hash,
+        #
+        # The packet's ids are deterministic, and an audited call later in
+        # the same phase commits these rows before the phase checkpoint. A
+        # phase replayed after a lost connection or a crashed worker
+        # therefore re-extracts rows that already exist: each is reused
+        # rather than re-inserted into a duplicate-key error.
+        session = self._session
+        if await session.get(SourceVersionModel, packet.source_version.id) is None:
+            session.add(
+                SourceVersionModel(
+                    id=packet.source_version.id,
+                    source_id=packet.source_version.source_id,
+                    version_hash=packet.source_version.version_hash,
+                )
             )
-        )
-        await self._session.flush()
-        self._session.add(
-            StudyModel(
-                id=study.id,
-                source_version_id=packet.source_version.id,
-                research_question=study.research_question,
-                design=study.design.value,
+            await session.flush()
+        if await session.get(StudyModel, study.id) is None:
+            session.add(
+                StudyModel(
+                    id=study.id,
+                    source_version_id=packet.source_version.id,
+                    research_question=study.research_question,
+                    design=study.design.value,
+                )
             )
-        )
-        await self._session.flush()
-        self._session.add(
-            FindingModel(
-                id=finding.id,
-                study_id=study.id,
-                statement=finding.statement,
-                origin=finding.origin,
-                effect_direction=finding.effect.direction,
+            await session.flush()
+        if await session.get(FindingModel, finding.id) is None:
+            session.add(
+                FindingModel(
+                    id=finding.id,
+                    study_id=study.id,
+                    statement=finding.statement,
+                    origin=finding.origin,
+                    effect_direction=finding.effect.direction,
+                )
             )
-        )
-        await self._session.flush()
-        self._session.add(
-            CitationAnchorModel(
-                id=uuid4(),
-                finding_id=finding.id,
-                section=anchor.section,
-                page=anchor.page,
-                locator=anchor.locator,
-                exact_quote=anchor.exact_quote,
-                extraction_agent=anchor.extraction_agent,
-                verification_status=anchor.verification_status.value,
+            await session.flush()
+            session.add(
+                CitationAnchorModel(
+                    id=uuid4(),
+                    finding_id=finding.id,
+                    section=anchor.section,
+                    page=anchor.page,
+                    locator=anchor.locator,
+                    exact_quote=anchor.exact_quote,
+                    extraction_agent=anchor.extraction_agent,
+                    verification_status=anchor.verification_status.value,
+                )
             )
-        )
-        await self._session.flush()
+            await session.flush()
 
         return FindingExtractionResult(
             doi=doi,
@@ -598,6 +612,9 @@ class FindingExtractor:
         )
         try:
             result = await self._model.invoke(request)
+        except DatabaseSessionLost:
+            # The call could not be recorded; the worker resumes the phase.
+            raise
         except Exception as error:
             return _Attempt(ok=False, reason=f"model extraction failed: {error!r}")
 

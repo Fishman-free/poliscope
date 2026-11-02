@@ -30,6 +30,7 @@ from packages.council.rounds.registry import PhaseContext
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.epistemo.contracts import CouncilCancelled, TaskPhase
 from packages.evidence.process_stream import ProcessCallback
+from packages.kernel.database import DatabaseSessionLost
 from packages.models.contracts import (
     ModelClass,
     ModelGateway,
@@ -153,6 +154,18 @@ PHASE_INSTRUCTIONS: dict[TaskPhase, str] = {
         "3. Use is_fatal=true only when the flaw cannot be repaired by "
         "narrowing scope or adding a qualifier; otherwise challenge "
         "non-fatally.\n"
+    ),
+    TaskPhase.FINAL_REJUDGMENT: (
+        "Final-judgment constraints for this round:\n"
+        "1. stance: your own answer to the research question -- "
+        "affirmative, negative, conditional or undetermined. Decide it "
+        "independently; never follow how many others hold a view.\n"
+        "2. final_judgment opens with that answer in one sentence, then "
+        "argues it step by step (premise -> inference -> conclusion), "
+        "naming the evidence each step rests on and saying plainly when a "
+        "step rests on argument rather than an admitted finding.\n"
+        "3. It ends with the strongest point against your own position and "
+        "what evidence would change your mind.\n"
     ),
     TaskPhase.ACQUISITION: (
         "Evidence-retrieval constraints for this round:\n"
@@ -725,12 +738,14 @@ class GatewayDeliberator:
                         result = await self._await_or_cancel(
                             streaming(request, relay_for_seat)
                         )
-                    except CouncilCancelled:
+                    except (CouncilCancelled, DatabaseSessionLost):
                         # Round-13: the researcher stopped the run mid-call.
                         # This is a redirection, not a vendor failure -- do
                         # NOT fall back to a fresh invoke (that would ignore
                         # the stop and pay for another call). Propagate to
-                        # the orchestrator, which records CANCELLED.
+                        # the orchestrator, which records CANCELLED. A lost
+                        # database session is the same: a fallback call
+                        # could not be recorded either.
                         raise
                     except Exception:
                         logger.warning(
@@ -776,6 +791,23 @@ class GatewayDeliberator:
                         "seat": seat.value,
                         "phase": phase.value,
                         "reason": "researcher requested to stop the run",
+                    },
+                )
+            raise
+        except DatabaseSessionLost:
+            # Not this seat's failure: the run's database connection is gone,
+            # and the worker resumes the whole phase in a fresh session.
+            # Recording the seat absent would hide that and let the round
+            # keep paying for calls nothing can record. The live slice is
+            # still closed, like the stop path above.
+            if self._on_process is not None:
+                self._on_process(
+                    "seat_absent",
+                    {
+                        "seat": seat.value,
+                        "phase": phase.value,
+                        "reason": "database connection lost; resuming from "
+                        "the last checkpoint",
                     },
                 )
             raise

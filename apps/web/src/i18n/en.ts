@@ -795,4 +795,10 @@ export const en: Record<string, string> = {
   "模型未能完成整合，系统已把专家终审与全部讨论条目按推理链机械归档 —— 结论完整可读，每一步以专家原话为准。": "The model could not finish the integration; the system filed the expert positions and every discussion item along the chain mechanically -- the conclusion is complete and each step uses the experts' own wording.",
   "结论整合未能完成，详见审计轨迹。": "The conclusion synthesis did not finish; see the audit trail.",
   "查看研究结论": "Open the conclusion",
+  "正反立场": "Positions for and against",
+  "持此立场": "Held by",
+  "推理": "Reasoning",
+  "质询": "Challenge",
+  "以下立场按各位专家终审原文所表明的立场机械归组（未经模型整合）；每条推理都是专家原话，归组如与原文有出入，以原文为准。": "These positions were grouped mechanically by the stance each expert's final judgment states (not integrated by a model); every reasoning line is the expert's own wording, and the original text prevails over the grouping.",
+  "先把各方的论证分别讲完整：每一方的论点、推理、依据与盲点并排列出，不按持有人数排序；下方的逐步推理再权衡各方。": "Each side's case is argued in full first -- its thesis, reasoning, support and blind spots side by side, never ranked by how many experts hold it; the step-by-step chain below then weighs them.",
 };

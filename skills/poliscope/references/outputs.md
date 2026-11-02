@@ -134,11 +134,22 @@ still live — an empty dissent file is a claim in itself.
 
 ## `paper.md`
 
-Abstract, the question and why it is contested, method, findings organised by
-claim with conditions, limitations, open questions, references. Every claim in
-it traces to a claim id in `evidence.json`. The paper **assembles** — it
-produces no judgment that is not already in the graph, the consensus, or a
-dissent certificate.
+Abstract, the question and why it is contested, **positions for and
+against**, method, findings organised by claim with conditions, limitations,
+open questions, references. Every claim in it traces to a claim id in
+`evidence.json`. The paper **assembles** — it produces no judgment that is not
+already in the graph, the consensus, or a dissent certificate.
+
+**Positions for and against** (`## 正反立场`) come before the findings that
+weigh them. The affirmative and the negative case always appear, each argued
+in its strongest form — a side no seat holds is still stated, marked as held
+by no one. Every further angle from which seats reach a different conclusion
+(measurement, cultural context, mechanism …) gets its own entry. Each entry
+gives its thesis in one sentence, the reasoning in ordered steps, what backs
+it (claim and finding ids; say plainly when it rests on argument rather than
+an admitted finding), its blind spots (the other side's strongest point
+first), and the seats that hold it. Positions are never ordered or weighted by
+how many seats hold them.
 
 ## `scientists/<seat>.md`
 

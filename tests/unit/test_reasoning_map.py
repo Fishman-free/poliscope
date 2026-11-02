@@ -349,7 +349,11 @@ def test_fallback_paper_is_a_deterministic_map_with_derived_prose() -> None:
     assert isinstance(paper, FinalPaper)
     assert paper.reasoning_map is not None
     assert paper.reasoning_map.mode == MODE_DETERMINISTIC
-    assert paper.sections and paper.sections[0].heading.startswith("1. ")
+    # The debate comes first, then the chain that weighs it.
+    assert [section.heading for section in paper.sections[:2]] == [
+        "正反立场",
+        "1. 证据基础：手里的证据从哪来、靠得住吗？",
+    ]
     # Real claims are named with a Chinese type; scaffolding never headlines.
     assert "使用时长与抑郁症状呈弱正相关（类型：相关）" in paper.abstract
     assert "因果主张：" not in paper.abstract

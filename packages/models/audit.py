@@ -6,6 +6,11 @@ import json
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.kernel.contracts import FrozenDict
+from packages.kernel.database import (
+    DatabaseSessionLost,
+    guarded_write,
+    is_connection_failure,
+)
 from packages.models.contracts import ModelRequest, ModelResult, SchemaStatus
 from packages.models.models import ModelCallModel
 from packages.tools.contracts import ToolRequest, ToolResult
@@ -41,6 +46,30 @@ def _tool_request_summary(request: ToolRequest) -> dict[str, object]:
     }
 
 
+async def _commit_audit_row(session: AsyncSession, row: object) -> None:
+    """Commit one audit row without ever tearing the shared session.
+
+    The caller's session is usually the worker's deliberation session, and
+    the write happens inside calls that a per-seat or per-query timeout may
+    cancel, sometimes several at once (acquisition fetches concurrently).
+    ``guarded_write`` serialises the writers and lets an in-flight commit
+    finish before a cancellation propagates.
+    """
+
+    async def write() -> None:
+        session.add(row)
+        await session.commit()
+
+    try:
+        await guarded_write(session, write)
+    except Exception as error:
+        if is_connection_failure(error):
+            # The paid-for call can no longer be recorded, and nor can
+            # anything else on this session: stop the round now.
+            raise DatabaseSessionLost(str(error)[:300]) from error
+        raise
+
+
 async def record_model_call(
     session: AsyncSession,
     request: ModelRequest,
@@ -66,8 +95,7 @@ async def record_model_call(
         schema_status=result.schema_status.value,
         request_summary=_model_request_summary(request),
     )
-    session.add(row)
-    await session.commit()
+    await _commit_audit_row(session, row)
     return row
 
 
@@ -94,6 +122,5 @@ async def record_tool_call(
         schema_status=SchemaStatus.OK.value,
         request_summary=_tool_request_summary(request),
     )
-    session.add(row)
-    await session.commit()
+    await _commit_audit_row(session, row)
     return row

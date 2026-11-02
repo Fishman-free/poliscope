@@ -23,6 +23,7 @@ from packages.reports.reasoning_map import (
     DETERMINISTIC_NOTICE,
     KIND_LABELS,
     MODE_DETERMINISTIC,
+    POSITIONS_MECHANICAL_NOTICE,
     VERDICT_LABELS,
     seat_display,
 )
@@ -41,10 +42,12 @@ def _ref_list(refs: tuple[str, ...]) -> str:
 
 def _render_map_markdown(paper: FinalPaper, rmap: ReasoningMap) -> list[str]:
     """Render the reasoning map in the same order as the workspace view:
-    answer → verdicts → the step-by-step chain (each step's conclusion with
-    its support, limits and unknowns directly beneath it) → cruxes → next
-    steps → appendix. Limitations sit beside the conclusions inside every
-    step, and again in full right after the chain (CLAUDE.md 11)."""
+    answer → verdicts → the positions (each side's thesis, reasoning,
+    evidence and blind spots) → the step-by-step chain that weighs them (each
+    step's conclusion with its support, limits and unknowns directly beneath
+    it) → cruxes → next steps → appendix. Limitations sit beside the
+    conclusions inside every step, and again in full right after the chain
+    (CLAUDE.md 11)."""
     items: dict[str, MapItem] = {item.id: item for item in rmap.items}
     lines = [f"# {paper.title}", ""]
 
@@ -60,6 +63,33 @@ def _render_map_markdown(paper: FinalPaper, rmap: ReasoningMap) -> list[str]:
         )
     if rmap.verdicts:
         lines.append("")
+
+    if rmap.positions:
+        lines += ["## 正反立场", ""]
+        mechanical = rmap.mode == MODE_DETERMINISTIC
+        if mechanical or rmap.positions_derived_on_read:
+            lines += [f"> {POSITIONS_MECHANICAL_NOTICE}", ""]
+        for position in rmap.positions:
+            lines += [f"### {position.label}：{position.thesis}", ""]
+            if position.holders:
+                lines += [f"**持此立场**：{position.holders}", ""]
+            if position.reasoning:
+                lines.append("**推理**")
+                lines.extend(
+                    f"{index}. {step}"
+                    for index, step in enumerate(position.reasoning, start=1)
+                )
+                lines.append("")
+            for label, values in (
+                ("依据", position.evidence),
+                ("盲点", position.blindspots),
+            ):
+                if values:
+                    lines.append(f"**{label}**")
+                    lines.extend(f"- {value}" for value in values)
+                    lines.append("")
+            if position.refs:
+                lines += [_ref_list(position.refs), ""]
 
     lines += ["## 推理链", ""]
     for number, step in enumerate(rmap.steps, start=1):

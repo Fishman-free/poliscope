@@ -32,6 +32,7 @@ from packages.council.contracts import Seat
 from packages.council.rounds.registry import KnowledgeDocumentLike
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker
 from packages.evidence.process_stream import ProcessCallback
+from packages.kernel.database import DatabaseSessionLost
 from packages.papers.candidate_pool import CandidatePool
 from packages.papers.models import SourceModel
 from packages.papers.query_planner import QueryPlanner
@@ -380,6 +381,8 @@ class SourceAcquisition:
                     source_adapter.lookup_doi(doi),
                     timeout=ACQUISITION_PER_QUERY_SECONDS,
                 )
+            except DatabaseSessionLost:
+                raise
             except Exception as error:
                 reason = (
                     "acquisition timed out"
@@ -649,6 +652,8 @@ class SourceAcquisition:
                 continue
             try:
                 normalized = await source_adapter.lookup_doi(doi)
+            except DatabaseSessionLost:
+                raise
             except Exception as error:
                 refused.append(RefusedCandidate(doi, f"lookup failed: {error!r}"))
                 continue
@@ -801,6 +806,8 @@ class SourceAcquisition:
             provider = search_adapter(name, self._gateway, self._task_id)
             try:
                 hit = await provider.search(cleaned)
+            except DatabaseSessionLost:
+                raise
             except Exception:
                 continue
             if hit is not None:

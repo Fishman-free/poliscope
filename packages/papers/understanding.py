@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.council.deliberation import OUTPUT_LANGUAGE_DIRECTIVES
 from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import thaw_for_serialization
-from packages.kernel.database import canonical_uuid
+from packages.kernel.database import DatabaseSessionLost, canonical_uuid
 from packages.knowledge.extractors import InvalidDocument, extract_text
 from packages.models.contracts import (
     ModelClass,
@@ -289,6 +289,10 @@ async def understand_paper(
                 "output quarantined"
             )
         payload = dict(model_result.payload)
+    except DatabaseSessionLost:
+        # Not a model failure: the run's session is gone and the worker
+        # redoes this step in a fresh one.
+        raise
     except Exception as error:  # noqa: BLE001 -- a model failure is recorded, not raised
         reason = sanitize_export(str(error))[:500]
         logger.warning("paper understanding failed: %s", reason)

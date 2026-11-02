@@ -43,6 +43,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
@@ -52,7 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.council.deliberation import OUTPUT_LANGUAGE_DIRECTIVES
 from packages.evidence.models import ScientificEventModel
 from packages.evidence.sql_ledger import SqlEventLedger
-from packages.kernel.database import canonical_uuid
+from packages.kernel.database import DatabaseSessionLost, canonical_uuid
 from packages.models.contracts import (
     ModelClass,
     ModelGateway,
@@ -78,10 +79,12 @@ from packages.reports.contracts import (
 from packages.reports.reasoning_map import (
     DIMENSIONS,
     MODE_DETERMINISTIC,
+    ChallengeRow,
     JudgmentRow,
     build_catalog,
     catalog_prompt_lines,
     deterministic_map,
+    deterministic_positions,
     finding_references,
     map_from_payload,
     map_to_payload,
@@ -292,6 +295,7 @@ def _brief_catalog(
     brief: ResearchBrief,
     consensus: Mapping[str, object],
     judgments: Sequence[JudgmentRow],
+    challenges: Sequence[ChallengeRow] = (),
 ) -> tuple[MapItem, ...]:
     return build_catalog(
         findings=[node.payload for node in brief.findings],
@@ -300,6 +304,7 @@ def _brief_catalog(
         studies=[node.payload for node in brief.discriminating_studies],
         consensus=consensus,
         judgments=judgments,
+        challenges=challenges,
     )
 
 
@@ -374,6 +379,7 @@ def _fallback_integrated_paper(
     consensus: Mapping[str, object],
     question: str,
     judgments: Sequence[JudgmentRow] = (),
+    challenges: Sequence[ChallengeRow] = (),
 ) -> FinalPaper:
     """Assemble the summary from the brief alone, no model involved.
 
@@ -384,7 +390,7 @@ def _fallback_integrated_paper(
     what the council produced -- they differ only in who organised it, and
     the map's ``mode`` says which.
     """
-    items = _brief_catalog(brief, consensus, judgments)
+    items = _brief_catalog(brief, consensus, judgments, challenges)
     rmap = deterministic_map(
         items, bottom_line=_as_str(consensus.get("conditional_consensus"))
     )
@@ -435,6 +441,23 @@ def _build_map_prompt(
         "- verdicts: one per claim under test: claim (plain words), verdict "
         "(supported | partially_supported | not_supported | undetermined), "
         "reason (one sentence), refs.",
+        "- positions: lay the question out as a debate BEFORE the steps weigh "
+        "it. ALWAYS give the affirmative case (stance=affirmative: the claim "
+        "under test holds -- for a question naming two answers such as "
+        "'helps / does not help', the first-named one) and the negative case "
+        "(stance=negative), each in its strongest form, even when the experts "
+        "lean one way; a side no expert holds is still argued from the "
+        "catalogue, with holders = '无专家持此立场'. When experts reach "
+        "different conclusions from different angles (e.g. measurement, "
+        "cultural context, mechanism), add one entry per distinct angle "
+        "(stance=conditional or undetermined, label naming the angle such as "
+        "'从文化情境看'). Each entry: label (<=12 Chinese characters), thesis "
+        "(one sentence), reasoning (2-4 ordered steps, premise -> inference -> "
+        "conclusion, one sentence each), evidence (<=3: what backs it; say "
+        "plainly when no admitted finding does and the case rests on expert "
+        "argument), blindspots (<=3: what this side overlooks or where it "
+        "breaks -- the other side's strongest point first), holders (expert "
+        "roles), refs. Never rank positions by how many experts hold them.",
         "- steps: walk this spine in order, one step per dimension the material "
         "addresses (skip a dimension with no material):",
         *spine,
@@ -465,7 +488,7 @@ def _build_map_prompt(
         "- refs are catalogue ids exactly as written (B3, L12, J2 ...). Cite "
         "the items each step rests on; uncited items are filed automatically, "
         "so do not try to cite everything.",
-        "- Keep the whole answer under about 2500 Chinese characters.",
+        "- Keep the whole answer under about 3500 Chinese characters.",
         "",
         "## Catalogue",
         "",
@@ -645,6 +668,43 @@ async def _load_consensus(session: AsyncSession, task_id: UUID) -> dict[str, obj
     }
 
 
+async def load_challenge_rows(
+    session: AsyncSession, task_id: UUID
+) -> tuple[ChallengeRow, ...]:
+    """Every cross-examination challenge, in ledger order.
+
+    Challenges are process-only events, never graph nodes, so the catalogue
+    reads them from the ledger like the final judgments: they are the
+    arguments each side actually made against the claim under test.
+    """
+    result = await session.execute(
+        select(ScientificEventModel)
+        .where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.event_type == "CHALLENGE_RAISED",
+        )
+        .order_by(ScientificEventModel.sequence)
+    )
+    rows: list[ChallengeRow] = []
+    for row in result.scalars():
+        payload = dict(row.payload)
+        seat = payload.get("seat")
+        statement = payload.get("statement")
+        if not isinstance(seat, str) or not isinstance(statement, str):
+            continue
+        if not statement.strip():
+            continue
+        rows.append(
+            ChallengeRow(
+                seat=seat,
+                statement=statement,
+                claim_statement=_as_str(payload.get("claim_statement")),
+                is_fatal=payload.get("is_fatal") is True,
+            )
+        )
+    return tuple(rows)
+
+
 async def load_judgment_rows(
     session: AsyncSession, task_id: UUID
 ) -> tuple[JudgmentRow, ...]:
@@ -670,6 +730,7 @@ async def load_judgment_rows(
                 text=judgment,
                 confidence=payload.get("confidence"),
                 has_dissent=payload.get("has_dissent") is True,
+                stance=_as_str(payload.get("stance")) or None,
             )
         )
     return tuple(rows)
@@ -1019,6 +1080,7 @@ async def _emit_fallback_paper(
     is_review: bool = False,
     understanding: dict[str, object] | None = None,
     judgments: Sequence[JudgmentRow] = (),
+    challenges: Sequence[ChallengeRow] = (),
     idempotency_key: str = _PAPER_IDEMPOTENCY_KEY,
     emergency: bool = False,
 ) -> SynthesisOutcome:
@@ -1030,7 +1092,9 @@ async def _emit_fallback_paper(
         stored_payload = _review_payload_dict(review)
     else:
         stored_payload = _paper_payload_dict(
-            _fallback_integrated_paper(brief, consensus, question, judgments)
+            _fallback_integrated_paper(
+                brief, consensus, question, judgments, challenges
+            )
         )
     stored_payload.update(
         {
@@ -1114,6 +1178,7 @@ async def _synthesize(
     brief = await ReportService(session).build(task_id)
     consensus = await _load_consensus(session, task_id)
     judgment_rows = await load_judgment_rows(session, task_id)
+    challenge_rows = await load_challenge_rows(session, task_id)
     is_review = getattr(task, "task_type", "deep_research") == "paper_review"
     understanding: dict[str, object] | None = None
     if is_review:
@@ -1140,6 +1205,7 @@ async def _synthesize(
             is_review=is_review,
             understanding=understanding,
             judgments=judgment_rows,
+            challenges=challenge_rows,
             idempotency_key=(
                 _EMERGENCY_PAPER_IDEMPOTENCY_KEY
                 if emergency_reason is not None
@@ -1171,7 +1237,7 @@ async def _synthesize(
         )
         output_schema = "PaperReviewReport"
     else:
-        items = _brief_catalog(brief, consensus, judgment_rows)
+        items = _brief_catalog(brief, consensus, judgment_rows, challenge_rows)
         system_prompt = (
             f"{_MAP_SYSTEM_PROMPT}\n{directive}\nReply only with the requested schema."
         )
@@ -1210,6 +1276,10 @@ async def _synthesize(
             if is_review
             else _map_paper(parse_model_map(payload, items), brief, task.question)
         )
+    except DatabaseSessionLost:
+        # Not a model failure: nothing, not even the fallback, can be written
+        # on this session. The worker redoes the synthesis in a fresh one.
+        raise
     except Exception as error:  # noqa: BLE001 -- a model failure is reported, not raised
         reason = sanitize_export(str(error))[:500]
         logger.warning("paper synthesis failed: %s", reason)
@@ -1238,6 +1308,7 @@ async def _synthesize(
             is_review=is_review,
             understanding=understanding,
             judgments=judgment_rows,
+            challenges=challenge_rows,
         )
 
     stored_payload: dict[str, object] = (
@@ -1272,12 +1343,11 @@ async def ensure_reasoning_map(
     bottom line; the template consensus never becomes one. Any failure
     returns the payload as stored -- the legacy view still renders it.
     """
-    if (
-        payload is None
-        or "paper_overview" in payload
-        or isinstance(payload.get("reasoning_map"), Mapping)
-    ):
+    if payload is None or "paper_overview" in payload:
         return payload
+    stored_map = payload.get("reasoning_map")
+    if isinstance(stored_map, Mapping):
+        return _with_positions(payload, stored_map)
     try:
         task_id = canonical_uuid(task_id)
         if brief is None:
@@ -1285,7 +1355,10 @@ async def ensure_reasoning_map(
         if consensus is None:
             consensus = await _load_consensus(session, task_id)
         items = _brief_catalog(
-            brief, consensus, await load_judgment_rows(session, task_id)
+            brief,
+            consensus,
+            await load_judgment_rows(session, task_id),
+            await load_challenge_rows(session, task_id),
         )
         bottom_line = meaningful_consensus(consensus.get("conditional_consensus"))
         if not bottom_line and payload.get("fallback") is not True:
@@ -1298,6 +1371,34 @@ async def ensure_reasoning_map(
         return payload
     upgraded = dict(payload)
     upgraded["reasoning_map"] = {**map_to_payload(rmap), "derived_on_read": True}
+    return upgraded
+
+
+def _with_positions(
+    payload: Mapping[str, object], stored_map: Mapping[str, object]
+) -> Mapping[str, object]:
+    """Give a map stored before positions existed its debate, on read.
+
+    Filed from the stored catalogue's final judgments the same way the
+    deterministic map files them, marked ``positions_derived_on_read`` so the
+    workspace says the grouping was mechanical. The stored event is never
+    rewritten (the ledger is append-only).
+    """
+    if "positions" in stored_map:
+        return payload
+    rmap = map_from_payload(stored_map)
+    if rmap is None:
+        return payload
+    positions = deterministic_positions(rmap.items)
+    if not positions:
+        return payload
+    upgraded_map = dict(stored_map)
+    upgraded_map["positions"] = map_to_payload(replace(rmap, positions=positions))[
+        "positions"
+    ]
+    upgraded_map["positions_derived_on_read"] = True
+    upgraded = dict(payload)
+    upgraded["reasoning_map"] = upgraded_map
     return upgraded
 
 
@@ -1325,6 +1426,7 @@ __all__ = [
     "SYNTHESIS_WORKING",
     "SynthesisOutcome",
     "ensure_reasoning_map",
+    "load_challenge_rows",
     "load_judgment_rows",
     "paper_payload_to_dataclass",
     "synthesize_paper",

@@ -35,6 +35,7 @@ import logging
 from collections.abc import Mapping
 from uuid import UUID
 
+from packages.kernel.database import DatabaseSessionLost
 from packages.memory.contracts import Episode, MemoryAdapter, RecallResult
 from packages.memory.vendor.memobrain.memobrain import MemoBrain
 from packages.memory.vendor.memobrain.prompts import (
@@ -191,6 +192,9 @@ class MemoBrainAdapter(MemoryAdapter):
         ]
         try:
             await brain.memorize(pair)
+        except DatabaseSessionLost:
+            # Not a memory failure: the run resumes in a fresh session.
+            raise
         except Exception:
             logger.warning(
                 "MemoBrain memorize failed for %s (%s); kept raw episode",
@@ -217,6 +221,8 @@ class MemoBrainAdapter(MemoryAdapter):
                 text = _messages_to_text(organized)
             else:
                 text = brain.graph.pretty_print()
+        except DatabaseSessionLost:
+            raise
         except Exception:
             logger.warning(
                 "MemoBrain recall failed for %s; degraded to raw episodes",

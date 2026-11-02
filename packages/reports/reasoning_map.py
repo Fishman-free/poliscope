@@ -48,6 +48,7 @@ from packages.reports.contracts import (
     NextStep,
     PaperReference,
     PaperSection,
+    Position,
     ReasoningMap,
     ReasoningStep,
 )
@@ -143,10 +144,52 @@ VERDICT_LABELS: dict[str, str] = {
     "undetermined": "尚无定论",
 }
 
+# An expert's answer to the research question, in debate order. For a
+# question naming two answers ("helps / does not help"), affirmative is the
+# first-named one. Grouping by stance lays the sides out; it never counts
+# them (CLAUDE.md 4).
+STANCES: tuple[str, ...] = (
+    "affirmative",
+    "negative",
+    "conditional",
+    "undetermined",
+)
+STANCE_LABELS: dict[str, str] = {
+    "affirmative": "正方",
+    "negative": "反方",
+    "conditional": "有条件成立",
+    "undetermined": "尚无定论",
+}
+_STANCE_THESES: dict[str, str] = {
+    "affirmative": "认为主张成立。",
+    "negative": "认为主张不成立。",
+    "conditional": "认为主张只在特定条件下成立。",
+    "undetermined": "认为现有证据不足以判定。",
+}
+_STANCE_ALIASES: dict[str, str] = {
+    "pro": "affirmative",
+    "yes": "affirmative",
+    "supports": "affirmative",
+    "support": "affirmative",
+    "con": "negative",
+    "no": "negative",
+    "opposes": "negative",
+    "oppose": "negative",
+    "against": "negative",
+    "qualified": "conditional",
+    "partial": "conditional",
+    "partially_supported": "conditional",
+    "unknown": "undetermined",
+    "uncertain": "undetermined",
+    "neutral": "undetermined",
+}
+NO_HOLDER = "参与终审的专家中无人持此立场"
+
 # Kind -> catalogue id prefix, in catalogue order.
 KIND_PREFIX: dict[str, str] = {
     "judgment": "J",
     "finding": "F",
+    "challenge": "Q",
     "blindspot": "B",
     "boundary": "L",
     "conflict": "C",
@@ -157,6 +200,7 @@ KIND_PREFIX: dict[str, str] = {
 KIND_LABELS: dict[str, str] = {
     "judgment": "专家终审",
     "finding": "研究发现",
+    "challenge": "质询",
     "blindspot": "盲点",
     "boundary": "适用边界",
     "conflict": "未决分歧",
@@ -167,6 +211,7 @@ KIND_LABELS: dict[str, str] = {
 _KIND_LABELS_EN: dict[str, str] = {
     "judgment": "Independent final positions of the seven experts",
     "finding": "Admitted findings (each bound to a source)",
+    "challenge": "Challenges experts raised against the claim (fatal first)",
     "blindspot": "Blindspots (ranked by impact)",
     "boundary": "Boundary conditions",
     "conflict": "Unresolved conflicts",
@@ -177,6 +222,7 @@ _KIND_LABELS_EN: dict[str, str] = {
 # Where an item lands when its text names no dimension.
 _KIND_DEFAULT_DIMENSION: dict[str, str] = {
     "finding": "evidence",
+    "challenge": "mechanism",
     "blindspot": "mechanism",
     "boundary": "boundary",
     "conflict": "mechanism",
@@ -189,6 +235,7 @@ _KIND_DEFAULT_DIMENSION: dict[str, str] = {
 _PROMPT_CAPS: dict[str, int] = {
     "judgment": 7,
     "finding": 30,
+    "challenge": 21,
     "blindspot": 30,
     "boundary": 30,
     "conflict": 30,
@@ -235,6 +282,63 @@ def meaningful_consensus(text: object) -> str:
     if not stripped or stripped.startswith(_TEMPLATE_CONSENSUS_PREFIXES):
         return ""
     return stripped
+
+
+def normalize_stance(value: object) -> str | None:
+    """A stance from the vocabulary, or ``None`` for anything else."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower().replace(" ", "_").replace("-", "_")
+    text = _STANCE_ALIASES.get(text, text)
+    return text if text in STANCES else None
+
+
+# Checked in this order, on the judgment's verdict sentence only: the hedged
+# answers first, then the negated forms (不成立 contains 成立, 不支持
+# contains 支持), then the affirmative ones.
+_STANCE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "undetermined",
+        (
+            "尚无定论", "无法判定", "无法得出", "证据不足以", "不足以判断",
+            "无法确定", "难以判断", "cannot be determined", "undetermined",
+            "insufficient evidence",
+        ),
+    ),
+    (
+        "conditional",
+        (
+            "有条件", "取决于", "视情境", "视情况", "部分成立", "部分支持",
+            "在特定", "仅在", "只有在", "conditional", "depends on",
+            "partially",
+        ),
+    ),
+    (
+        "negative",
+        (
+            "无助于", "不成立", "不支持", "否定", "反对", "阻碍", "有害",
+            "适得其反", "强化刻板", "not supported", "does not", "undermines",
+        ),
+    ),
+    (
+        "affirmative",
+        ("有助于", "成立", "支持", "促进", "有利于", "supported", "helps"),
+    ),
+)
+
+
+def infer_stance(text: str) -> str:
+    """The stance a judgment's own verdict sentence states, by its wording.
+
+    Used only for judgments recorded before experts declared a stance; the
+    deterministic map says the grouping is mechanical and quotes each
+    expert's own words beside it.
+    """
+    sentence = verdict_sentence(text, 400).lower()
+    for stance, markers in _STANCE_MARKERS:
+        if any(marker in sentence for marker in markers):
+            return stance
+    return "undetermined"
 
 
 # --------------------------------------------------------------------- text
@@ -359,6 +463,17 @@ class JudgmentRow:
     text: str
     confidence: object = None
     has_dissent: bool = False
+    stance: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ChallengeRow:
+    """One cross-examination challenge, as the catalogue needs it."""
+
+    seat: str
+    statement: str
+    claim_statement: str = ""
+    is_fatal: bool = False
 
 
 def _statement(payload: Mapping[str, object]) -> str:
@@ -383,6 +498,7 @@ def build_catalog(
     studies: Sequence[Mapping[str, object]] = (),
     consensus: Mapping[str, object] | None = None,
     judgments: Sequence[JudgmentRow] = (),
+    challenges: Sequence[ChallengeRow] = (),
 ) -> tuple[MapItem, ...]:
     """Number every council output once, in a stable order.
 
@@ -391,7 +507,8 @@ def build_catalog(
     and near-exact repeats collapse into the first occurrence -- a dissent
     certificate restates its author's judgment verbatim, and seats often
     nominate the same boundary in the same words. Blindspots are ranked by
-    their bounty score so the strongest doubt in every step comes first.
+    their bounty score so the strongest doubt in every step comes first, and
+    fatal challenges come before the ones narrowing the scope can repair.
     """
     items: list[MapItem] = []
     seen: set[str] = set()
@@ -405,6 +522,7 @@ def build_catalog(
         seat: str | None = None,
         score: object = None,
         has_dissent: bool = False,
+        stance: str | None = None,
     ) -> None:
         cleaned = _clean(text)
         if not cleaned:
@@ -423,6 +541,7 @@ def build_catalog(
                 seat=seat,
                 score=None if score is None else str(score),
                 has_dissent=has_dissent,
+                stance=stance,
             )
         )
 
@@ -434,9 +553,19 @@ def build_catalog(
             seat=row.seat,
             score=row.confidence,
             has_dissent=row.has_dissent,
+            stance=normalize_stance(row.stance) or infer_stance(row.text),
         )
     for payload in findings:
         add("finding", _statement(payload))
+    for challenge in sorted(challenges, key=lambda row: not row.is_fatal):
+        target = _clean(challenge.claim_statement)
+        add(
+            "challenge",
+            (f"针对「{target}」：" if target else "") + challenge.statement,
+            headline=headline_of(challenge.statement),
+            seat=challenge.seat,
+            score="fatal" if challenge.is_fatal else None,
+        )
     ranked = sorted(
         blindspots,
         key=lambda payload: _score_value(payload.get("score")),
@@ -508,10 +637,16 @@ def catalog_prompt_lines(items: Sequence[MapItem]) -> list[str]:
         for item in shown:
             if kind == "judgment":
                 dissent = ", keeps a dissent" if item.has_dissent else ""
+                stance = f", stance {item.stance}" if item.stance else ""
                 lines.append(
                     f"[{item.id}] {seat_display(item.seat)}"
-                    f" (confidence {item.score or 'not reported'}{dissent}): "
-                    f"{_clip(item.text, 900)}"
+                    f" (confidence {item.score or 'not reported'}{stance}"
+                    f"{dissent}): {_clip(item.text, 900)}"
+                )
+            elif kind == "challenge":
+                fatal = " (fatal)" if item.score == "fatal" else ""
+                lines.append(
+                    f"[{item.id}] {seat_display(item.seat)}{fatal}: {item.headline}"
                 )
             else:
                 lines.append(f"[{item.id}] {item.headline}")
@@ -553,6 +688,52 @@ def _dimension_of(value: object, question: str) -> str:
 def _verdict_of(value: object) -> str:
     text = str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
     return text if text in VERDICTS else "undetermined"
+
+
+def _parse_positions(
+    value: object, known: set[str]
+) -> tuple[Position, ...]:
+    """The synthesizer's debate, in stance order (ties keep model order).
+
+    An entry without a thesis is dropped; an unknown stance is read as
+    ``undetermined`` rather than guessed. The model is told to give both the
+    affirmative and the negative case; if it omits one, the side is still
+    shown, as held by no one, so the reader sees it was not argued.
+    """
+    positions: list[Position] = []
+    for raw in _mappings(value)[:6]:
+        thesis = _text(raw.get("thesis"), 300)
+        if not thesis:
+            continue
+        stance = normalize_stance(raw.get("stance")) or "undetermined"
+        positions.append(
+            Position(
+                stance=stance,
+                label=_text(raw.get("label"), 40) or STANCE_LABELS[stance],
+                thesis=thesis,
+                reasoning=_bullets(raw.get("reasoning"), cap=5),
+                evidence=_bullets(raw.get("evidence")),
+                blindspots=_bullets(raw.get("blindspots")),
+                holders=_text(raw.get("holders"), 120),
+                refs=_refs(raw.get("refs"), known),
+            )
+        )
+    if positions:
+        present = {position.stance for position in positions}
+        for stance in ("affirmative", "negative"):
+            if stance not in present:
+                positions.append(_unargued_side(stance))
+    positions.sort(key=lambda position: STANCES.index(position.stance))
+    return tuple(positions)
+
+
+def _unargued_side(stance: str) -> Position:
+    return Position(
+        stance=stance,
+        label=STANCE_LABELS[stance],
+        thesis=_STANCE_THESES[stance],
+        holders=NO_HOLDER,
+    )
 
 
 def parse_model_map(
@@ -634,6 +815,7 @@ def parse_model_map(
             mode=MODE_MODEL,
             bottom_line=bottom_line,
             verdicts=verdicts,
+            positions=_parse_positions(payload.get("positions"), known),
             steps=tuple(steps),
             cruxes=cruxes,
             next_steps=next_steps,
@@ -646,6 +828,8 @@ def _cited(rmap: ReasoningMap) -> set[str]:
     cited: set[str] = set()
     for verdict in rmap.verdicts:
         cited.update(verdict.refs)
+    for position in rmap.positions:
+        cited.update(position.refs)
     for step in rmap.steps:
         cited.update(step.refs)
     for crux in rmap.cruxes:
@@ -685,6 +869,64 @@ def _file_uncited(rmap: ReasoningMap, items: Sequence[MapItem]) -> ReasoningMap:
 # ------------------------------------------------------- deterministic path
 
 
+def deterministic_positions(items: Sequence[MapItem]) -> tuple[Position, ...]:
+    """Lay the experts' final judgments out as a debate, without a model.
+
+    Judgments are grouped by the stance each expert declared (or, for an
+    older judgment, the stance its verdict sentence states). Each side's
+    reasoning is its holders' own verdicts, attributed. Cross-examination
+    challenges all target the claim under test, so a challenge is an argument
+    of the side that raised it and a blind spot of the affirmative side when
+    someone else raised it. Both the affirmative and the negative side always
+    appear, as held by no one if need be. Nothing is invented: a side whose
+    backing or blind spots the record does not show is left without them.
+    """
+    judgments = [item for item in items if item.kind == "judgment"]
+    if not judgments:
+        return ()
+    challenges = [item for item in items if item.kind == "challenge"]
+    grouped: dict[str, list[MapItem]] = defaultdict(list)
+    for item in judgments:
+        grouped[item.stance or infer_stance(item.text)].append(item)
+    positions: list[Position] = []
+    for stance in STANCES:
+        holders = grouped.get(stance, [])
+        if not holders and stance not in ("affirmative", "negative"):
+            continue
+        seats = {item.seat for item in holders}
+        own = [item for item in challenges if item.seat in seats]
+        others = [item for item in challenges if item.seat not in seats]
+        evidence = [] if stance == "affirmative" else own[:_SHOWN_PER_FIELD]
+        blindspots = others[:_SHOWN_PER_FIELD] if stance == "affirmative" else []
+        positions.append(
+            Position(
+                stance=stance,
+                label=STANCE_LABELS[stance],
+                thesis=_STANCE_THESES[stance],
+                reasoning=tuple(
+                    f"{seat_display(item.seat)}：{item.headline}"
+                    + ("（保留异议）" if item.has_dissent else "")
+                    for item in holders
+                ),
+                evidence=tuple(f"质询论点：{item.headline}" for item in evidence),
+                blindspots=tuple(
+                    f"{seat_display(item.seat)}质询：{item.headline}"
+                    for item in blindspots
+                ),
+                holders=(
+                    "、".join(seat_display(item.seat) for item in holders)
+                    or NO_HOLDER
+                ),
+                refs=(
+                    *(item.id for item in holders),
+                    *(item.id for item in evidence),
+                    *(item.id for item in blindspots),
+                ),
+            )
+        )
+    return tuple(positions)
+
+
 def deterministic_map(
     items: Sequence[MapItem], *, bottom_line: str = ""
 ) -> ReasoningMap:
@@ -713,7 +955,11 @@ def deterministic_map(
         if not owners and not pool:
             continue
         support = [item for item in pool if item.kind == "finding"]
-        limits = [item for item in pool if item.kind == "boundary"]
+        # A challenge is a counter-argument to the claim: it bounds the step
+        # it concerns, after the council's own boundary conditions.
+        limits = [item for item in pool if item.kind == "boundary"] + [
+            item for item in pool if item.kind == "challenge"
+        ]
         unknowns = [item for item in pool if item.kind in ("blindspot", "conflict")]
         tests = [item for item in pool if item.kind in ("test", "study")]
         # A dissent that is not a restatement of some judgment (those were
@@ -764,6 +1010,7 @@ def deterministic_map(
     return ReasoningMap(
         mode=MODE_DETERMINISTIC,
         bottom_line=meaningful_consensus(bottom_line),
+        positions=deterministic_positions(items),
         steps=tuple(steps),
         items=tuple(items),
     )
@@ -781,6 +1028,7 @@ def _item_payload(item: MapItem) -> dict[str, object]:
         "seat": item.seat,
         "score": item.score,
         "has_dissent": item.has_dissent,
+        "stance": item.stance,
     }
 
 
@@ -797,6 +1045,19 @@ def map_to_payload(rmap: ReasoningMap) -> dict[str, object]:
                 "refs": list(verdict.refs),
             }
             for verdict in rmap.verdicts
+        ],
+        "positions": [
+            {
+                "stance": position.stance,
+                "label": position.label,
+                "thesis": position.thesis,
+                "reasoning": list(position.reasoning),
+                "evidence": list(position.evidence),
+                "blindspots": list(position.blindspots),
+                "holders": position.holders,
+                "refs": list(position.refs),
+            }
+            for position in rmap.positions
         ],
         "steps": [
             {
@@ -830,6 +1091,7 @@ def map_to_payload(rmap: ReasoningMap) -> dict[str, object]:
         ],
         "items": [_item_payload(item) for item in rmap.items],
         "unassigned": list(rmap.unassigned),
+        "positions_derived_on_read": rmap.positions_derived_on_read,
     }
 
 
@@ -872,6 +1134,20 @@ def map_from_payload(value: object) -> ReasoningMap | None:
             )
             for raw in _mappings(value.get("verdicts"))
         ),
+        positions=tuple(
+            Position(
+                stance=normalize_stance(raw.get("stance")) or "undetermined",
+                label=_plain(raw.get("label")),
+                thesis=_plain(raw.get("thesis")),
+                reasoning=_tuple(raw.get("reasoning")),
+                evidence=_tuple(raw.get("evidence")),
+                blindspots=_tuple(raw.get("blindspots")),
+                holders=_plain(raw.get("holders")),
+                refs=_tuple(raw.get("refs")),
+            )
+            for raw in _mappings(value.get("positions"))
+            if _plain(raw.get("thesis"))
+        ),
         steps=steps,
         cruxes=tuple(
             Crux(
@@ -905,15 +1181,22 @@ def map_from_payload(value: object) -> ReasoningMap | None:
                 seat=_plain(raw.get("seat")) or None,
                 score=_plain(raw.get("score")) or None,
                 has_dissent=raw.get("has_dissent") is True,
+                stance=normalize_stance(raw.get("stance")),
             )
             for raw in _mappings(value.get("items"))
             if _plain(raw.get("id"))
         ),
         unassigned=_tuple(value.get("unassigned")),
+        positions_derived_on_read=value.get("positions_derived_on_read") is True,
     )
 
 
 # ------------------------------------------------------------- prose view
+
+POSITIONS_MECHANICAL_NOTICE = (
+    "以下立场按各位专家终审原文所表明的立场机械归组（未经模型整合）；"
+    "每条推理都是专家原话，归组如与原文有出入，以原文为准。"
+)
 
 DETERMINISTIC_NOTICE = (
     "本次结论未经模型整合：系统把各位专家的终审要点与全部讨论条目，"
@@ -926,6 +1209,15 @@ def paper_sections(rmap: ReasoningMap) -> tuple[PaperSection, ...]:
     that older readers (and the Markdown export of a map-less consumer)
     render. Kept short on purpose: the map itself is the full view."""
     sections: list[PaperSection] = []
+    if rmap.positions:
+        sections.append(
+            PaperSection(
+                heading="正反立场",
+                paragraphs=tuple(
+                    position_paragraph(position) for position in rmap.positions
+                ),
+            )
+        )
     for number, step in enumerate(rmap.steps, start=1):
         paragraphs = [step.answer]
         for label, values in (
@@ -973,6 +1265,24 @@ def paper_sections(rmap: ReasoningMap) -> tuple[PaperSection, ...]:
     return tuple(sections)
 
 
+def position_paragraph(position: Position) -> str:
+    """One side as a self-contained paragraph: thesis, then its chain of
+    reasoning, what backs it and where it is blind."""
+    lines = [f"{position.label}：{position.thesis}"]
+    if position.holders:
+        lines.append(f"持此立场：{position.holders}")
+    lines.extend(
+        f"{index}. {step}" for index, step in enumerate(position.reasoning, start=1)
+    )
+    for label, values in (
+        ("依据", position.evidence),
+        ("盲点", position.blindspots),
+    ):
+        if values:
+            lines.append(f"{label}：" + "；".join(values))
+    return "\n".join(lines)
+
+
 def paper_abstract(rmap: ReasoningMap) -> str:
     parts = [rmap.bottom_line or DETERMINISTIC_NOTICE]
     for verdict in rmap.verdicts:
@@ -1007,8 +1317,13 @@ def finding_references(
 
 __all__ = [
     "DETERMINISTIC_NOTICE",
+    "POSITIONS_MECHANICAL_NOTICE",
     "DIMENSIONS",
     "DIMENSION_KEYS",
+    "NO_HOLDER",
+    "STANCES",
+    "STANCE_LABELS",
+    "ChallengeRow",
     "JudgmentRow",
     "KIND_LABELS",
     "MODE_DETERMINISTIC",
@@ -1019,14 +1334,18 @@ __all__ = [
     "catalog_prompt_lines",
     "classify",
     "deterministic_map",
+    "deterministic_positions",
     "finding_references",
     "headline_of",
+    "infer_stance",
     "map_from_payload",
     "map_to_payload",
     "meaningful_consensus",
+    "normalize_stance",
     "paper_abstract",
     "paper_sections",
     "parse_model_map",
+    "position_paragraph",
     "seat_display",
     "verdict_sentence",
 ]

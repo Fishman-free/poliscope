@@ -8,7 +8,8 @@
  * 挂在它所威胁的那一步下面。
  *
  * 阅读顺序即论证顺序：
- *   一句话回答 + 主张判定 → 推理图谱总览（可点击跳转）→ 逐步推理 →
+ *   一句话回答 + 主张判定 → 正反立场（正方、反方与每个不同角度各自的推理、
+ *   依据与盲点）→ 推理图谱总览（可点击跳转）→ 逐步推理（权衡各方）→
  *   关键分歧 → 下一步研究 → 附录（专家终审原文、未归入条目、文献）。
  *
  * 溯源 chips：每一步引用的条目以 [B3] 这样的编号出现，点开即见议会原文，
@@ -21,6 +22,7 @@ import type {
   FinalPaper,
   MapItem,
   MapItemKind,
+  MapPosition,
   MapVerdict,
   PaperReference,
   ReasoningMap,
@@ -50,6 +52,7 @@ const VERDICT_TONES: Record<MapVerdict, Tone> = {
 const KIND_LABELS: Record<MapItemKind, string> = {
   judgment: "专家终审",
   finding: "研究发现",
+  challenge: "质询",
   blindspot: "盲点",
   boundary: "适用边界",
   conflict: "未决分歧",
@@ -271,6 +274,71 @@ function StepCard({
   );
 }
 
+/** 一方立场：论点 → 逐步推理 → 依据与盲点并排。立场不着证据色：
+ * 证据四色只表示「能信多少」，不表示站哪一边。 */
+function PositionCard({
+  position,
+  items,
+}: {
+  position: MapPosition;
+  items: Map<string, MapItem>;
+}) {
+  return (
+    <article className="rmap__position">
+      <header className="rmap__position-head">
+        <span className="rmap__position-label">{position.label}</span>
+        <h4>{position.thesis}</h4>
+      </header>
+      {position.holders ? (
+        <p className="rmap__position-holders">
+          <span>{t("持此立场")}</span>
+          {position.holders}
+        </p>
+      ) : null}
+      {position.reasoning.length > 0 ? (
+        <ol className="rmap__position-reasoning" aria-label={t("推理")}>
+          {position.reasoning.map((step, index) => (
+            <li key={index}>{step}</li>
+          ))}
+        </ol>
+      ) : null}
+      <BulletGroup label="依据" values={position.evidence} tone="support" />
+      <BulletGroup label="盲点" values={position.blindspots} tone="unknown" />
+      <RefChips refs={position.refs} items={items} />
+    </article>
+  );
+}
+
+function PositionsSection({
+  positions,
+  mechanical,
+  items,
+}: {
+  positions: MapPosition[];
+  mechanical: boolean;
+  items: Map<string, MapItem>;
+}) {
+  return (
+    <section className="rmap__block" aria-label={t("正反立场")}>
+      <h3 className="rmap__section-title">{t("正反立场")}</h3>
+      <p className="rmap__section-note">
+        {mechanical
+          ? t(
+              "以下立场按各位专家终审原文所表明的立场机械归组（未经模型整合）；每条推理都是专家原话，归组如与原文有出入，以原文为准。",
+            )
+          : t(
+              "先把各方的论证分别讲完整：每一方的论点、推理、依据与盲点并排列出，不按持有人数排序；下方的逐步推理再权衡各方。",
+            )}
+      </p>
+      <div className="rmap__positions-grid">
+        {positions.map((position, index) => (
+          <PositionCard key={`${position.stance}-${index}`} position={position} items={items} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /** 推理图谱总览：一条脊柱，每一步一行，带依据/边界/未知计数，点击跳到该步。 */
 function MapOverview({ steps, question }: { steps: ReasoningStep[]; question: string }) {
   function jump(index: number) {
@@ -366,6 +434,7 @@ export function ReasoningMapView({
   }, [map.items]);
   const judgments = map.items.filter((item) => item.kind === "judgment");
   const deterministic = map.mode === "deterministic";
+  const positions = map.positions ?? [];
 
   return (
     <div className="rmap">
@@ -414,6 +483,14 @@ export function ReasoningMapView({
           </ul>
         ) : null}
       </section>
+
+      {positions.length > 0 ? (
+        <PositionsSection
+          positions={positions}
+          mechanical={deterministic || map.positions_derived_on_read === true}
+          items={items}
+        />
+      ) : null}
 
       {map.steps.length > 0 ? (
         <>

@@ -18,9 +18,11 @@ nothing but this file's good intentions.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -60,7 +62,11 @@ from packages.evidence.sql_projector import (
     SqlGraphProjector,
     node_id_for,
 )
-from packages.kernel.database import canonical_uuid
+from packages.kernel.database import (
+    canonical_uuid,
+    guarded_write,
+    is_connection_failure,
+)
 from packages.knowledge.models import KnowledgeDocumentModel
 from packages.knowledge.search import KnowledgeBaseSearch
 from packages.memory.adapter import create_memory_adapter
@@ -80,7 +86,7 @@ from packages.papers.understanding import (
     load_paper_understanding,
     understand_paper,
 )
-from packages.reports.synthesis import synthesize_paper
+from packages.reports.synthesis import FINAL_PAPER_DRAFTED, synthesize_paper
 from packages.research.contracts import TaskModelConfig
 from packages.research.language import detect_output_language
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
@@ -118,7 +124,29 @@ class JobResult:
     projection: ProjectionReport | None
 
 
-async def _claim(session: AsyncSession, task_id: UUID) -> ResearchTaskModel:
+# Terminal statuses whose tail (synthesis) runs inside the deliberation
+# transaction; see _claim's ``resuming`` note.
+_SYNTHESIZED_STATUSES = (TaskStatus.COMPLETED, TaskStatus.COMPLETED_WITH_GAPS)
+
+
+async def _has_final_paper(session: AsyncSession, task_id: UUID) -> bool:
+    row = await session.scalar(
+        select(ScientificEventModel.id)
+        .where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.event_type == FINAL_PAPER_DRAFTED,
+        )
+        .limit(1)
+    )
+    return row is not None
+
+
+async def _claim(
+    session: AsyncSession,
+    task_id: UUID,
+    *,
+    resuming: bool = False,
+) -> ResearchTaskModel:
     """Lock the task row, then check that it is still ours to run.
 
     The lock is what makes two workers safe. Without it both read QUEUED, both
@@ -131,6 +159,15 @@ async def _claim(session: AsyncSession, task_id: UUID) -> ResearchTaskModel:
     (``claim_queued_tasks`` flips the row before releasing its lock, so no
     second claim can ever select it again -- see apps/worker/main.py); the
     direct ``deliberate`` callers (CLI, tests) still pass QUEUED tasks.
+
+    ``resuming`` admits one more case. The synthesis model call commits its
+    audit row on the deliberation session, which also commits the terminal
+    status written just before it; a connection lost after that commit but
+    before the paper lands leaves a COMPLETED task with no conclusion. On
+    :func:`run_task`'s retry such a task is still ours: its stored checkpoint
+    covers every phase, so the orchestrator re-runs nothing and only the
+    missing synthesis is redone. A task that already has its paper is
+    finished and stays refused.
     """
     row = await session.scalar(
         select(ResearchTaskModel)
@@ -139,6 +176,13 @@ async def _claim(session: AsyncSession, task_id: UUID) -> ResearchTaskModel:
     )
     if row is None:
         raise TaskNotRunnable(f"task {task_id} does not exist")
+    if (
+        resuming
+        and row.status in _SYNTHESIZED_STATUSES
+        and row.council_checkpoint is not None
+        and not await _has_final_paper(session, task_id)
+    ):
+        return row
     if row.status not in (TaskStatus.QUEUED, TaskStatus.RUNNING):
         raise TaskNotRunnable(
             f"task {task_id} is {row.status}, not runnable"
@@ -185,7 +229,7 @@ def _gateway_for_task_config(
     )
 
 
-def _reasoning_emitter(ledger: SqlEventLedger) -> ReasoningCallback:
+def _reasoning_emitter(session: AsyncSession) -> ReasoningCallback:
     """Return the callback that records a seat's raw chain of thought.
 
     Appends a process-only ``MODEL_REASONING_CAPTURED`` event under the same
@@ -201,7 +245,12 @@ def _reasoning_emitter(ledger: SqlEventLedger) -> ReasoningCallback:
     EventConflict (which would fail the whole task on what is only a stale
     thinking cache). The live view's thinking slices stream through
     process_stream, so the re-run's reasoning is still visible there.
+
+    The append runs inside the seat's deliberation, which the per-attempt
+    timeout may cancel at any await; ``guarded_write`` lets the flush finish
+    first so a timed-out seat can never invalidate the shared session.
     """
+    ledger = SqlEventLedger(session)
 
     async def emit(
         task_id: UUID,
@@ -209,20 +258,47 @@ def _reasoning_emitter(ledger: SqlEventLedger) -> ReasoningCallback:
         phase: TaskPhase,
         reasoning: str,
     ) -> None:
-        await ledger.append(
-            task_id,
-            MODEL_REASONING_CAPTURED,
-            {
-                "seat": seat.value,
-                "phase": phase.value,
-                "reasoning": reasoning,
-                "char_count": len(reasoning),
-            },
-            f"reasoning:{task_id}:{seat.value}:{phase.value}",
-            on_conflict="skip",
-        )
+        async def append() -> None:
+            await ledger.append(
+                task_id,
+                MODEL_REASONING_CAPTURED,
+                {
+                    "seat": seat.value,
+                    "phase": phase.value,
+                    "reasoning": reasoning,
+                    "char_count": len(reasoning),
+                },
+                f"reasoning:{task_id}:{seat.value}:{phase.value}",
+                on_conflict="skip",
+            )
+
+        await guarded_write(session, append)
 
     return emit
+
+
+def _isolated_cancel_probe(
+    sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+) -> Callable[[], Awaitable[bool]]:
+    """Poll the stop channel on a throwaway session, never the run's own.
+
+    The deliberator polls once a second *while* the seat's model call runs as
+    a separate asyncio task, and that call commits its audit row on the
+    deliberation session. Polling on the same session therefore raced the
+    commit, and a timeout landing mid-poll invalidated the connection the
+    whole council shares (the production "交叉质询中断" failure). A probe
+    session owns its connection for one SELECT; if a cancellation tears it,
+    only that connection is discarded.
+    """
+
+    async def probe() -> bool:
+        async with sessions() as probe_session:
+            return await ResearchRepository(probe_session).check_cancel_request(
+                task_id
+            )
+
+    return probe
 
 
 def _budget_for(row: ResearchTaskModel) -> BudgetTracker:
@@ -450,6 +526,9 @@ async def deliberate(
     fulltext_fetcher: FullTextFetcher | None = None,
     object_store: PrivateObjectStore | None = None,
     process: ProcessStreamWriter | None = None,
+    *,
+    probe_sessions: async_sessionmaker[AsyncSession] | None = None,
+    resuming: bool = False,
 ) -> TaskRunReport:
     """Run the seven rounds and persist the resulting events and status.
 
@@ -486,8 +565,14 @@ async def deliberate(
     is handled the same way regardless), cleared once the run reaches a
     terminal status, so a finished task never carries stale checkpoint JSON
     that a later reader could mistake for still-pending input.
+
+    ``probe_sessions`` (the worker's app factory) moves the in-call stop
+    polling onto throwaway sessions; see :func:`_isolated_cancel_probe`.
+    ``resuming`` marks :func:`run_task`'s retry after a dropped database
+    connection, which may find the council already terminal (see
+    :func:`_claim`).
     """
-    task = await _claim(session, task_id)
+    task = await _claim(session, task_id, resuming=resuming)
     budget = _budget_for(task)
     # A task with its own model configuration runs against the researcher's
     # endpoint, not the process's gateway -- a per-task override, owned and
@@ -504,7 +589,7 @@ async def deliberate(
     try:
         return await _deliberate_impl(
             session, task, task_id, budget, deliberator, gateway, tools,
-            fulltext_fetcher, object_store, process,
+            fulltext_fetcher, object_store, process, probe_sessions,
         )
     finally:
         if owned_gateway is not None:
@@ -522,6 +607,7 @@ async def _deliberate_impl(
     fulltext_fetcher: FullTextFetcher | None,
     object_store: PrivateObjectStore | None,
     process: ProcessStreamWriter | None = None,
+    probe_sessions: async_sessionmaker[AsyncSession] | None = None,
 ) -> TaskRunReport:
     # task_id is the canonicalised argument, not task.task_id: the ORM row's
     # value is asyncpg's UUID subclass, which the frozen contracts reject
@@ -549,10 +635,14 @@ async def _deliberate_impl(
         deliberator = GatewayDeliberator(
             AuditedModelGateway(gateway, session),
             budget,
-            on_reasoning=_reasoning_emitter(SqlEventLedger(session)),
+            on_reasoning=_reasoning_emitter(session),
             on_process=None if process is None else process.emit,
             on_flush=None if process is None else process.flush,
-            cancel_check=lambda: repository.check_cancel_request(task_id),
+            cancel_check=(
+                _isolated_cancel_probe(probe_sessions, task_id)
+                if probe_sessions is not None
+                else lambda: repository.check_cancel_request(task_id)
+            ),
         )
     async def _persist_running_checkpoint(
         running: CouncilCheckpoint,
@@ -974,6 +1064,13 @@ async def run_task(
     infinite reclaim loop with no terminal status ever recorded -- the
     "budget exhausted must report incomplete evidence, never fabricate
     completeness" rule of CLAUDE.md 10, applied to identity conflicts.
+
+    A lost database connection is handled the other way round: it says
+    nothing about the research, so the deliberation (and the projection)
+    is retried in a fresh session, resuming from the last per-phase
+    checkpoint, up to ``len(DATABASE_RECOVERY_BACKOFF_SECONDS)`` times. The
+    replay is safe because no audit commit can land a phase's events before
+    its checkpoint (the orchestrator remembers before it emits).
     """
     # The live-view trace (model deltas, tool calls) rides a separate,
     # self-owned session chain: it must never tangle with the deliberation
@@ -982,55 +1079,157 @@ async def run_task(
     # sees the synchronous emit callback.
     process = ProcessStreamWriter(app_sessions, task_id)
     try:
-        async with app_sessions() as session:
+        attempt = 0
+        while True:
+            attempt += 1
             try:
-                report = await deliberate(
-                    session,
+                report = await _deliberate_once(
+                    app_sessions,
                     task_id,
                     deliberator,
                     gateway,
                     tools,
                     fulltext_fetcher,
                     object_store,
-                    process=process,
+                    process,
+                    resuming=attempt > 1,
                 )
-                await session.commit()
-            except EventConflict:
-                await session.rollback()
-                await _mark_failed(
-                    app_sessions,
-                    task_id,
-                    "unrecoverable event identity conflict (EventConflict)",
-                )
-                raise
-            except PaperReviewInputError as error:
-                await session.rollback()
-                await _mark_failed(
-                    app_sessions,
-                    task_id,
-                    f"论文审查无法读取论文：{error}",
-                )
-                raise
-            except BaseException:
-                await session.rollback()
-                raise
+                break
+            except Exception as error:
+                if not _may_recover(error, attempt):
+                    raise
+                await _await_database_recovery(task_id, attempt, error, process)
     finally:
         # Flush whatever the trace still holds, even on failure -- the live
         # view should show how far the run got before it stopped.
         await process.close()
 
-    async with projector_sessions() as session:
+    attempt = 0
+    while True:
+        attempt += 1
         try:
-            projection = await project(session, task_id)
-            await session.commit()
-        except BaseException:
-            await session.rollback()
-            raise
+            async with projector_sessions() as session:
+                try:
+                    projection = await project(session, task_id)
+                    await session.commit()
+                except BaseException:
+                    with suppress(Exception):
+                        await session.rollback()
+                    raise
+            break
+        except Exception as error:
+            # Projection is a pure function of the committed ledger, so a
+            # retry after a dropped connection admits exactly the events the
+            # broken pass did not.
+            if not _may_recover(error, attempt):
+                raise
+            await _await_database_recovery(task_id, attempt, error, None)
 
     return JobResult(task_id=task_id, run=report, projection=projection)
 
 
+async def _deliberate_once(
+    app_sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+    deliberator: SeatDeliberator | None,
+    gateway: ModelGateway | None,
+    tools: ToolGateway | None,
+    fulltext_fetcher: FullTextFetcher | None,
+    object_store: PrivateObjectStore | None,
+    process: ProcessStreamWriter,
+    *,
+    resuming: bool,
+) -> TaskRunReport:
+    """One deliberation transaction, starting from the last committed checkpoint."""
+    async with app_sessions() as session:
+        try:
+            report = await deliberate(
+                session,
+                task_id,
+                deliberator,
+                gateway,
+                tools,
+                fulltext_fetcher,
+                object_store,
+                process=process,
+                probe_sessions=app_sessions,
+                resuming=resuming,
+            )
+            await session.commit()
+            return report
+        except EventConflict:
+            await session.rollback()
+            await _mark_failed(
+                app_sessions,
+                task_id,
+                "unrecoverable event identity conflict (EventConflict)",
+            )
+            raise
+        except PaperReviewInputError as error:
+            await session.rollback()
+            await _mark_failed(
+                app_sessions,
+                task_id,
+                f"论文审查无法读取论文：{error}",
+            )
+            raise
+        except BaseException:
+            # A rollback over a connection that already died may fail too;
+            # the original error is the one that says what happened.
+            with suppress(Exception):
+                await session.rollback()
+            raise
+
+
+# A dropped database connection is an infrastructure fault, not a verdict on
+# the research. Every finished phase is already committed (B7 per-phase
+# checkpoint), so the run resumes from there in a fresh session instead of
+# ending FAILED half way through the council. Bounded, with a backoff long
+# enough for a restarting PostgreSQL to come back.
+DATABASE_RECOVERY_BACKOFF_SECONDS: tuple[float, ...] = (3.0, 10.0, 30.0)
+
+
+def _may_recover(error: Exception, attempt: int) -> bool:
+    if isinstance(error, (EventConflict, PaperReviewInputError, TaskNotRunnable)):
+        return False
+    return attempt <= len(DATABASE_RECOVERY_BACKOFF_SECONDS) and (
+        is_connection_failure(error)
+    )
+
+
+async def _await_database_recovery(
+    task_id: UUID,
+    attempt: int,
+    error: Exception,
+    process: ProcessStreamWriter | None,
+) -> None:
+    delay = DATABASE_RECOVERY_BACKOFF_SECONDS[attempt - 1]
+    logger.warning(
+        "task %s lost its database connection (%s: %s); resuming from the "
+        "last committed checkpoint in %.0fs (recovery %d/%d)",
+        task_id,
+        type(error).__name__,
+        str(error)[:200],
+        delay,
+        attempt,
+        len(DATABASE_RECOVERY_BACKOFF_SECONDS),
+    )
+    if process is not None:
+        # The live view says the run is recovering rather than going silent.
+        process.emit(
+            "run_recovering",
+            {
+                "attempt": attempt,
+                "max_attempts": len(DATABASE_RECOVERY_BACKOFF_SECONDS),
+                "delay_seconds": delay,
+            },
+        )
+        await process.flush()
+    await asyncio.sleep(delay)
+
+
 __all__ = [
+    "DATABASE_RECOVERY_BACKOFF_SECONDS",
     "JobResult",
     "PaperReviewInputError",
     "TaskNotRunnable",

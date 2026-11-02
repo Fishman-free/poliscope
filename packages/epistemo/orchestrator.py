@@ -56,6 +56,7 @@ from packages.epistemo.contracts import (
 from packages.epistemo.state_machine import TaskStateMachine
 from packages.epistemo.stopping import StopReason, decide_stop
 from packages.evidence.lifecycle import QuarantinedNode
+from packages.kernel.database import DatabaseSessionLost, is_connection_failure
 from packages.memory.collective import CollectiveMemory
 from packages.memory.council_memory import CouncilMemory
 from packages.memory.recall import get_policy, perspective_recall
@@ -815,7 +816,14 @@ class CouncilOrchestrator:
             # for a run the researcher chose to end. Propagate to run(), which
             # records the CANCELLED report.
             raise
+        except DatabaseSessionLost:
+            # Infrastructure, not research: PHASE_FAILED could not even be
+            # written on this session. The worker resumes this phase from the
+            # last committed checkpoint in a fresh session.
+            raise
         except Exception as error:  # noqa: BLE001 - recorded, never swallowed
+            if is_connection_failure(error):
+                raise
             # CLAUDE.md 10: one round's failure degrades the run. The reason is
             # written to the ledger so the researcher sees why the round is
             # missing rather than finding an unexplained hole in the report.
@@ -830,6 +838,13 @@ class CouncilOrchestrator:
             state.events += 1
             return
 
+        # Memory first, events second. Upstream MemoBrain makes model calls
+        # here, and each audited call commits the shared deliberation
+        # session; remembering after ``_emit`` would commit this phase's
+        # events before its checkpoint, so a run resumed after a lost
+        # connection would replay the phase against already-committed keys
+        # and die on EventConflict. ``_remember`` reads only ``outcome``.
+        await self._remember(phase, outcome)
         await self._emit(task_id, outcome, state)
         state.unfilled.extend(outcome.unfilled_slots)
         state.absent.update(outcome.absent_seats)
@@ -866,7 +881,6 @@ class CouncilOrchestrator:
                         completed_at=phase_completed,
                     )
                 )
-        await self._remember(phase, outcome)
 
         await self._ledger.append(
             task_id=task_id,

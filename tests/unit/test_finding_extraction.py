@@ -99,6 +99,13 @@ class _FakeSession:
     async def execute(self, statement: Any) -> Any:
         self.executed.append(statement)
 
+    async def get(self, entity: Any, ident: Any) -> Any:
+        """Primary-key lookup over what this fake session already holds."""
+        for instance in self.added:
+            if isinstance(instance, entity) and getattr(instance, "id", None) == ident:
+                return instance
+        return None
+
 
 class _ScalarResult:
     """Minimal stand-in for the SQLAlchemy ``Result`` object ``extract_uploaded``

@@ -65,6 +65,7 @@ from packages.evidence.contracts import ClaimType, EvidenceEdgeType, EvidenceNod
 from packages.evidence.dialectical_fold import DebateCapsule
 from packages.evidence.lifecycle import QuarantinedNode, check_resurrection_conditions
 from packages.evidence.source_diversity import SourceDiversityInput, check_diversity
+from packages.kernel.database import DatabaseSessionLost, is_connection_failure
 
 # Upper bound on how many confirmed claims get reverse-search intents per
 # acquisition pass. With three intents per claim (see adversarial_retrieval),
@@ -643,10 +644,12 @@ async def _collect(
                     context.deliberator.deliberate(seat, context.phase, context),
                     timeout=timeout,
                 )
-            except CouncilCancelled:
+            except (CouncilCancelled, DatabaseSessionLost):
                 # Researcher stop (round-10): a redirection, never a failed
                 # attempt -- propagate so the orchestrator halts at the phase
-                # boundary instead of turning it into seven absences.
+                # boundary instead of turning it into seven absences. A lost
+                # database session likewise ends the pass: every later seat
+                # would fail the same way, and the worker resumes the phase.
                 raise
             except TimeoutError:
                 # Distinguish a single attempt that outlived its 120s window
@@ -667,6 +670,9 @@ async def _collect(
                 )
                 continue
             except Exception as error:  # noqa: BLE001 - recorded per seat
+                if is_connection_failure(error):
+                    # Same as DatabaseSessionLost above, raised unwrapped.
+                    raise
                 # Gap-reduction: previously any non-timeout provider error
                 # (HTTP 5xx, connection reset, malformed JSON once) escaped
                 # _collect and failed the ENTIRE phase, losing all seven
@@ -2106,6 +2112,15 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
         for seat, output in outputs.items()
         if (parsed := _optional_float(output.get("confidence"))) is not None
     }
+    # Same rule as confidence: only a stance this round's answer declared.
+    # Kept verbatim (normalised when the report reads it) and added to the
+    # event only when present, so a judgment without one keeps the payload
+    # an earlier run recorded.
+    stances = {
+        seat: stance.strip()
+        for seat, output in outputs.items()
+        if isinstance(stance := output.get("stance"), str) and stance.strip()
+    }
     if not judgments and isinstance(initial, Mapping):
         # Read back with str keys (see run_precommitment's carry comment) and
         # convert to Seat here, where FinalRejudgmentInput needs it.
@@ -2154,6 +2169,11 @@ async def run_final_rejudgment(context: PhaseContext) -> PhaseOutcome:
                 # when the report is summarised. CLAUDE.md 4 forbids silently
                 # dropping a minority position.
                 "has_dissent": judgment.has_dissent,
+                **(
+                    {"stance": stances[judgment.seat]}
+                    if judgment.seat in stances
+                    else {}
+                ),
             },
             idempotency_key=context.key("judgment", judgment.seat.value),
         )

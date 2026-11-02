@@ -209,6 +209,21 @@ FINAL_JUDGMENT: Final[dict[str, Any]] = {
                 "same scale you used at precommitment."
             ),
         },
+        # The expert's answer to the research question, so the final summary
+        # can lay the sides out as a debate. A plain string, not an enum, and
+        # optional, for the same reason as confidence: a misspelt stance must
+        # cost the stance (normalised or inferred downstream), never the
+        # whole judgment.
+        "stance": {
+            "type": "string",
+            "description": (
+                "Your answer to the research question: affirmative (the claim "
+                "holds; for a question naming two answers, the first-named "
+                "one), negative (it does not hold), conditional (it holds "
+                "only under conditions you state), or undetermined (the "
+                "evidence cannot decide)."
+            ),
+        },
     },
     "required": ["final_judgment"],
 }
@@ -420,6 +435,31 @@ REASONING_MAP_OUTPUT: Final[dict[str, Any]] = {
                     "refs": _REFS,
                 },
                 "required": ["action"],
+            },
+        },
+        # The debate the step chain then weighs. Optional so an older-style
+        # answer without it still parses; the stance is a free string for
+        # the same reason as FinalJudgment.stance.
+        "positions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "stance": {
+                        "type": "string",
+                        "description": (
+                            "affirmative | negative | conditional | undetermined"
+                        ),
+                    },
+                    "label": {"type": "string"},
+                    "thesis": {"type": "string"},
+                    "reasoning": _BULLETS,
+                    "evidence": _BULLETS,
+                    "blindspots": _BULLETS,
+                    "holders": {"type": "string"},
+                    "refs": _REFS,
+                },
+                "required": ["stance", "thesis"],
             },
         },
     },
