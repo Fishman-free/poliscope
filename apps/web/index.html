@@ -14,25 +14,16 @@
       name="description"
       content="Poliscope 组织 7 名 AI 科学家审查有争议的计算社会科学问题：独立取证、交叉质询、专门找反例，产出一张结论与局限并排、证据可溯源、异议不删除的证据地图。"
     />
-    <!-- PP Neue Montreal（正文）来自 Webflow CDN；加载失败时回退系统字体。
-         字标使用本地 Georgia 衬线回退，避免请求仓库未携带的商业字体。 -->
-    <link rel="preconnect" href="https://assets.website-files.com" crossorigin />
-    <style>
-      @font-face {
-        font-family: "PP Neue Montreal";
-        src: url("https://assets.website-files.com/6009ec8cda7f305645c9d91b/60176f9bb43e36419997ecfe_PPNeueMontreal-Book.otf")
-          format("opentype");
-        font-weight: 400;
-        font-display: swap;
-      }
-      @font-face {
-        font-family: "PP Neue Montreal";
-        src: url("https://assets.website-files.com/6009ec8cda7f305645c9d91b/60176f9b39c5673e51a86f5a_PPNeueMontreal-Medium.otf")
-          format("opentype");
-        font-weight: 500;
-        font-display: swap;
-      }
-    </style>
+    <meta name="theme-color" content="#f3efe6" />
+    <!-- 字体全部自托管（public/fonts，SIL OFL，仅拉丁子集）：不依赖境外字体
+         CDN。标题用的 Newsreader 预加载，首屏标题不闪回退字体。 -->
+    <link
+      rel="preload"
+      href="/fonts/newsreader-opsz.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
   </head>
   <body>
     <div id="root"></div>

@@ -76,8 +76,8 @@ function useBusy() {
 /** D12 cost / usage. Deterministic accounting from model_calls/tool_calls. */
 function UsageSection({ usage }: { usage: UsageViewData | null | undefined }) {
   const cost = Number(usage?.model.cost_usd ?? 0);
-  const budgetCost = usage?.budget?.model_cost_usd
-    ? Number(usage.budget.model_cost_usd)
+  const budgetCost = usage?.budget?.model_cost_limit_usd
+    ? Number(usage.budget.model_cost_limit_usd)
     : null;
   const ratio = budgetCost && budgetCost > 0 ? cost / budgetCost : null;
   if (!usage) {
@@ -105,12 +105,12 @@ function UsageSection({ usage }: { usage: UsageViewData | null | undefined }) {
         />
         <Metric
           label={t("工具调用 / 失败")}
-          value={`${usage.tools.calls} / ${usage.tools.error_count}`}
+          value={`${usage.tools.calls} / ${usage.tools.errors}`}
         />
         <Metric
           label={t("模型调用失败")}
-          value={usage.model.error_count}
-          tone={usage.model.error_count > 0 ? "refuted" : "admitted"}
+          value={usage.model.errors}
+          tone={usage.model.errors > 0 ? "refuted" : "admitted"}
         />
       </div>
       {ratio != null ? (
@@ -136,9 +136,16 @@ function AdjudicationSection({
   onChanged: () => void;
 }) {
   const { busy, message, run } = useBusy();
+  // One entry per adjudication target: identical candidates share a target
+  // key, so they are one decision, and rendering them twice gave React
+  // duplicate keys.
   const items = [
-    ...(adjudication?.merge_candidates ?? []),
-    ...(adjudication?.quarantined ?? []),
+    ...new Map(
+      [
+        ...(adjudication?.merge_candidates ?? []),
+        ...(adjudication?.quarantined ?? []),
+      ].map((item) => [item.key, item] as const),
+    ).values(),
   ];
   async function decide(key: string, decision: string) {
     await run(

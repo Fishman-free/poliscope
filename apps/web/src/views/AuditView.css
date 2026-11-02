@@ -68,12 +68,20 @@
   border-bottom: none;
 }
 
-/* A left rule rather than a filled row: refusals must be findable at a glance
- * without turning the trail into a wall of red. */
+/* A refusal is marked in the margin with a cross in the refuted ink, so it
+ * is findable at a glance without turning the trail into a wall of red. */
 .audit__row--refusal {
-  border-left: 3px solid var(--refuted);
-  padding-left: calc(var(--space-2) - 3px);
+  position: relative;
   background: var(--refuted-soft);
+}
+
+.audit__row--refusal::before {
+  content: "×";
+  position: absolute;
+  left: -1.1rem;
+  font-family: var(--mono);
+  font-weight: 600;
+  color: var(--refuted);
 }
 
 .audit__seq {

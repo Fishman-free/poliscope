@@ -1,83 +1,151 @@
-/* Design tokens.
+/* Design tokens: the referee's dossier.
  *
- * CLAUDE.md 11 asks for the look of a scientific instrument and an evidence
- * review tool -- not a cockpit. The instrument is a white one. Since
- * round-5 the surfaces follow the Apple design language
- * (scripts/apple_design.md, VoltAgent/awesome-design-md): pure-white and
- * parchment (#f5f5f7) canvases, near-black ink (#1d1d1f), a *single* Action
- * Blue accent (#0066cc) carrying every interactive element -- links, pill
- * CTAs, the focus ring -- hairline card borders, negative letter-spacing on
- * display text, and no decorative gradients or chrome shadows.
+ * CLAUDE.md 11 asks for a scientific instrument and an evidence review tool.
+ * This system reads it as *printed* scholarship -- the dossier a referee
+ * annotates, a journal page -- rather than a dashboard of rounded cards:
  *
- * The four evidential colours (admitted, provisional, refuted, unknown)
- * stay the only other saturated hues in the system -- colour still means
- * "how much can I trust this", never decoration -- and are chosen for AA
- * contrast on white.
+ * - Warm paper and ink. Structure comes from rules (a hairline between items,
+ *   a heavy rule where a section begins, a double rule under the masthead),
+ *   never from floating boxes, drop shadows or coloured side-stripes.
+ * - Serif for what is argued (questions, theses, headings), a quiet sans for
+ *   running text, mono for what is *recorded* (ids, counts, times, labels).
+ * - Square corners. A stamp, a tag and a button are cut, not pill-shaped.
+ * - One interactive colour, a Prussian ink blue. The four evidential tones
+ *   stay the only other hues and still mean only "how much can I trust
+ *   this"; they appear on glyphs, stamps and small labels, not as fills.
  *
- * Type: SF Pro leads the stack (Apple's own face resolves on
- * macOS/iOS/Safari); system-ui and the CJK faces take over elsewhere.
- * PP Mondwest (the earlier template serif) remains reserved for the
- * wordmark; mono stays for metadata.
+ * Latin faces are self-hosted (public/fonts, SIL OFL, Latin subsets only):
+ * Chinese text never downloads them and nothing depends on a font CDN that
+ * mainland-China visitors cannot reach. CJK falls back to the system's Song
+ * (serif) and YaHei / PingFang (sans).
+ *
+ * Every pre-existing token name is kept as an alias so the whole workspace
+ * moves to the new system at once.
  */
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/newsreader-opsz.woff2") format("woff2-variations");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215;
+}
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/newsreader-italic.woff2") format("woff2-variations");
+  font-weight: 200 800;
+  font-style: italic;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+20AC, U+2122;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+20AC, U+2122;
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("/fonts/plex-sans-600.woff2") format("woff2");
+  font-weight: 600 700;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+2000-206F, U+20AC, U+2122;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex-mono-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+2000-206F, U+2190-2193, U+2212;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/plex-mono-500.woff2") format("woff2");
+  font-weight: 500 700;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+2000-206F, U+2190-2193, U+2212;
+}
 
 :root {
   color-scheme: light;
 
-  /* Surfaces: white canvas + the signature Apple parchment, plus the
-   * pearl button fill. Elevation reads through hairline and a single soft
-   * shadow; the instrument never turns grey except on interactive wells. */
-  --surface-0: #ffffff;
-  --surface-1: #ffffff;
-  --surface-2: #fafafa;
-  --surface-3: #f0f1f2;
-  --surface-parchment: #f5f5f7;
-  --surface-pearl: #fafafc;
-  --line: rgba(0, 0, 0, 0.09);
-  --line-strong: rgba(0, 0, 0, 0.16);
+  /* Paper and ink. */
+  --paper: #f3efe6;
+  --paper-raised: #f9f6f0;
+  --paper-sunk: #e9e3d6;
+  --ink: #191714;
+  --rule: rgba(25, 23, 20, 0.15);
+  --rule-soft: rgba(25, 23, 20, 0.08);
+  --rule-heavy: #191714;
 
-  /* Ink: Apple's near-black scale, stepped for hierarchy. */
-  --ink-1: #1d1d1f;
-  --ink-2: #333333;
-  --ink-3: #6e6e73;
-  --ink-4: #86868b;
+  --ink-1: #191714;
+  --ink-2: #3b372f;
+  --ink-3: #6a6356;
+  --ink-4: #948b7c;
 
-  /* One accent: Apple's Action Blue -- the single interactive colour in the
-   * system. Focus ring uses the brighter Focus Blue; on dark surfaces links
-   * switch to Sky Link Blue. */
-  --accent: #0066cc;
-  --accent-focus: #0071e3;
-  --accent-on-dark: #2997ff;
-  --accent-soft: rgba(0, 102, 204, 0.08);
+  /* The one interactive colour: Prussian ink blue. */
+  --accent: #21416a;
+  --accent-focus: #2c5a91;
+  --accent-on-dark: #9fbbe0;
+  --accent-soft: rgba(33, 65, 106, 0.08);
 
-  /* Evidential state. Deep variants chosen for AA contrast on white; the
-   * soft backgrounds are their 8-12% tints. These are the load-bearing
-   * colours. */
-  --admitted: #1a7f37;
-  --admitted-soft: rgba(26, 127, 55, 0.1);
-  --provisional: #9a6700;
-  --provisional-soft: rgba(154, 103, 0, 0.1);
-  --refuted: #cf222e;
-  --refuted-soft: rgba(207, 34, 46, 0.08);
-  --unknown: #6e7781;
-  --unknown-soft: rgba(110, 119, 129, 0.12);
+  /* Evidential state -- the only other hues. Deep inks, AA on paper. */
+  --admitted: #2c6a3c;
+  --admitted-soft: rgba(44, 106, 60, 0.09);
+  --provisional: #8f600f;
+  --provisional-soft: rgba(143, 96, 15, 0.1);
+  --refuted: #9d2b23;
+  --refuted-soft: rgba(157, 43, 35, 0.08);
+  --unknown: #6a6356;
+  --unknown-soft: rgba(106, 99, 86, 0.1);
 
-  /* Type. SF Pro leads (Apple's face, resolves on Apple platforms);
-   * system-ui and CJK faces take over elsewhere. --serif stays reserved
-   * for the wordmark only. Tracking: display sizes tighten (the Apple
-   * signature), body sits at 17px. */
-  --font: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
-    system-ui, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", sans-serif;
-  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  --serif: "PP Mondwest", Georgia, "Songti SC", "SimSun", serif;
+  /* Aliases kept for every view written against the previous system. */
+  --surface-0: var(--paper);
+  --surface-1: var(--paper);
+  --surface-2: var(--paper-raised);
+  --surface-3: var(--paper-sunk);
+  --surface-parchment: var(--paper-raised);
+  --surface-pearl: var(--paper-raised);
+  --line: var(--rule);
+  --line-strong: rgba(25, 23, 20, 0.32);
+
+  /* Type. */
+  --serif: "Newsreader", "Source Han Serif SC", "Noto Serif SC",
+    "Noto Serif CJK SC", "Songti SC", "STSong", "SimSun", serif;
+  --font: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  /* CJK inside a mono label falls through to the sans CJK faces, not to the
+   * system's monospace Song, which reads thin and spaced out. */
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", monospace;
 
   --text-display: 2.5rem;
-  --text-title: 1.125rem;
-  --text-body: 1.0625rem;
-  --text-small: 0.8125rem;
+  --text-title: 1.25rem;
+  --text-body: 1rem;
+  --text-medium: 0.9375rem;
+  --text-small: 0.875rem;
   --text-micro: 0.75rem;
+  /* Mono labels ("RECORDED · 14:02") are set small and spaced. */
+  --label-size: 0.6875rem;
+  --label-track: 0.08em;
 
-  /* Spacing in rem so a larger system text size scales the layout with it. */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -85,55 +153,41 @@
   --space-5: 1.5rem;
   --space-6: 2rem;
   --space-7: 3rem;
+  --space-8: 4.5rem;
 
-  /* Generously rounded, template-style: inputs and chips at 12px, cards at
-   * 16-22px, hero-ish surfaces at 30px, buttons and pills fully round. */
-  --radius-1: 8px;
-  --radius-2: 12px;
-  --radius-3: 16px;
-  --radius-4: 22px;
-  --radius-5: 30px;
-  --radius-pill: 999px;
+  /* Cut, not rounded. */
+  --radius-1: 1px;
+  --radius-2: 2px;
+  --radius-3: 2px;
+  --radius-4: 2px;
+  --radius-5: 2px;
+  --radius-pill: 2px;
 
-  /* Apple-style elevation: whisper-soft, used only where a card needs to
-   * breathe. No layered chrome shadows on buttons -- elevation is a
-   * property of surfaces holding content, never of the UI chrome. */
-  --shadow-1: 0 8px 30px rgba(0, 0, 0, 0.06);
-  --shadow-2: 0 4px 16px rgba(0, 0, 0, 0.05);
-  --shadow-3: 0 1px 1px rgba(0, 0, 0, 0.04), 0 4px 8px rgba(0, 0, 0, 0.05);
-  --shadow-button: 0 1px 1px rgba(0, 0, 0, 0.04);
+  /* Elevation only for things that float over the page (menus, dialogs). */
+  --shadow-1: 0 18px 40px -18px rgba(25, 23, 20, 0.35), 0 0 0 1px var(--rule);
+  --shadow-2: none;
+  --shadow-3: none;
+  --shadow-button: none;
+  --shadow-float: var(--shadow-1);
 
-  /* Translucent chrome: a white frosted material over the content scrolling
-   * underneath. */
-  --chrome-bg: rgba(255, 255, 255, 0.75);
-  --chrome-blur: blur(20px) saturate(180%);
+  /* Opaque: text scrolling under a translucent masthead reads as a smudge. */
+  --chrome-bg: var(--paper);
+  --chrome-blur: none;
 
-  /* Springs. Critically damped by default; bounce is reserved for motion the
-   * user's own gesture started, and this product has exactly one such gesture
-   * (panning the map). `--ease-smooth` is the ease-out used for screen
-   * transitions and the sliding tab indicator. */
   --ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --duration-fast: 120ms;
   --duration-standard: 200ms;
-  --duration-slow: 320ms;
+  --duration-slow: 360ms;
 
-  /* Right sidebar width (model settings + session history). */
-  --sidebar-w: 320px;
-}
-
-/* Reduced transparency: the frosted chrome becomes solid white rather than
- * merely less translucent. */
-@media (prefers-reduced-transparency: reduce) {
-  :root {
-    --chrome-bg: #ffffff;
-    --chrome-blur: none;
-  }
+  --sidebar-w: 300px;
+  --measure: 68ch;
 }
 
 @media (prefers-contrast: more) {
   :root {
-    --line: var(--ink-3);
+    --rule: rgba(25, 23, 20, 0.45);
+    --rule-soft: rgba(25, 23, 20, 0.3);
     --line-strong: var(--ink-2);
     --ink-3: var(--ink-2);
   }

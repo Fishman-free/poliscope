@@ -13,31 +13,44 @@ body,
   margin: 0;
 }
 
+/* Paper with a faint tooth: an SVG noise tile, multiplied into the page
+ * colour. Static (it scrolls with the page), so it costs one decode. */
 body {
   font-family: var(--font);
   font-size: var(--text-body);
-  line-height: 1.55;
+  line-height: 1.7;
   color: var(--ink-1);
-  /* Apple DESIGN.md: the parchment canvas (#f5f5f7) carries pure-white
-   * cards, so cards read their elevation through surface contrast, not a
-   * gradient. */
-  background: var(--surface-parchment);
+  background-color: var(--paper);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1 0 0 0 0 0.09 0 0 0 0 0.07 0 0 0 .055 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern", "liga";
 }
 
+::selection {
+  background: rgba(143, 96, 15, 0.22);
+  color: var(--ink-1);
+}
+
+/* What is argued is set in serif; weight 500 at most so a CJK Song face
+ * without a bold cut is never smeared by synthetic bold. */
 h1,
 h2,
-h3 {
+h3,
+h4 {
   margin: 0;
-  /* Tracking tightens as size grows; leading loosens as size shrinks. */
-  letter-spacing: -0.015em;
-  line-height: 1.2;
+  font-family: var(--serif);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+  color: var(--ink-1);
+  font-optical-sizing: auto;
 }
 
 h1 {
   font-size: var(--text-display);
-  letter-spacing: -0.022em;
   line-height: 1.15;
+  letter-spacing: -0.012em;
 }
 
 h2 {
@@ -45,8 +58,11 @@ h2 {
 }
 
 h3 {
-  font-size: var(--text-body);
-  letter-spacing: -0.005em;
+  font-size: 1.0625rem;
+}
+
+h4 {
+  font-size: 1rem;
 }
 
 p {
@@ -72,6 +88,12 @@ p {
 
 a {
   color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--ink-1);
 }
 
 button {
@@ -79,62 +101,73 @@ button {
   color: inherit;
 }
 
-/* 按钮语言（Apple DESIGN.md）：primary 是 Action Blue 胶囊 —— 系统中
-   唯一的交互色；secondary 是白底 + 发丝环的珍珠白胶囊；press 反馈即时
-   （:active 缩放）。无分层装饰阴影。 */
+/* Buttons are cut from the page: a hairline frame and ink type; hover
+ * inverts. The primary action is solid ink -- the page's strongest mark. */
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: var(--surface-0);
+  min-height: 2.25rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--ink-1);
+  border-radius: var(--radius-1);
+  background: transparent;
   font-size: var(--text-small);
   font-weight: 500;
+  letter-spacing: 0.01em;
   color: var(--ink-1);
   cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease-standard),
-    box-shadow var(--duration-fast) var(--ease-standard),
-    transform var(--duration-fast) var(--ease-standard);
+    color var(--duration-fast) var(--ease-standard);
 }
 
 .button:hover {
-  background: var(--surface-parchment);
+  background: var(--ink-1);
+  color: var(--paper);
 }
 
-/* Feedback on press, not on release. */
 .button:active {
-  transform: scale(0.97);
-  background: var(--surface-3);
+  transform: translateY(1px);
 }
 
 .button--primary {
-  background: var(--accent);
-  border-color: transparent;
-  color: #ffffff;
+  background: var(--ink-1);
+  border-color: var(--ink-1);
+  color: var(--paper);
 }
 
 .button--primary:hover {
-  background: var(--accent-focus);
-}
-
-.button--primary:active {
   background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper);
 }
 
 .button--small {
-  padding: var(--space-1) var(--space-4);
+  min-height: 1.75rem;
+  padding: 0 var(--space-3);
   font-size: var(--text-micro);
 }
 
-/* Disabled controls are dimmed and inert (shadcn/ui pattern):
-   pointer-events:none stops the hover/active surfaces from firing on a button
-   that is waiting on network work, opacity signals "not actionable yet". */
 button:disabled {
-  opacity: 0.55;
+  opacity: 0.45;
   pointer-events: none;
+}
+
+/* A primary action that is not ready yet is drawn, not filled. */
+.button--primary:disabled {
+  opacity: 1;
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line-strong);
+  color: var(--ink-3);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--ink-1);
 }
 
 input:disabled,
@@ -144,28 +177,31 @@ textarea:disabled {
   cursor: not-allowed;
 }
 
-/* Focus is never removed, only replaced. A researcher auditing a long trail
- * navigates by keyboard, and an invisible focus ring makes that impossible.
- * Apple DESIGN.md reserves the brighter Focus Blue for the keyboard ring. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-4);
+}
+
+/* Focus is never removed, only replaced: a square ink-blue frame. */
 :focus-visible {
   outline: 2px solid var(--accent-focus);
   outline-offset: 2px;
-  border-radius: var(--radius-1);
+  border-radius: 0;
 }
 
-/* Text fields get a shadcn-style ring instead of the generic outline: the
- * border warms to the accent and a soft halo wraps it. Checkboxes/radios
- * keep the global outline (they carry their own accent-color). */
 input:not([type="checkbox"]):not([type="radio"]):focus-visible,
 select:focus-visible,
 textarea:focus-visible {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--ink-1);
+  box-shadow: 0 0 0 1px var(--ink-1);
 }
 
-/* Slim scrollbars in the line colour. Firefox via scrollbar-color,
- * Chromium via -webkit-scrollbar. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--ink-1);
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
@@ -178,8 +214,7 @@ textarea:focus-visible {
 
 ::-webkit-scrollbar-thumb {
   background: var(--line-strong);
-  border-radius: 5px;
-  border: 2px solid transparent;
+  border: 3px solid transparent;
   background-clip: padding-box;
 }
 
@@ -190,16 +225,20 @@ textarea:focus-visible {
 code,
 .mono {
   font-family: var(--mono);
-  font-size: 0.9em;
+  font-size: 0.88em;
   letter-spacing: 0;
 }
 
-/* Shared "this is new content" entrance: fade + a soft rise (the template's
- * fade-in-up, tuned for a working surface -- a deeper travel would make a
- * tool feel slow). Not a bounce: tokens.css reserves bounce for the one
- * gesture this product has (panning the map). Any view that hard-swaps
- * content with no transition of its own can opt into this rather than each
- * defining its own identical keyframe. */
+/* The recorded-fact voice: mono, small, spaced, upper case for Latin. */
+.label {
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Shared "this is new content" entrance: a short rise, nothing bouncy. */
 .fade-in-up {
   animation: fade-in-up var(--duration-slow) var(--ease-smooth) both;
 }
@@ -207,7 +246,7 @@ code,
 @keyframes fade-in-up {
   from {
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -215,8 +254,6 @@ code,
   }
 }
 
-/* Reduced motion: keep the information the transition carried, drop the travel.
- * Opacity changes stay because they signal "this is new"; movement goes. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

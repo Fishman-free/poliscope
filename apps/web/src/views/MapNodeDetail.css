@@ -35,15 +35,27 @@
   white-space: pre-line;
 }
 
+/* The exact quote is set as a quotation -- serif, hung quotation marks --
+ * because it is the source's words, not ours. */
 .map-detail__quote {
+  position: relative;
   margin: 0;
-  padding: var(--space-3);
-  border-left: 3px solid var(--accent);
-  background: var(--surface-2);
-  font-size: var(--text-small);
-  line-height: 1.55;
-  color: var(--ink-2);
+  padding: 0 0 0 1.4rem;
+  font-family: var(--serif);
+  font-size: var(--text-medium);
+  line-height: 1.75;
+  color: var(--ink-1);
   white-space: pre-line;
+}
+
+.map-detail__quote::before {
+  content: "“";
+  position: absolute;
+  left: 0;
+  top: -0.2em;
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--ink-4);
 }
 
 .map-detail__link {

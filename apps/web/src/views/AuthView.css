@@ -1,5 +1,6 @@
-/* Register / login screen: a centred card on the paper backdrop, with the
-   same segmented control language as the home screen's view switch. */
+/* Register / login: a title page, not a card -- the wordmark set large in
+   serif over a heavy rule, the form directly on the paper. The login/register
+   switch uses the same underline language as the home switch. */
 
 .auth {
   display: flex;
@@ -10,58 +11,71 @@
 }
 
 .auth__card {
-  width: min(100%, 26rem);
+  width: min(100%, 28rem);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-5);
-  box-shadow: var(--shadow-3);
+  gap: var(--space-5);
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: fade-in-up var(--duration-slow) var(--ease-smooth) both;
+}
+
+.auth__brand {
+  padding-bottom: var(--space-4);
+  border-bottom: 3px double var(--rule-heavy);
 }
 
 .auth__brand h1 {
-  font-size: 1.5rem;
-  letter-spacing: -0.03em;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 3.25rem;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1;
   margin: 0;
 }
 
 .auth__tagline {
-  margin-top: var(--space-1);
-  font-size: var(--text-small);
+  margin-top: var(--space-3);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
   color: var(--ink-3);
 }
 
 .auth__switch {
   display: inline-flex;
-  gap: 2px;
+  gap: var(--space-5);
   align-self: flex-start;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--ink-1) 6%, transparent);
-  border: 1px solid var(--line);
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  border: 0;
 }
 
 .auth__tab {
-  padding: var(--space-1) var(--space-4);
+  padding: var(--space-1) 0;
   border: none;
-  border-radius: var(--radius-pill);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: none;
   cursor: pointer;
   font: inherit;
-  font-size: var(--text-small);
-  font-weight: 500;
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 400;
   color: var(--ink-3);
   transition: color var(--duration-standard) var(--ease-smooth),
-    background-color var(--duration-standard) var(--ease-smooth),
-    box-shadow var(--duration-standard) var(--ease-smooth);
+    border-color var(--duration-standard) var(--ease-smooth);
 }
 
 .auth__tab--on {
   color: var(--ink-1);
-  background: var(--surface-0);
-  box-shadow: var(--shadow-2);
+  border-bottom-color: var(--ink-1);
 }
 
 .auth__form {

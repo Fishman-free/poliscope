@@ -14,10 +14,10 @@
 
 .map--empty {
   display: block;
-  padding: var(--space-6);
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
+  padding: var(--space-5) 0;
+  background: none;
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
   min-height: 0;
 }
 
@@ -29,20 +29,19 @@
   min-height: 0;
 }
 
-/* Floating frosted toolbar (Apple material): the canvas scrolls underneath
-   while the controls stay legible. */
+/* The board's controls: a ruled line of text commands above the canvas. */
 .map__toolbar {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--chrome-bg);
-  -webkit-backdrop-filter: var(--chrome-blur);
-  backdrop-filter: var(--chrome-blur);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-3);
-  width: fit-content;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  background: none;
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  box-shadow: none;
+  width: 100%;
   max-width: 100%;
   flex-wrap: wrap;
 }
@@ -51,12 +50,12 @@
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--accent);
+  color: var(--ink-1);
   font: inherit;
   font-size: var(--text-small);
   font-weight: 500;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  border-radius: 0;
   cursor: pointer;
   min-height: 32px;
   /* Apple response rule: feedback starts on press, not on release. */
@@ -66,11 +65,12 @@
 }
 
 .map__tool:hover {
-  background: var(--accent-soft);
+  background: var(--ink-1);
+  color: var(--paper);
 }
 
 .map__tool:active {
-  transform: scale(0.96);
+  transform: translateY(1px);
 }
 
 .map__tool-divider {
@@ -79,12 +79,16 @@
   background: var(--line-strong);
 }
 
+/* The canvas is the one framed area on the page: a drafting board, with a
+ * faint dot grid to say "this is a surface you can move things on". */
 .map__canvas {
   position: relative;
   flex: 1;
-  background: var(--surface-parchment);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
+  background-color: var(--paper-raised);
+  background-image: radial-gradient(var(--rule) 1px, transparent 1px);
+  background-size: 22px 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
   overflow: hidden;
   min-height: 480px;
 }
@@ -98,10 +102,11 @@
 
 .map__legend,
 .map__inspector {
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  padding: var(--space-4);
+  background: none;
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  border-radius: 0;
+  padding: var(--space-3) 0 0;
 }
 
 .map__inspector {
@@ -111,7 +116,8 @@
 .map__legend h3,
 .map__inspector h3 {
   margin-bottom: var(--space-3);
-  color: var(--ink-2);
+  font-size: 1.125rem;
+  color: var(--ink-1);
 }
 
 .map__legend ul {
@@ -217,55 +223,54 @@
   background: transparent;
 }
 
+/* A node is a labelled slip on the board: square, flat, ink-framed. Its
+ * evidential tone is a small square mark on its label, and an unverified
+ * (metadata-only) node has a dashed frame. */
 .evidence-node {
+  --tone: var(--unknown);
   position: relative;
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--unknown);
-  border-radius: var(--radius-2, 8px);
-  padding: var(--space-3, 10px) var(--space-3, 12px);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
+  background: var(--paper-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  padding: var(--space-2) var(--space-3);
+  box-shadow: none;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
   text-align: left;
-  letter-spacing: -0.01em;
-  transition:
-    box-shadow var(--duration-standard) var(--ease-standard),
-    border-color var(--duration-standard) var(--ease-standard);
+  transition: border-color var(--duration-standard) var(--ease-standard);
 }
 
 .evidence-node:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.03);
+  border-color: var(--ink-1);
 }
 
 .evidence-node--selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft), 0 4px 12px rgba(0, 0, 0, 0.08);
+  border-color: var(--ink-1);
+  box-shadow: 0 0 0 1px var(--ink-1);
 }
 
 .evidence-node--admitted {
-  border-left-color: var(--admitted);
+  --tone: var(--admitted);
 }
 
 .evidence-node--provisional {
-  border-left-color: var(--provisional);
+  --tone: var(--provisional);
   border-style: dashed;
-  border-left-style: solid;
 }
 
 .evidence-node--refuted {
-  border-left-color: var(--refuted);
+  --tone: var(--refuted);
 }
 
 .evidence-node--unknown {
-  border-left-color: var(--unknown);
+  --tone: var(--unknown);
 }
 
 .map-node--blindspot .evidence-node {
-  background: color-mix(in srgb, var(--accent) 3%, var(--surface-0));
-  border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-left-color: var(--accent);
-  border-left-width: 3px;
+  --tone: var(--accent);
+  background: var(--paper);
+  border-style: dotted;
+  border-color: var(--accent);
 }
 
 .map-node--blindspot .evidence-node__chip {
@@ -274,11 +279,17 @@
 
 .evidence-node__chip {
   display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--tone, var(--ink-3));
   margin-bottom: 4px;
+}
+
+.evidence-node__chip::before {
+  content: "■ ";
+  color: var(--tone, var(--ink-3));
 }
 
 .evidence-node--admitted .evidence-node__chip {
@@ -303,7 +314,7 @@
   right: -7px;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--accent);
   color: #fff;
   font-size: 10px;
@@ -333,7 +344,7 @@
 .sticky-node {
   border-radius: var(--radius-2);
   border: 1px dashed rgba(0, 0, 0, 0.22);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-float);
   overflow: hidden;
   cursor: grab;
   transition: box-shadow var(--duration-standard) var(--ease-standard);
@@ -532,7 +543,7 @@
   background: var(--surface-0);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-2);
-  box-shadow: var(--shadow-3);
+  box-shadow: var(--shadow-float);
 }
 
 .map__palette-swatch {
@@ -616,7 +627,7 @@
 .react-flow__controls {
   border-radius: var(--radius-2);
   overflow: hidden;
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-float);
   border: 1px solid var(--line);
 }
 
@@ -646,7 +657,7 @@
 .map__minimap {
   border-radius: var(--radius-2);
   border: 1px solid var(--line);
-  box-shadow: var(--shadow-2);
+  box-shadow: var(--shadow-float);
   background: var(--surface-0) !important;
 }
 

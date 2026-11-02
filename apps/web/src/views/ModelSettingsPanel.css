@@ -106,13 +106,12 @@
 }
 
 .settings__warn {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0;
   font-size: var(--text-small);
   color: var(--ink-2);
-  background: color-mix(in srgb, var(--provisional) 12%, transparent);
-  border-left: 3px solid var(--provisional);
-  border-radius: var(--radius-2);
-  line-height: 1.4;
+  border-top: 1px dashed var(--provisional);
+  border-bottom: 1px dashed var(--provisional);
+  line-height: 1.6;
 }
 
 .settings__loading {
@@ -120,17 +119,19 @@
   color: var(--ink-3);
 }
 
-/* 流式思考链体验推荐提示：置于面板顶部，绿色强调「推荐」语义，
-   与表单其他说明的灰色区分，但不喧宾夺主。 */
+/* 推荐提示：一行带标记的小字，不是彩色提示框。 */
 .settings__recommend {
   margin: 0 0 var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: 0;
   font-size: var(--text-small);
-  line-height: 1.5;
+  line-height: 1.6;
+  color: var(--ink-2);
+}
+
+.settings__recommend::before {
+  content: "✓ ";
+  font-family: var(--mono);
   color: var(--admitted);
-  background: color-mix(in srgb, var(--admitted) 8%, transparent);
-  border-left: 3px solid var(--admitted);
-  border-radius: var(--radius-2);
 }
 
 .settings__note {

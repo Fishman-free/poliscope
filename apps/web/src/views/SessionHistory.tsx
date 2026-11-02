@@ -259,7 +259,7 @@ export function SessionHistory({
         title={t("会话历史：回到任意一次研究会话")}
       >
         <HistoryIcon />
-        {t("会话历史")}
+        <span className="session__trigger-label">{t("会话历史")}</span>
       </button>
       {open ? (
         <div className="session__popover" role="group" aria-label={t("会话历史")}>

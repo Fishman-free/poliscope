@@ -1,88 +1,73 @@
-/* Workspace shell.
+/* Workspace shell: a dossier on the desk.
  *
- * All tokens here are scoped under `.app` so the public landing page (a
- * separate tree rendered by main.tsx path dispatch) is untouched -- the
- * workspace is a different instrument from the marketing surface. Lifecycle
- * status uses independent *operational* tokens (`--app-op-*`), never the
- * evidence tones: how a run is moving (研究中 / 已暂停 / 已停止) is a different
- * axis from how much a finding is trusted. Action Blue is the one interactive
- * colour; destructive "停止研究" gets its own operational danger red, not the
- * evidence `--refuted`.
+ * A masthead (wordmark, method line, double rule), the research question as
+ * the page's headline, a table-of-contents row for the views, and a narrow
+ * margin column for the researcher's settings. Nothing floats: structure is
+ * rules and type (see tokens.css).
+ *
+ * Lifecycle status uses its own *operational* tokens (`--app-op-*`), never
+ * the evidence tones: how a run is moving is a different axis from how much
+ * a finding is trusted. Destructive "停止研究" gets an operational red.
  */
 
 .app {
-  --app-bg: #f5f5f7;
-  --app-surface: #ffffff;
-  --app-surface-2: #fafafc;
-  --app-hairline: rgba(0, 0, 0, 0.10);
-  --app-hairline-strong: rgba(0, 0, 0, 0.18);
-  --app-ink: #1d1d1f;
-  --app-ink-2: #333333;
-  --app-ink-3: #6e6e73;
+  --app-bg: transparent;
+  --app-surface: var(--paper);
+  --app-surface-2: var(--paper-raised);
+  --app-hairline: var(--rule);
+  --app-hairline-strong: var(--line-strong);
+  --app-ink: var(--ink-1);
+  --app-ink-2: var(--ink-2);
+  --app-ink-3: var(--ink-3);
 
-  --app-accent: #0066cc;
-  --app-accent-focus: #0071e3;
-  --app-accent-soft: rgba(0, 102, 204, 0.08);
-  --app-danger: #d70015;
-  --app-danger-soft: rgba(215, 0, 21, 0.08);
-  --app-danger-border: rgba(215, 0, 21, 0.35);
+  --app-accent: var(--accent);
+  --app-accent-focus: var(--accent-focus);
+  --app-accent-soft: var(--accent-soft);
+  --app-danger: #a12a1f;
+  --app-danger-soft: rgba(161, 42, 31, 0.07);
+  --app-danger-border: rgba(161, 42, 31, 0.45);
 
-  /* Lifecycle (operational) status colours -- one axis: the run's motion.
-   * Never shared with evidence admitted/provisional/refuted/unknown. */
-  --app-op-running: #0066cc;
-  --app-op-running-soft: rgba(0, 102, 204, 0.10);
-  --app-op-running-border: rgba(0, 102, 204, 0.30);
-  --app-op-queued: #6e6e73;
-  --app-op-queued-soft: rgba(110, 110, 115, 0.10);
-  --app-op-queued-border: rgba(0, 0, 0, 0.10);
-  --app-op-degraded: #b7791f;
-  --app-op-degraded-soft: rgba(183, 121, 31, 0.10);
-  --app-op-degraded-border: rgba(183, 121, 31, 0.35);
-  --app-op-checkpoint: #7048e8;
-  --app-op-checkpoint-soft: rgba(112, 72, 232, 0.10);
-  --app-op-checkpoint-border: rgba(112, 72, 232, 0.30);
-  --app-op-completed: #1a7f37;
-  --app-op-completed-soft: rgba(26, 127, 55, 0.10);
-  --app-op-completed-border: rgba(26, 127, 55, 0.30);
-  --app-op-failed: #cf222e;
-  --app-op-failed-soft: rgba(207, 34, 46, 0.08);
-  --app-op-failed-border: rgba(207, 34, 46, 0.30);
+  /* Lifecycle (operational) colours -- the run's motion only. */
+  --app-op-running: #21416a;
+  --app-op-running-soft: rgba(33, 65, 106, 0.08);
+  --app-op-running-border: rgba(33, 65, 106, 0.4);
+  --app-op-queued: #6a6356;
+  --app-op-queued-soft: rgba(106, 99, 86, 0.08);
+  --app-op-queued-border: rgba(106, 99, 86, 0.4);
+  --app-op-degraded: #8a5a0c;
+  --app-op-degraded-soft: rgba(138, 90, 12, 0.08);
+  --app-op-degraded-border: rgba(138, 90, 12, 0.45);
+  --app-op-checkpoint: #5b3f8c;
+  --app-op-checkpoint-soft: rgba(91, 63, 140, 0.08);
+  --app-op-checkpoint-border: rgba(91, 63, 140, 0.4);
+  --app-op-completed: #2c6a3c;
+  --app-op-completed-soft: rgba(44, 106, 60, 0.08);
+  --app-op-completed-border: rgba(44, 106, 60, 0.4);
+  --app-op-failed: #9d2b23;
+  --app-op-failed-soft: rgba(157, 43, 35, 0.07);
+  --app-op-failed-border: rgba(157, 43, 35, 0.45);
 
-  /* Chrome frosted material. Defined here (not the global :root) so the
-   * workspace owns its own chrome tokens; reduced-transparency collapses it. */
-  --app-chrome-bg: rgba(245, 245, 247, 0.78);
-  --app-chrome-blur: blur(20px) saturate(180%);
+  --app-chrome-bg: var(--chrome-bg);
+  --app-chrome-blur: none;
 
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  background: var(--app-bg);
+  background: transparent;
   color: var(--app-ink);
   color-scheme: light;
 }
 
-/* Reduced transparency: the frosted chrome goes solid (workspace-scoped, the
- * landing page keeps its own tokens untouched). */
-@media (prefers-reduced-transparency: reduce) {
-  .app {
-    --app-chrome-bg: #f5f5f7;
-    --app-chrome-blur: none;
-  }
-}
-
-/* Increased contrast: hairline becomes a visible line so card boundaries do
- * not rely on contrast that the reader has reduced. */
 @media (prefers-contrast: more) {
   .app {
-    --app-hairline: rgba(0, 0, 0, 0.35);
-    --app-hairline-strong: rgba(0, 0, 0, 0.5);
+    --app-hairline: rgba(25, 23, 20, 0.45);
+    --app-hairline-strong: rgba(25, 23, 20, 0.6);
     --app-ink-3: var(--app-ink-2);
   }
 }
 
-/* Translucent chrome with content scrolling under it, rather than an opaque
- * strip that permanently costs vertical space. A single frosted layer only --
- * nothing inside re-frosts (no glass-on-glass). */
+/* --- Masthead ----------------------------------------------------------- */
+
 .app__chrome {
   position: sticky;
   top: 0;
@@ -91,42 +76,43 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-5);
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-6);
   background: var(--app-chrome-bg);
-  backdrop-filter: var(--app-chrome-blur);
-  border-bottom: 1px solid var(--app-hairline);
+  /* The masthead's double rule. */
+  border-bottom: 3px double var(--rule-heavy);
 }
 
 .app__identity {
   display: flex;
   align-items: baseline;
-  gap: var(--space-3);
+  gap: var(--space-4);
   min-width: 0;
 }
 
 .app__wordmark {
-  /* 模板的 logo 语言：serif 强调字体。PP Mondwest 缺失时回退 Georgia，
-     中文阅读无影响（wordmark 是拉丁字）。 */
   font-family: var(--serif);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  font-size: 1.25rem;
-  color: inherit;
+  font-weight: 500;
+  font-style: italic;
+  font-size: 1.5rem;
+  line-height: 1;
+  letter-spacing: -0.015em;
+  color: var(--ink-1);
   text-decoration: none;
 }
 
 .app__method {
   font-family: var(--mono);
-  font-size: var(--text-micro);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
   color: var(--app-ink-3);
-  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
 .app__account {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .app__account-name {
@@ -134,12 +120,14 @@
   color: var(--app-ink-2);
 }
 
-/* 语言切换（round-4 多语言）：header 里的紧凑下拉，跟随全局字体语言。 */
 .app__lang {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-micro);
+  gap: var(--space-2);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
   color: var(--app-ink-3);
 }
 
@@ -148,25 +136,29 @@
 }
 
 .app__lang select {
-  font: inherit;
-  color: inherit;
-  background: var(--app-surface);
-  border: 1px solid var(--app-hairline);
-  border-radius: var(--radius-1);
-  padding: 2px var(--space-2);
+  font-family: var(--font);
+  font-size: var(--text-micro);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-1);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0;
+  padding: 2px 2px 1px;
+  cursor: pointer;
 }
 
-/* Main column + fixed right sidebar. The sidebar holds the researcher's
- * permanent model settings and session history; it exists in both states
- * (no task and task workspace). */
+/* --- Page layout: reading column + margin column ------------------------ */
+
 .app__layout {
   display: flex;
-  gap: var(--space-5);
+  gap: var(--space-7);
   align-items: flex-start;
   width: 100%;
-  max-width: 1680px;
+  max-width: 1640px;
   margin: 0 auto;
-  padding: var(--space-5);
+  padding: var(--space-6) var(--space-6) var(--space-8);
 }
 
 .app__main {
@@ -174,24 +166,26 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
+/* The margin column: the researcher's own instruments, set apart by a rule
+ * rather than boxed. */
 .app__sidebar {
   width: var(--sidebar-w);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-6);
+  padding-left: var(--space-6);
+  border-left: 1px solid var(--app-hairline);
 }
 
 @media (max-width: 1100px) {
   .app__layout {
     flex-direction: column;
-    /* Column mode must NOT keep align-items: flex-start: that would let the
-     * main column shrink to its widest child (e.g. the tab rail) and blow the
-     * page width horizontally. Stretch keeps it pinned to the container. */
     align-items: stretch;
+    gap: var(--space-6);
   }
 
   .app__main {
@@ -200,35 +194,49 @@
 
   .app__sidebar {
     width: 100%;
+    padding-left: 0;
+    border-left: 0;
+    border-top: 3px double var(--rule-heavy);
+    padding-top: var(--space-5);
   }
 }
 
-/* No-task home: a small segmented control above the view, Apple settings-app
- * style -- a translucent track with the selected segment lifted in white. */
+/* --- Home switch: two words, the current one underlined ---------------- */
+
 .app__home-switch {
   display: inline-flex;
-  gap: 2px;
+  gap: var(--space-5);
   align-self: flex-start;
-  padding: 3px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--app-ink) 6%, transparent);
-  border: 1px solid var(--app-hairline);
+  padding: 0;
+  background: none;
+  border: 0;
 }
 
 .app__home-tab {
-  padding: var(--space-1) var(--space-4);
+  position: relative;
+  padding: var(--space-1) 0;
   border: none;
-  border-radius: var(--radius-pill);
   background: none;
   cursor: pointer;
-  font: inherit;
-  font-size: var(--text-small);
-  font-weight: 500;
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 400;
   color: var(--app-ink-3);
   min-height: 44px;
-  transition: color var(--duration-standard) var(--ease-smooth),
-    background-color var(--duration-standard) var(--ease-smooth),
-    box-shadow var(--duration-standard) var(--ease-smooth);
+  transition: color var(--duration-standard) var(--ease-smooth);
+}
+
+.app__home-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  height: 2px;
+  background: var(--ink-1);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--duration-slow) var(--ease-smooth);
 }
 
 .app__home-tab:hover {
@@ -237,60 +245,49 @@
 
 .app__home-tab--on {
   color: var(--app-ink);
-  background: var(--app-surface);
-  box-shadow: var(--shadow-2);
 }
 
+.app__home-tab--on::after {
+  transform: scaleX(1);
+}
+
+/* --- Task head: the question as the page's headline -------------------- */
+
 .app__task {
-  padding-bottom: 0;
-  /* As a flex item of the main column, refuse to stretch past the column's
-   * width: without this, an overflowing child (e.g. the nowrap tab rail) would
-   * force the whole page to scroll horizontally. */
   min-width: 0;
 }
 
-/* Task header. The title and the lifecycle status badge must sit together on
- * one line (round fix): title-copy is a flex-wrap row at gap 8px, so the badge
- * never drifts to the far right or onto its own orphan line. Actions sit in a
- * separate right-hand cluster that goes full-width single-column on phones. */
 .app__task-head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
 .app__title-copy {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
-  /* 问题文本自适应填满操作按钮（停止/重新研究）左侧的全部宽度，
-     不再以固定 62ch 把长问题挤成左侧窄栏、右侧大片留白。 */
   flex: 1 1 auto;
 }
 
 .app__title-copy h1 {
-  /* A clear but non-hero research-question title: clamp so it scales with the
-   * viewport, weight 600 with Apple-style negative tracking, 1.18 leading. */
-  font-size: clamp(24px, 1.9vw, 30px);
-  font-weight: 600;
-  line-height: 1.18;
-  letter-spacing: -0.022em;
+  font-family: var(--serif);
+  font-size: clamp(1.75rem, 2.4vw, 2.5rem);
+  font-weight: 500;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
   color: var(--app-ink);
-  /* h1 独占一整行并吃满 title-copy 宽度（右边界恰在操作按钮左侧），
-     状态徽标自然换行到下一行。 */
   flex: 0 0 100%;
   width: 100%;
-  margin: 0;
+  margin: 0 0 var(--space-1);
   overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
-/* 次级 gap 徽标：仍属 title copy，视觉权重低于主状态徽标。用 operational
- * 中性色（灰），不是 evidence refuted 红 —— 未完成是「还差什么」，不是
- * 「结论被反驳」。 */
 .app__task-gaps {
   display: inline-flex;
   align-items: baseline;
@@ -301,93 +298,81 @@
 .app__gaps-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.15em 0.65em;
-  border-radius: var(--radius-pill);
-  font-size: var(--text-micro);
-  font-weight: 500;
+  min-height: 1.55em;
+  padding: 0 0.55em;
+  border: 1px dashed var(--line-strong);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.06em;
   white-space: nowrap;
   color: var(--app-ink-3);
-  background: var(--app-surface-2);
-  border: 1px solid var(--app-hairline);
 }
 
 .app__task-gaps-detail {
   font-size: var(--text-micro);
   color: var(--app-ink-3);
-  max-width: 26rem;
+  max-width: 30rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Task-header actions: 恢复/停止/新建。恢复类（重新研究/继续研究）是主动作
- * —— Action Blue 填充；停止是破坏性动作 —— 用独立的 operational danger 红
- * （非 evidence refuted）；新建研究是次级。触控目标一律 ≥44px。 */
 .app__task-actions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
+  padding-top: var(--space-2);
 }
 
-.app__new {
-  min-height: 44px;
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--app-hairline);
-  border-radius: var(--radius-pill);
-  background: var(--app-surface);
-  font-size: var(--text-micro);
-  color: var(--app-ink-2);
+.app__new,
+.app__action-primary,
+.app__stop {
+  min-height: 2.5rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--ink-1);
+  border-radius: var(--radius-1);
+  background: transparent;
+  font-size: var(--text-small);
+  font-weight: 500;
+  color: var(--ink-1);
   cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard);
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
 }
 
 .app__new:hover {
-  background: var(--app-surface-2);
-  color: var(--app-ink);
+  background: var(--ink-1);
+  color: var(--paper);
 }
 
 .app__action-primary {
-  min-height: 44px;
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
-  background: var(--app-accent);
-  font-size: var(--text-micro);
-  font-weight: 500;
-  color: #ffffff;
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-standard);
+  background: var(--ink-1);
+  color: var(--paper);
 }
 
 .app__action-primary:hover {
-  background: var(--app-accent-focus);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .app__action-primary:active,
 .app__new:active,
 .app__stop:active,
 .app__home-tab:active {
-  transform: scale(0.97);
+  transform: translateY(1px);
 }
 
 .app__stop {
-  min-height: 44px;
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--app-danger-border);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  font-size: var(--text-micro);
+  border-color: var(--app-danger-border);
   color: var(--app-danger);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-standard),
-    color var(--duration-fast) var(--ease-standard);
 }
 
 .app__stop:hover {
   background: var(--app-danger);
-  color: #ffffff;
+  border-color: var(--app-danger);
+  color: var(--paper);
 }
 
 .app__stop:disabled {
@@ -395,20 +380,48 @@
   cursor: default;
 }
 
-/* Tab rail. Low-contrast surface + a 2px Action Blue indicator line under the
- * active tab; inactive tabs read as secondary text. The rail scrolls itself
- * horizontally when the tabs overflow (never stretches the page), and the
- * active tab is scrolled into view by App.tsx on switch. */
+/* --- Views: a table of contents ------------------------------------------
+ * Each view is an entry: its name in serif, its gloss in the recorded voice.
+ * The current entry carries a heavy rule beneath it. The row scrolls on its
+ * own when it overflows; App.tsx keeps the current entry in view. */
 .app__tabs {
   position: relative;
   display: flex;
-  gap: var(--space-1);
-  margin-top: var(--space-4);
+  gap: var(--space-5);
+  margin-top: var(--space-5);
+  padding: 0;
+  border-top: 1px solid var(--rule-heavy);
   border-bottom: 1px solid var(--app-hairline);
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  /* The rail scrolls; a visible scrollbar under a tab row is noise. */
   scrollbar-width: none;
+  scroll-padding-inline: var(--space-7);
+  /* Entries that run off an edge fade out instead of being cut; App.tsx
+   * marks which edges currently overflow. */
+  --fade-start: 0px;
+  --fade-end: 0px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--fade-start),
+    #000 calc(100% - var(--fade-end)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--fade-start),
+    #000 calc(100% - var(--fade-end)),
+    transparent
+  );
+}
+
+.app__tabs[data-fade-start="on"] {
+  --fade-start: var(--space-7);
+}
+
+.app__tabs[data-fade-end="on"] {
+  --fade-end: var(--space-7);
 }
 
 .app__tabs::-webkit-scrollbar {
@@ -418,11 +431,11 @@
 .app__tab {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
   align-items: flex-start;
   justify-content: center;
-  min-height: 44px;
-  padding: var(--space-2) var(--space-4);
+  min-height: 3.5rem;
+  padding: var(--space-2) 0 var(--space-3);
   background: none;
   border: none;
   margin-bottom: -1px;
@@ -441,62 +454,57 @@
 }
 
 .app__tab span:first-child {
-  font-size: var(--text-body);
-  font-weight: 550;
-  letter-spacing: -0.01em;
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.app__tab--on span:first-child {
+  font-weight: 500;
 }
 
 .app__tab-hint {
-  font-size: var(--text-micro);
+  font-family: var(--font);
+  font-size: var(--label-size);
+  letter-spacing: 0.02em;
   color: var(--app-ink-3);
-  opacity: 0.72;
 }
 
 .app__tab-indicator {
   position: absolute;
   bottom: -1px;
   left: 0;
-  height: 2px;
-  border-radius: var(--radius-pill);
-  background: var(--app-accent);
+  height: 3px;
+  background: var(--ink-1);
   width: var(--indicator-width, 0px);
-  /* 合成属性滑动：translateX 走 GPU 合成，宽度瞬间更新（320ms 滑动中人眼
-     跟踪位置而非宽度）。与 App.tsx 注释「App.css transitions the transform」
-     的本意一致。 */
   transform: translateX(var(--indicator-left, 0px));
-  transition: transform var(--duration-slow) var(--ease-smooth);
+  transition: transform var(--duration-slow) var(--ease-smooth),
+    width var(--duration-slow) var(--ease-smooth);
 }
 
-/* 768px 以下：隐藏 tab 副标题，标签栏横向滚动省下空间。 */
 @media (max-width: 768px) {
   .app__tab-hint {
     display: none;
   }
+
+  .app__tabs {
+    gap: var(--space-5);
+  }
 }
 
-/* Panel entrance: a longer, softer settle than the old 4px fade -- the
- * Apple-style slide-up. Used both as the no-View-Transitions fallback and as
- * the state-change animation behind it. */
+/* --- Panel entrance and view transitions -------------------------------- */
+
 .app__panel {
   animation: panel-in var(--duration-slow) var(--ease-smooth);
-  /* Named snapshot for View Transitions: only the panel animates when the
-   * researcher switches tabs / home views -- the sidebar stays put. */
   view-transition-name: app-panel;
 }
 
-/* Home 视图（新建任务 / 知识库）保持挂载、只做显隐切换，已填内容不丢。
- * display:none 是切换的根基 —— 它同时让隐藏面板退出 tab 焦点序列；
- * view-transition-name 重置避免与激活面板的同名过渡快照冲突。
- *
- * 两个面板持有各自固定的快照名（只在激活时生效，:not(.app__panel--hidden)
- * 保证隐藏面板的名字归零、不参与快照）。固定名是关键：如果两个面板在切换
- * 时共用同一个名字，浏览器会把旧快照配对到新元素上 —— 播放出来就是
- * 「先显示目标页、又闪回来源页、再跳回目标页」的来回跳。独立名字让切换
- * 变成两个互不干扰的过渡：来源页 150ms 淡出、目标页 320ms 滑入，果断。 */
 .app__panel--hidden {
   display: none;
   view-transition-name: none;
 }
+
 .app__panel--home-newtask:not(.app__panel--hidden) {
   view-transition-name: home-newtask;
 }
@@ -518,23 +526,20 @@
 @keyframes vt-home-out {
   to {
     opacity: 0;
-    transform: scale(0.99);
   }
 }
 
 @keyframes vt-home-in {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(0.99);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
-/* root 快照只用于捕获页面背景，不做任何过渡 —— 否则整页默认交叉淡化
- * 会叠加在面板过渡之上，看起来就像切换时整个界面闪了一下。 */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation: none;
@@ -543,18 +548,16 @@
 @keyframes panel-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.995);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
-/* View Transitions: the panel's old snapshot slides up and fades while the
- * new one rises into place -- a continuous glide instead of a swap. */
 ::view-transition-old(app-panel) {
-  animation: vt-panel-out 200ms var(--ease-smooth);
+  animation: vt-panel-out 160ms var(--ease-smooth);
 }
 
 ::view-transition-new(app-panel) {
@@ -564,24 +567,21 @@
 @keyframes vt-panel-out {
   to {
     opacity: 0;
-    transform: translateY(-8px) scale(0.995);
   }
 }
 
 @keyframes vt-panel-in {
   from {
     opacity: 0;
-    transform: translateY(14px) scale(0.99);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* base.css already collapses durations; View Transition snapshots are
-   * separate pseudo-elements, so every one needs an explicit kill. */
   ::view-transition-old(root),
   ::view-transition-new(root),
   ::view-transition-old(app-panel),
@@ -594,15 +594,22 @@
   }
 }
 
-.app__error {
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--app-op-failed-border);
+/* --- Errors and loading -------------------------------------------------- */
+
+.app__error,
+.app__action-error {
+  padding: var(--space-3) 0 var(--space-3) var(--space-4);
+  border: 0;
+  border-top: 2px solid var(--app-op-failed);
   background: var(--app-op-failed-soft);
-  border-radius: var(--radius-3);
-  max-width: 68ch;
+  border-radius: 0;
+  max-width: var(--measure);
 }
 
 .app__error strong {
+  font-family: var(--serif);
+  font-weight: 500;
+  font-size: 1.0625rem;
   color: var(--app-op-failed);
 }
 
@@ -615,49 +622,41 @@
   color: var(--app-ink-3);
 }
 
-/* 任务头下的操作失败提示（重新研究/继续研究/停止）。用与工作台加载失败
-   同一套 failed 令牌，留在任务头上而不是弹层：这是一条状态信息，研究员
-   要能对照着按钮读完，再决定重试还是换个入口。 */
 .app__action-error {
   margin: var(--space-3) 0 0;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--app-op-failed-border);
-  background: var(--app-op-failed-soft);
-  border-radius: var(--radius-2);
   color: var(--app-ink-2);
   font-size: var(--text-small);
-  max-width: 68ch;
 }
 
-/* Loading escape + error recovery actions: a wedged history open must always
-   leave the researcher a way out (never a dead "载入中…" trap). */
 .app__loading {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-6) 0;
+  padding: var(--space-7) 0;
 }
 
 .app__loading-back,
 .app__error-retry,
 .app__error-back {
-  min-height: 36px;
+  min-height: 2.25rem;
   padding: 0 var(--space-4);
-  border-radius: var(--radius-2);
+  border-radius: var(--radius-1);
   font-size: var(--text-small);
   cursor: pointer;
 }
 
-.app__loading-back {
-  border: 1px solid var(--app-hairline);
+.app__loading-back,
+.app__error-back {
+  border: 1px solid var(--line-strong);
   background: transparent;
-  color: var(--app-ink-3);
+  color: var(--app-ink-2);
 }
 
-.app__loading-back:hover {
+.app__loading-back:hover,
+.app__error-back:hover {
+  border-color: var(--ink-1);
   color: var(--app-ink);
-  border-color: var(--app-ink-3);
 }
 
 .app__error-actions {
@@ -668,37 +667,29 @@
 }
 
 .app__error-retry {
-  border: 1px solid var(--app-ink);
-  background: var(--app-ink);
-  color: var(--app-surface);
+  border: 1px solid var(--ink-1);
+  background: var(--ink-1);
+  color: var(--paper);
 }
 
-.app__error-back {
-  border: 1px solid var(--app-hairline);
-  background: transparent;
-  color: var(--app-ink-2);
-}
-
-.app__error-back:hover {
-  border-color: var(--app-ink-3);
-  color: var(--app-ink);
-}
-
-/* Responsive. 1100: sidebar stacks under the main column (above). 768: tabs
- * lose their hints and padding tightens. 390: task head goes single-column,
- * actions go full-width with 44px targets, tabs scroll horizontally, and
- * nothing overflows the viewport horizontally. */
 @media (max-width: 768px) {
   .app__layout {
-    padding: var(--space-4);
+    padding: var(--space-4) var(--space-4) var(--space-7);
   }
 
   .app__chrome {
     padding: var(--space-3) var(--space-4);
+    gap: var(--space-3);
   }
 
-  .app__method {
+  .app__method,
+  .app__lang-label,
+  .session__trigger-label {
     display: none;
+  }
+
+  .app__account {
+    gap: var(--space-3);
   }
 }
 

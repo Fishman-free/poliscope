@@ -25,13 +25,14 @@
 }
 
 .rt-card {
-  border: 1px solid var(--line, rgba(0, 0, 0, 0.09));
-  border-radius: var(--radius-2, 12px);
-  padding: 12px;
-  background: var(--surface-pearl, #fafafc);
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  padding: var(--space-3) 0;
+  background: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .rt-card__head {
@@ -197,15 +198,15 @@
 }
 
 .rt-bar {
-  height: 8px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--line, rgba(0, 0, 0, 0.09));
+  height: 4px;
+  border-radius: 0;
+  background: var(--rule);
   overflow: hidden;
 }
 
 .rt-bar__fill {
   height: 100%;
-  background: var(--accent, #0066cc);
+  background: var(--ink-1);
   transition: width 200ms ease;
 }
 

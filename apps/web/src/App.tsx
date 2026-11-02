@@ -344,7 +344,22 @@ export function App() {
   // When the rail overflows (narrow screens), the active tab is scrolled into
   // view so switching tabs never leaves the current one off-screen.
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const tabNavRef = useRef<HTMLElement | null>(null);
   const [indicator, setIndicator] = useState({ left: 0, width: 0 });
+  // The rail fades only on the side that actually runs off screen; set as
+  // data attributes straight on the element so scrolling never re-renders.
+  const markTabOverflow = useCallback(() => {
+    const nav = tabNavRef.current;
+    if (!nav) return;
+    const max = nav.scrollWidth - nav.clientWidth;
+    nav.dataset.fadeStart = nav.scrollLeft > 4 ? "on" : "";
+    nav.dataset.fadeEnd = nav.scrollLeft < max - 4 ? "on" : "";
+  }, []);
+  useEffect(() => {
+    markTabOverflow();
+    window.addEventListener("resize", markTabOverflow);
+    return () => window.removeEventListener("resize", markTabOverflow);
+  }, [markTabOverflow, taskId]);
   useEffect(() => {
     const active = tabRefs.current[tab];
     if (active) {
@@ -911,7 +926,12 @@ export function App() {
                   </p>
                 ) : null}
 
-                <nav className="app__tabs" aria-label={t("视图")}>
+                <nav
+                  className="app__tabs"
+                  aria-label={t("视图")}
+                  ref={tabNavRef}
+                  onScroll={markTabOverflow}
+                >
                   {TABS.map((item) => (
                     <button
                       key={item.id}

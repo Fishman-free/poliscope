@@ -44,10 +44,11 @@
   top: calc(100% + 8px);
   min-width: 160px;
   padding: var(--space-2);
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  box-shadow: var(--shadow-2);
+  background: var(--paper-raised);
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  border-radius: 0;
+  box-shadow: var(--shadow-float);
   z-index: 40;
   display: flex;
   flex-direction: column;

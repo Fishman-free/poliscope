@@ -1,90 +1,309 @@
-/* 推理图谱：一条论证，自上而下读完。
+/* 研究结论：一份审稿意见书。
  *
- * 视觉纪律（CLAUDE.md 11）：科研仪器而非驾驶舱 —— 白底、发丝线、单一强调色；
- * 证据四色只用于「能信多少」（判定徽标、依据/边界/未知三栏的左边线），
- * 不作装饰。结论与局限在每一步内并排两栏，窄屏时上下堆叠、局限紧随结论。
+ * 版式取自印刷期刊而非仪表盘：没有卡片、没有阴影、没有左侧色条。结构全靠
+ * 线与字 —— 每一节以粗线开头、条目之间是发丝线、序号进页边、记录性信息
+ * （编号、计数、人员）用等宽小字。正反各方并列成报纸分栏，推理链每一步
+ * 把「依据」与「边界、未知」左右对排（CLAUDE.md 11：结论与局限并排）。
+ * 证据四色只出现在小标记与戳记上，仍然只表示「能信多少」。
  */
 
 .rmap {
+  counter-reset: rmap-section;
   display: grid;
-  gap: var(--space-6);
-  max-width: 980px;
+  gap: var(--space-7);
+  max-width: 1040px;
   margin: 0 auto;
+  padding-top: var(--space-4);
 }
 
-.rmap__eyebrow {
-  margin: 0 0 var(--space-1);
-  font-size: var(--text-micro);
-  letter-spacing: 0.06em;
+/* --- shared voice -------------------------------------------------------- */
+
+.rmap__eyebrow,
+.rmap__refs-label,
+.rmap__overview-root-label {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
   text-transform: uppercase;
   color: var(--ink-3);
 }
 
+/* Section heads: a heavy rule, the section mark in the recorded voice, the
+ * title in serif. Numbered by a CSS counter so the order is the argument. */
 .rmap__section-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
   margin: 0 0 var(--space-1);
-  font-size: 1.125rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  padding-top: var(--space-3);
+  border-top: 2px solid var(--rule-heavy);
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  font-weight: 500;
   color: var(--ink-1);
 }
 
+.rmap__section-title::before {
+  counter-increment: rmap-section;
+  content: "§ " counter(rmap-section);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  color: var(--ink-3);
+  transform: translateY(-0.2em);
+}
+
 .rmap__section-note {
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-5);
+  max-width: var(--measure);
   font-size: var(--text-small);
   color: var(--ink-3);
 }
 
-/* ------------------------------------------------------------ 一句话回答 */
+.rmap__none {
+  margin: var(--space-2) 0;
+  font-size: var(--text-small);
+  color: var(--ink-3);
+}
+
+/* --- the answer ---------------------------------------------------------- */
 
 .rmap__answer {
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-4);
-  padding: var(--space-5) var(--space-6);
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-5);
 }
 
 .rmap__answer-head {
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--rule-heavy);
 }
 
 .rmap__question {
-  margin: 0;
-  font-size: 1.375rem;
-  line-height: 1.4;
-  letter-spacing: -0.02em;
+  margin: var(--space-2) 0 0;
+  font-family: var(--serif);
+  font-size: clamp(1.5rem, 2.2vw, 2rem);
+  font-weight: 500;
+  line-height: 1.3;
+  text-wrap: balance;
 }
 
+/* An editor's note, not an alert: set between dashed rules. */
 .rmap__mode-note {
   margin: 0;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-2);
-  background: var(--unknown-soft);
-  color: var(--ink-2);
+  padding: var(--space-3) 0;
+  border-top: 1px dashed var(--line-strong);
+  border-bottom: 1px dashed var(--line-strong);
+  background: none;
   font-size: var(--text-small);
-  line-height: 1.6;
+  line-height: 1.7;
+  color: var(--ink-2);
 }
 
-.rmap__bottom-line {
-  font-size: 1.0625rem;
+.rmap__mode-note::before {
+  content: "※";
+  margin-right: var(--space-2);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  color: var(--ink-3);
 }
 
+/* The bottom line is the standfirst: larger, serif, one measure wide. */
+.rmap__bottom-line,
 .rmap__bottom-line .md-paragraph {
-  font-size: 1.0625rem;
-  line-height: 1.8;
+  max-width: 44em;
+  font-family: var(--serif);
+  font-size: 1.3125rem;
+  line-height: 1.75;
+  color: var(--ink-1);
 }
 
 .rmap__bottom-line--none {
   margin: 0;
+  font-family: var(--serif);
+  font-size: 1.125rem;
   color: var(--ink-3);
   line-height: 1.7;
 }
 
+/* Verdicts: a ruled table, the stamp in the left column. */
 .rmap__verdicts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.rmap__verdict {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  column-gap: var(--space-5);
+  row-gap: var(--space-1);
+  align-items: baseline;
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--rule);
+  background: none;
+}
+
+.rmap__verdict .badge {
+  grid-row: span 2;
+  justify-self: start;
+  padding: 0.15em 0.6em;
+  border-width: 1.5px;
+  font-size: var(--text-small);
+  letter-spacing: 0.12em;
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
+.rmap__verdict-claim {
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 500;
+  color: var(--ink-1);
+}
+
+.rmap__verdict-reason {
+  font-size: var(--text-small);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+/* --- positions: a debate set in columns ---------------------------------- */
+
+.rmap__block {
+  display: block;
+}
+
+.rmap__positions-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
+  row-gap: var(--space-6);
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-5);
+}
+
+.rmap__position {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-5);
+  border-left: 1px solid var(--rule);
+  background: none;
+}
+
+.rmap__position--row-start {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.rmap__position-head {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* The side's name is the column's headword; its glyph says which side. */
+.rmap__position-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--ink-1);
+}
+
+.rmap__position-label::before {
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  color: var(--ink-3);
+}
+
+.rmap__position--affirmative .rmap__position-label::before {
+  content: "+";
+}
+
+.rmap__position--negative .rmap__position-label::before {
+  content: "−";
+}
+
+.rmap__position--conditional .rmap__position-label::before {
+  content: "◇";
+}
+
+.rmap__position--undetermined .rmap__position-label::before {
+  content: "?";
+}
+
+.rmap__position-head h4 {
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  line-height: 1.6;
+  color: var(--ink-1);
+}
+
+.rmap__position-holders {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--ink-2);
+}
+
+.rmap__position-holders span {
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Reasoning: hanging serif numerals, the steps of one argument. */
+.rmap__position-reasoning {
+  list-style: none;
+  counter-reset: reason;
+  margin: 0;
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--rule-soft);
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--text-small);
+  line-height: 1.7;
+  color: var(--ink-1);
+}
+
+.rmap__position-reasoning li {
+  counter-increment: reason;
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+}
+
+.rmap__position-reasoning li::before {
+  content: counter(reason) ".";
+  font-family: var(--serif);
+  color: var(--ink-3);
+}
+
+/* --- grouped notes: support / limits / unknowns -------------------------- */
+
+.rmap__group h5 {
+  margin: 0 0 var(--space-2);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  font-weight: 500;
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
+}
+
+.rmap__group ul {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -92,110 +311,117 @@
   gap: var(--space-2);
 }
 
-.rmap__verdict {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-2);
-  background: var(--surface-parchment);
-}
-
-.rmap__verdict-claim {
-  font-weight: 600;
+.rmap__group li {
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 1fr);
+  font-size: var(--text-small);
+  line-height: 1.65;
   color: var(--ink-1);
 }
 
-.rmap__verdict-reason {
-  flex-basis: 100%;
-  color: var(--ink-2);
-  font-size: var(--text-small);
-  line-height: 1.6;
+.rmap__group li::before {
+  font-family: var(--mono);
+  font-weight: 500;
 }
 
-/* ------------------------------------------------------------ 总览图谱 */
+.rmap__group--support h5,
+.rmap__group--support li::before {
+  color: var(--admitted);
+}
+
+.rmap__group--support li::before {
+  content: "+";
+}
+
+.rmap__group--limit h5,
+.rmap__group--limit li::before {
+  color: var(--provisional);
+}
+
+.rmap__group--limit li::before {
+  content: "⊥";
+}
+
+.rmap__group--unknown h5,
+.rmap__group--unknown li::before {
+  color: var(--unknown);
+}
+
+.rmap__group--unknown li::before {
+  content: "?";
+}
+
+.rmap__position .rmap__group {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--rule-soft);
+}
+
+/* --- overview: a table of contents for the chain ------------------------- */
 
 .rmap__overview {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-4);
-  padding: var(--space-5);
-  background: var(--surface-parchment);
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  padding: var(--space-3) 0 0;
+  background: none;
 }
 
 .rmap__overview-root {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-4);
   align-items: baseline;
   padding-bottom: var(--space-3);
-  margin-bottom: var(--space-3);
-  border-bottom: 1px solid var(--line);
-}
-
-.rmap__overview-root-label {
-  flex-shrink: 0;
-  font-size: var(--text-micro);
-  color: var(--ink-3);
-  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--rule);
 }
 
 .rmap__overview-root-text {
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 1.0625rem;
   color: var(--ink-1);
 }
 
 .rmap__spine {
   list-style: none;
   margin: 0;
-  padding: 0 0 0 var(--space-4);
-  border-left: 2px solid var(--line-strong);
-  display: grid;
-  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+}
+
+.rmap__spine li {
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .rmap__spine-node {
-  position: relative;
   width: 100%;
   display: grid;
-  grid-template-columns: auto 5.5em minmax(0, 1fr) auto;
+  grid-template-columns: 3rem 6.5em minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
   border: 0;
-  border-radius: var(--radius-2);
   background: transparent;
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-standard);
+  transition: color var(--duration-fast) var(--ease-standard);
 }
 
-.rmap__spine-node::before {
-  content: "";
-  position: absolute;
-  left: calc(-1 * var(--space-4) - 1px);
-  top: 50%;
-  width: var(--space-3);
-  border-top: 2px solid var(--line-strong);
-}
-
-.rmap__spine-node:hover {
-  background: var(--surface-0);
-}
-
-.rmap__spine-node:focus-visible {
-  outline: 2px solid var(--accent-focus);
-  outline-offset: 1px;
+.rmap__spine-node:hover .rmap__spine-name,
+.rmap__spine-node:hover .rmap__spine-answer {
+  color: var(--accent);
 }
 
 .rmap__spine-number {
-  color: var(--accent);
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-weight: 400;
+  color: var(--ink-3);
 }
 
 .rmap__spine-name {
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-weight: 500;
   color: var(--ink-1);
 }
 
@@ -204,207 +430,168 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ink-2);
   font-size: var(--text-small);
+  color: var(--ink-2);
 }
 
 .rmap__spine-counts {
-  display: inline-flex;
-  gap: var(--space-1);
+  display: flex;
+  gap: var(--space-3);
 }
 
 .rmap__count {
-  font-size: var(--text-micro);
-  padding: 0 0.45em;
-  border-radius: var(--radius-1);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
   white-space: nowrap;
 }
 
 .rmap__count--support {
   color: var(--admitted);
-  background: var(--admitted-soft);
 }
 
 .rmap__count--limit {
   color: var(--provisional);
-  background: var(--provisional-soft);
 }
 
 .rmap__count--unknown {
-  color: var(--refuted);
-  background: var(--refuted-soft);
+  color: var(--unknown);
 }
 
-/* ------------------------------------------------------------ 逐步推理 */
+/* --- the chain, step by step --------------------------------------------- */
 
 .rmap__chain {
   display: grid;
-  gap: var(--space-4);
 }
 
 .rmap__step {
-  scroll-margin-top: var(--space-7);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-4);
-  padding: var(--space-5);
-  background: var(--surface-0);
   display: grid;
-  gap: var(--space-4);
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  column-gap: var(--space-4);
+  padding: var(--space-6) 0;
+  border-bottom: 1px solid var(--rule);
+  scroll-margin-top: 6rem;
+}
+
+.rmap__step > * {
+  grid-column: 2;
 }
 
 .rmap__step-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
+  display: contents;
+}
+
+/* The step's numeral sits in the margin, large and light. */
+.rmap__step-number {
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  font-family: var(--serif);
+  font-size: 2.75rem;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--ink-4);
 }
 
 .rmap__step-head h4 {
-  margin: 0;
-  font-size: 1.0625rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.5;
+  grid-column: 2;
+  margin-bottom: var(--space-3);
+  font-family: var(--serif);
+  font-size: 1.375rem;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
-.rmap__step-number {
-  font-size: 1.125rem;
-  color: var(--accent);
-  font-weight: 600;
-}
-
-.rmap__step-answer p {
-  margin: 0 0 var(--space-2);
+.rmap__step-answer {
+  display: grid;
+  gap: var(--space-2);
+  max-width: var(--measure);
+  font-size: var(--text-body);
   line-height: 1.8;
   color: var(--ink-1);
-}
-
-.rmap__step-answer p:last-child {
-  margin-bottom: 0;
 }
 
 .rmap__step-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-}
-
-@media (max-width: 760px) {
-  .rmap__step-columns {
-    grid-template-columns: 1fr;
-  }
-
-  .rmap__spine-node {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .rmap__spine-answer,
-  .rmap__spine-counts {
-    grid-column: 2;
-  }
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--rule);
 }
 
 .rmap__step-column {
   display: grid;
-  gap: var(--space-3);
   align-content: start;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5) 0 0;
 }
 
-.rmap__group {
-  padding-left: var(--space-3);
-  border-left: 3px solid var(--line);
-}
-
-.rmap__group--support {
-  border-left-color: var(--admitted);
-}
-
-.rmap__group--limit {
-  border-left-color: var(--provisional);
-}
-
-.rmap__group--unknown {
-  border-left-color: var(--refuted);
-}
-
-.rmap__group h5 {
-  margin: 0 0 var(--space-1);
-  font-size: var(--text-small);
-  font-weight: 600;
-  color: var(--ink-2);
-}
-
-.rmap__group ul {
-  margin: 0;
-  padding-left: 1.1em;
-  display: grid;
-  gap: var(--space-1);
-  font-size: 0.9375rem;
-  line-height: 1.65;
-  color: var(--ink-1);
-}
-
-.rmap__none {
-  margin: 0;
-  font-size: var(--text-small);
-  color: var(--ink-4);
+.rmap__step-column + .rmap__step-column {
+  padding: var(--space-4) 0 0 var(--space-5);
+  border-left: 1px solid var(--rule);
 }
 
 .rmap__resolve {
-  margin: 0;
   display: flex;
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
   align-items: baseline;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-2);
-  background: var(--accent-soft);
-  line-height: 1.65;
-  font-size: 0.9375rem;
+  margin: var(--space-5) 0 0;
+  padding: var(--space-3) 0;
+  border-top: 1px dashed var(--line-strong);
+  border-bottom: 1px dashed var(--line-strong);
+  background: none;
+  font-size: var(--text-small);
+  line-height: 1.7;
+  color: var(--ink-1);
 }
 
-.rmap__resolve > span:first-child {
-  flex-shrink: 0;
-  font-size: var(--text-small);
-  font-weight: 600;
+.rmap__resolve span {
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
   color: var(--accent);
 }
 
-/* ------------------------------------------------------------ 溯源 chips */
+.rmap__resolve span::after {
+  content: " →";
+}
+
+/* --- provenance tags ------------------------------------------------------ */
 
 .rmap__refs {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.rmap__refs-label {
-  font-size: var(--text-micro);
-  color: var(--ink-3);
-  margin-right: var(--space-1);
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-4);
 }
 
 .rmap__chip {
+  padding: 0 0.4em;
+  border: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
   font-family: var(--mono);
-  font-size: var(--text-micro);
-  line-height: 1.6;
-  padding: 0 0.5em;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-1);
-  background: var(--surface-0);
+  font-size: var(--label-size);
+  font-weight: 500;
+  line-height: 1.7;
   color: var(--ink-2);
+}
+
+button.rmap__chip {
   cursor: pointer;
 }
 
 button.rmap__chip:hover,
 .rmap__chip--on {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--ink-1);
+  background: var(--ink-1);
+  color: var(--paper);
 }
 
 .rmap__chip--judgment,
 .rmap__chip--dissent {
   color: var(--ink-1);
-  font-weight: 600;
 }
 
 .rmap__chip--blindspot,
@@ -421,67 +608,98 @@ button.rmap__chip:hover,
   color: var(--admitted);
 }
 
+/* An opened tag shows the council's own words, set as a quotation. */
 .rmap__item-card {
   flex-basis: 100%;
   margin-top: var(--space-2);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  background: var(--surface-parchment);
+  border: 1px solid var(--rule);
+  background: var(--paper-raised);
 }
 
 .rmap__item-meta {
-  margin: 0 0 var(--space-2);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-  font-size: var(--text-micro);
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
   color: var(--ink-3);
 }
 
-.rmap__item-text .md-paragraph {
-  font-size: 0.875rem;
-  line-height: 1.7;
+.rmap__item-text {
+  font-size: var(--text-small);
+  line-height: 1.75;
+}
+
+.rmap__related {
+  margin-top: var(--space-3);
 }
 
 .rmap__related summary,
-.rmap__appendix > summary,
-.rmap__judgment summary {
+.rmap__appendix > summary {
   cursor: pointer;
-  font-size: var(--text-small);
+  list-style: none;
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  text-transform: uppercase;
   color: var(--ink-3);
+}
+
+.rmap__related summary::-webkit-details-marker,
+.rmap__appendix > summary::-webkit-details-marker {
+  display: none;
+}
+
+.rmap__related summary::before,
+.rmap__appendix > summary::before {
+  content: "▸ ";
+}
+
+.rmap__related[open] summary::before,
+.rmap__appendix[open] > summary::before {
+  content: "▾ ";
+}
+
+.rmap__related summary:hover,
+.rmap__appendix > summary:hover {
+  color: var(--ink-1);
 }
 
 .rmap__related ul {
   list-style: none;
   margin: var(--space-2) 0 0;
   padding: 0;
-  display: grid;
-  gap: var(--space-1);
+  border-top: 1px solid var(--rule-soft);
+}
+
+.rmap__related li {
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .rmap__related-row {
   width: 100%;
-  display: flex;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: auto 5.5em minmax(0, 1fr);
   align-items: baseline;
-  padding: var(--space-1) var(--space-2);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
   border: 0;
-  border-radius: var(--radius-1);
-  background: transparent;
-  font: inherit;
+  background: none;
   text-align: left;
   cursor: pointer;
 }
 
-.rmap__related-row:hover {
-  background: var(--surface-parchment);
+.rmap__related-row:hover .rmap__related-headline {
+  color: var(--accent);
 }
 
 .rmap__related-kind {
-  flex-shrink: 0;
-  font-size: var(--text-micro);
+  font-family: var(--mono);
+  font-size: var(--label-size);
   color: var(--ink-3);
 }
 
@@ -490,92 +708,23 @@ button.rmap__chip:hover,
   color: var(--ink-2);
 }
 
-/* ----------------------------------------------------- 分歧、下一步、局限 */
-
-.rmap__block {
-  border-top: 1px solid var(--line);
-  padding-top: var(--space-5);
-}
-
-/* ------------------------------------------------------------ 正反立场 */
-
-.rmap__positions-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: var(--space-4);
-}
-
-.rmap__position {
-  display: grid;
-  align-content: start;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  background: var(--surface-0);
-}
-
-.rmap__position-head {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.rmap__position-label {
-  justify-self: start;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  font-size: var(--text-micro);
-  letter-spacing: 0.04em;
-  color: var(--ink-2);
-}
-
-.rmap__position-head h4 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.6;
-  color: var(--ink-1);
-}
-
-.rmap__position-holders {
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  font-size: var(--text-small);
-  color: var(--ink-2);
-}
-
-.rmap__position-holders span {
-  color: var(--ink-3);
-}
-
-.rmap__position-reasoning {
-  margin: 0;
-  padding-left: 1.4em;
-  display: grid;
-  gap: var(--space-1);
-  font-size: var(--text-small);
-  line-height: 1.7;
-  color: var(--ink-1);
-}
+/* --- cruxes, next steps, limits ------------------------------------------ */
 
 .rmap__crux {
   display: grid;
   gap: var(--space-3);
-  padding: var(--space-4) 0;
-  border-bottom: 1px solid var(--line);
+  padding: var(--space-5) 0;
+  border-bottom: 1px solid var(--rule);
 }
 
-.rmap__crux:last-child {
-  border-bottom: 0;
+.rmap__crux:first-of-type {
+  border-top: 1px solid var(--rule);
 }
 
 .rmap__crux h4 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 500;
 }
 
 .rmap__positions {
@@ -588,107 +737,200 @@ button.rmap__chip:hover,
 
 .rmap__positions li {
   display: grid;
-  grid-template-columns: 9em minmax(0, 1fr);
-  gap: var(--space-3);
-  line-height: 1.65;
+  grid-template-columns: 10em minmax(0, 1fr);
+  gap: var(--space-4);
+  font-size: var(--text-small);
+  line-height: 1.7;
 }
 
 .rmap__holders {
-  font-size: var(--text-small);
-  font-weight: 600;
-  color: var(--ink-2);
+  font-weight: 500;
+  color: var(--ink-3);
 }
 
 .rmap__next {
+  list-style: none;
+  counter-reset: next;
   margin: 0;
-  padding-left: 1.4em;
-  display: grid;
-  gap: var(--space-3);
+  padding: 0;
+  border-top: 1px solid var(--rule);
 }
 
 .rmap__next li {
+  counter-increment: next;
   display: grid;
-  gap: var(--space-1);
-  line-height: 1.65;
+  grid-template-columns: 3rem minmax(0, 1fr);
+  row-gap: var(--space-1);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.rmap__next li::before {
+  content: counter(next);
+  grid-row: span 3;
+  font-family: var(--serif);
+  font-size: 1.75rem;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--ink-4);
 }
 
 .rmap__next-action {
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 500;
 }
 
 .rmap__next-why {
   font-size: var(--text-small);
-  color: var(--ink-3);
+  color: var(--ink-2);
 }
 
 .rmap__limits ul {
+  list-style: none;
   margin: 0;
-  padding-left: 1.2em;
+  padding: 0;
   display: grid;
-  gap: var(--space-1);
-  line-height: 1.65;
-  color: var(--ink-2);
+  gap: var(--space-2);
+  max-width: var(--measure);
 }
 
-/* ------------------------------------------------------------------ 附录 */
+.rmap__limits li {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  font-size: var(--text-small);
+  line-height: 1.7;
+}
+
+.rmap__limits li::before {
+  content: "—";
+  color: var(--ink-4);
+}
+
+/* --- appendix ------------------------------------------------------------- */
 
 .rmap__appendix {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-4);
-  padding: var(--space-4) var(--space-5);
-}
-
-.rmap__appendix[open] > summary {
-  margin-bottom: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 3px double var(--rule-heavy);
 }
 
 .rmap__appendix-block {
-  display: grid;
-  gap: var(--space-2);
-  margin-bottom: var(--space-5);
-}
-
-.rmap__appendix-block:last-child {
-  margin-bottom: 0;
+  margin-top: var(--space-5);
 }
 
 .rmap__appendix-block h4 {
-  margin: 0;
-  font-size: var(--text-small);
-  font-weight: 600;
-  color: var(--ink-2);
+  margin-bottom: var(--space-3);
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 500;
 }
 
 .rmap__appendix-block ul {
   margin: 0;
   padding-left: 1.2em;
   font-size: var(--text-small);
-  color: var(--ink-3);
-  line-height: 1.6;
+  color: var(--ink-2);
 }
 
 .rmap__judgment {
-  border-top: 1px solid var(--line);
-  padding: var(--space-2) 0;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.rmap__judgment:last-child {
+  border-bottom: 1px solid var(--rule-soft);
 }
 
 .rmap__judgment summary {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
   align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  cursor: pointer;
+  list-style: none;
 }
 
-.rmap__judgment[open] summary {
-  margin-bottom: var(--space-2);
+.rmap__judgment summary::-webkit-details-marker {
+  display: none;
 }
 
 .rmap__judgment-seat {
-  font-weight: 600;
-  color: var(--ink-1);
+  font-family: var(--serif);
+  font-weight: 500;
 }
 
 .rmap__judgment-headline {
   flex-basis: 100%;
+  font-size: var(--text-small);
   color: var(--ink-2);
+}
+
+.rmap__judgment .paper__md {
+  padding: 0 0 var(--space-4);
+  font-size: var(--text-small);
+}
+
+/* --- narrow screens ------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .rmap__answer-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .rmap__positions-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rmap__position,
+  .rmap__position--row-start {
+    padding: var(--space-4) 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+
+  .rmap__position:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .rmap__step {
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+  }
+
+  .rmap__step-number {
+    font-size: 1.75rem;
+  }
+
+  .rmap__step-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rmap__step-column + .rmap__step-column {
+    padding: var(--space-4) 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+
+  .rmap__spine-node {
+    grid-template-columns: 2rem minmax(0, 1fr);
+  }
+
+  .rmap__spine-answer,
+  .rmap__spine-counts {
+    grid-column: 2;
+  }
+
+  .rmap__verdict {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rmap__verdict .badge {
+    grid-row: auto;
+  }
+
+  .rmap__positions li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }

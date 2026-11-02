@@ -10,12 +10,16 @@
   }
 }
 
+/* A plotted figure, as in a paper: graph-paper ground, ink frame. */
 .radar__plot {
   width: 100%;
   height: auto;
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
+  background-color: var(--paper-raised);
+  background-image: linear-gradient(var(--rule-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rule-soft) 1px, transparent 1px);
+  background-size: 32px 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
 }
 
 .radar__axis {
@@ -47,22 +51,22 @@
 }
 
 .radar__point--admitted {
-  fill: color-mix(in srgb, var(--admitted) 65%, transparent);
+  fill: color-mix(in srgb, var(--admitted) 22%, transparent);
   stroke: var(--admitted);
 }
 
 .radar__point--provisional {
-  fill: color-mix(in srgb, var(--provisional) 65%, transparent);
+  fill: color-mix(in srgb, var(--provisional) 22%, transparent);
   stroke: var(--provisional);
 }
 
 .radar__point--refuted {
-  fill: color-mix(in srgb, var(--refuted) 55%, transparent);
+  fill: color-mix(in srgb, var(--refuted) 22%, transparent);
   stroke: var(--refuted);
 }
 
 .radar__point--unknown {
-  fill: color-mix(in srgb, var(--unknown) 55%, transparent);
+  fill: color-mix(in srgb, var(--unknown) 22%, transparent);
   stroke: var(--unknown);
 }
 
@@ -95,16 +99,18 @@
 
 .radar__inspector,
 .radar__unscored {
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  padding: var(--space-4);
+  background: none;
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  border-radius: 0;
+  padding: var(--space-3) 0 0;
 }
 
 .radar__inspector h3,
 .radar__unscored h3 {
   margin-bottom: var(--space-3);
-  color: var(--ink-2);
+  font-size: 1.125rem;
+  color: var(--ink-1);
 }
 
 .radar__inspector-head {
@@ -198,13 +204,12 @@
 
 .radar__consequence {
   margin-top: var(--space-3);
-  padding: var(--space-3);
-  background: color-mix(in srgb, var(--provisional) 12%, transparent);
-  border-left: 3px solid var(--provisional);
-  border-radius: var(--radius-2);
+  padding: var(--space-2) 0;
+  border-top: 1px dashed var(--line-strong);
+  border-bottom: 1px dashed var(--line-strong);
   font-size: var(--text-small);
   color: var(--ink-2);
-  line-height: 1.45;
+  line-height: 1.65;
 }
 
 .radar__consequence-label {

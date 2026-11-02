@@ -49,10 +49,10 @@
   font-weight: 600;
 }
 
-.paper__abstract {
-  background: var(--surface-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3, 12px);
+.paper__abstract {  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
   padding: var(--space-5, 20px) var(--space-6, 24px);
   margin-bottom: var(--space-4, 16px);
 }
@@ -182,9 +182,11 @@
   font-size: var(--text-small);
   line-height: 1.5;
   color: var(--ink-2);
-  background: color-mix(in srgb, var(--provisional) 8%, transparent);
-  border-left: 3px solid var(--provisional);
-  border-radius: var(--radius-2);
+  background: none;
+  border-top: 1px dashed var(--line-strong);
+  border-bottom: 1px dashed var(--line-strong);
+  padding-left: 0;
+  padding-right: 0;
 }
 
 /* 审查报告（round-7）：复述论文观点、列出不严谨/证据不足/改进建议。
@@ -210,10 +212,10 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  background: var(--surface-1);
-}
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: none;}
 
 .paper__review-claim-statement {
   font-size: var(--text-body);
@@ -239,10 +241,10 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  background: var(--surface-1);
-}
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: none;}
 
 .paper__review-issue {
   font-size: var(--text-body);
@@ -275,10 +277,10 @@
 
 .paper__standpoint {
   padding: var(--space-4);
-  border: 1px solid var(--app-hairline, var(--line));
-  border-radius: var(--radius-2);
-  background: var(--app-surface-2, var(--surface-1));
-}
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: none;}
 
 .paper__standpoint-seat {
   font-size: var(--text-small);

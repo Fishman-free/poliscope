@@ -587,25 +587,34 @@ export interface AdjudicationViewData {
   quarantined: AdjudicationItem[];
 }
 
-/** D1 cost/usage panel, aggregated server-side from model_calls/tool_calls. */
+/** D1 cost/usage panel, aggregated server-side from model_calls/tool_calls.
+ * Mirrors packages/models/usage.py::aggregate_task_usage exactly -- the panel
+ * used to read `error_count` / `budget.model_cost_usd`, which that function
+ * never returns, and showed "6 / undefined". */
 export interface UsageViewData {
   model: {
     calls: number;
     input_tokens: number;
     output_tokens: number;
-    cost_usd: string;
-    error_count: number;
-    by_purpose: Record<string, number>;
+    cost_usd: number;
+    latency_ms: number;
+    retries: number;
+    errors: number;
+    by_purpose: Record<string, Record<string, number>>;
   };
   tools: {
     calls: number;
-    error_count: number;
-    by_tool: Record<string, number>;
+    cost_usd: number;
+    latency_ms: number;
+    retries: number;
+    errors: number;
+    by_tool: Record<string, Record<string, number>>;
   };
   budget: {
-    wall_clock_minutes: number | null;
-    model_cost_usd: string | null;
+    model_cost_limit_usd: number | null;
+    model_cost_remaining_usd: number | null;
     tool_call_limit: number | null;
+    tool_calls_remaining: number | null;
     source_limit: number | null;
   } | null;
 }

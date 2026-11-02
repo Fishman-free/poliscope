@@ -1,80 +1,84 @@
-/* Live view: the running council's thinking path, real time.
-   Same tokens as everywhere else; the seat text wells are slightly deeper
-   so a stream of mono text reads as a live instrument readout, not a chat
-   window. New content enters with the shared fade-in-up, and a phase change
-   glows once on the pill that just became current. */
+/* 实时进展：一本正在记的实验记录簿。
+ *
+ * 八个阶段是一条由粗细线组成的进度带（做完的是墨线，当前的是蓝线，未到
+ * 的是浅线）；七位专家排成报纸分栏，每栏以一条墨线开头；正式产物（预承诺、
+ * 质询、最终复判）用小符号标出种类，而不是彩色边框。没有卡片、没有阴影。
+ */
 
 .live {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-6);
+  padding-top: var(--space-2);
 }
 
-/* Eight-phase progress rail. Done = quiet check; current = accent fill;
-   pending = dim. The current pill animates once on becoming current (a soft
-   halo fade, not a pulse -- the researcher reads state, not a beacon). */
+/* --- phase strip --------------------------------------------------------- */
+
 .live__phases {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  column-gap: var(--space-2);
+  row-gap: var(--space-3);
 }
 
 .live__phase {
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  font-size: var(--text-small);
-  color: var(--ink-3);
+  padding-top: var(--space-2);
+  border-top: 3px solid var(--rule);
+  font-size: var(--text-micro);
+  line-height: 1.4;
+  color: var(--ink-4);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: border-color var(--duration-slow) var(--ease-smooth),
+    color var(--duration-slow) var(--ease-smooth);
 }
 
 .live__phase--done {
-  color: var(--admitted);
-  border-color: color-mix(in srgb, var(--admitted) 40%, transparent);
-  background: var(--admitted-soft);
+  border-top-color: var(--ink-1);
+  color: var(--ink-2);
 }
 
 .live__phase--current {
-  color: var(--surface-0);
-  border-color: var(--accent);
-  background: var(--accent);
+  border-top-color: var(--accent);
+  color: var(--accent);
+  font-weight: 500;
   animation: phase-current-in var(--duration-slow) var(--ease-smooth);
 }
 
 @keyframes phase-current-in {
-  /* 合成属性淡入（box-shadow 光圈逐帧重绘，改为 opacity 表达同样的
-     「阶段刚切换」语义，走 GPU 合成路径）。 */
   from {
-    opacity: 0.55;
+    opacity: 0.5;
   }
   to {
     opacity: 1;
   }
 }
 
-/* Single full-width column (round-5 layout): the seat streams and the
-   literature cards now span the whole workspace, and the council action log
-   sits below them at full width instead of a cramped 340px side rail. */
-.live__grid {
+/* --- layout --------------------------------------------------------------- */
+
+.live__grid,
+.live__main {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-7);
   min-width: 0;
 }
+
+/* --- the seven columns ---------------------------------------------------- */
 
 .live__seats {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  /* 顶对齐：某张卡内容变高时，同行卡片保持顶部齐平，不再出现视觉错位 */
   align-items: start;
-  gap: var(--space-3);
+  column-gap: var(--space-6);
+  row-gap: var(--space-7);
 }
 
 .live__seat {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  background: var(--surface-0);
-  overflow: hidden;
+  border: 0;
+  border-top: 1px solid var(--rule-heavy);
+  background: none;
   animation: fade-in-up var(--duration-standard) var(--ease-standard);
 }
 
@@ -82,83 +86,212 @@
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  row-gap: 2px;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface-1);
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2) 0 var(--space-2);
+  border-bottom: 1px solid var(--rule);
+  background: none;
+}
+
+.live__seat-number {
+  flex: none;
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
 }
 
 .live__seat-name {
   white-space: nowrap;
-  font-size: var(--text-small);
-  font-weight: 550;
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  font-weight: 500;
   color: var(--ink-1);
 }
 
-/* 座位编号徽标（round-19）：按「首次输出」定序后的 1..7 位次。不是固定
- * 席位 ID，而是本次任务中科学家真正开始输出的先后 —— 让顺序一目了然。 */
-.live__seat-number {
-  flex: none;
-  align-self: center;
-  min-width: 1.1rem;
-  height: 1.1rem;
-  padding: 0 0.2rem;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--ink-3);
-  font-size: var(--text-micro);
-  font-weight: 600;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
 .live__seat-phase {
-  font-size: var(--text-micro);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
   color: var(--ink-4);
 }
 
-.live__seat-running {
+.live__seat-running,
+.live__seat-idle {
   margin-left: auto;
-  font-size: var(--text-micro);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
+}
+
+.live__seat-running {
   color: var(--accent);
 }
 
-/* 模型调用长时间无进展的警示：60s 起橙色（提示可能卡住），300s 起
- * 红色（越过所有正常超时，watchdog 即将强制中断）。 */
+.live__seat-running::before {
+  content: "";
+  display: inline-block;
+  width: 0.45em;
+  height: 0.45em;
+  margin-right: 0.45em;
+  background: currentColor;
+  animation: live-blink 1.2s steps(2, start) infinite;
+}
+
 .live__seat-running--slow {
-  color: var(--warn, #b7791f);
+  color: var(--provisional);
 }
 
 .live__seat-running--critical {
-  color: var(--danger, #b3403a);
+  color: var(--refuted);
   font-weight: 600;
 }
 
-/* 缺席（round-15）：模型调用失败或被研究者停止后，该席位本段思考关闭
-   （seat_absent 事件）—— 警示色提示「这一轮没有产出」，与「已完成」的
-   中性灰区分开；具体原因悬停在 title 上。 */
 .live__seat-absent {
-  color: var(--provisional, #b7791f);
+  color: var(--provisional);
   font-weight: 500;
 }
 
 .live__seat-idle {
+  color: var(--ink-3);
+}
+
+.live__seat-pill {
   margin-left: auto;
+}
+
+@keyframes live-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* The live readout: the model's running thought, set small and quiet. */
+.live__seat-stream {
+  margin: var(--space-3) 0 0;
+  max-height: 12rem;
+  overflow-y: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.live__seat-stream + .live__seat-stream {
+  padding-top: var(--space-2);
+  border-top: 1px dotted var(--line-strong);
+  opacity: 0.92;
+}
+
+.live__seat-slice-phase {
+  display: block;
+  margin-bottom: 2px;
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
+  color: var(--ink-4);
+}
+
+.live__seat-stream-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: var(--text-micro);
+  line-height: 1.65;
+  color: var(--ink-2);
+}
+
+.live__seat-stream--empty {
+  margin-top: var(--space-3);
   font-size: var(--text-micro);
   color: var(--ink-3);
 }
 
-/* 排队卡片：任务 QUEUED 且尚无过程事件时，说明在等什么。 */
+/* Formal records: the kind is a glyph and a tag in its own colour. */
+.live__seat-record {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) 0 0;
+  border: 0;
+  border-top: 1px solid var(--rule-soft);
+  background: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.live__seat-record-tag {
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+
+.live__seat-record-tag::before {
+  margin-right: 0.5em;
+}
+
+.live__seat-record--pre .live__seat-record-tag {
+  color: var(--admitted);
+}
+
+.live__seat-record--pre .live__seat-record-tag::before {
+  content: "○";
+}
+
+.live__seat-record--chal .live__seat-record-tag {
+  color: var(--refuted);
+}
+
+.live__seat-record--chal .live__seat-record-tag::before {
+  content: "×";
+}
+
+.live__seat-record--final .live__seat-record-tag {
+  color: var(--accent);
+}
+
+.live__seat-record--final .live__seat-record-tag::before {
+  content: "■";
+}
+
+.live__seat-record-text {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: 1.65;
+  color: var(--ink-1);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.live__seat--durable,
+.live__seat--durable .live__seat-head {
+  background: none;
+}
+
+.live__seat-durable {
+  margin: 0;
+  padding: var(--space-2) 0;
+  list-style: none;
+}
+
+.live__seat-durable li {
+  font-size: var(--text-micro);
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+
+.live__seat-durable li + li {
+  margin-top: 2px;
+}
+
+/* --- queue and checkpoint notes ------------------------------------------ */
+
 .live__queued {
-  max-width: 36rem;
-  padding: var(--space-5);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  background: var(--surface-0);
+  max-width: var(--measure);
+  padding: var(--space-4) 0;
+  border-top: 2px solid var(--rule-heavy);
+  border-bottom: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -166,156 +299,131 @@
 
 .live__queued-badge {
   align-self: flex-start;
-  font-size: var(--text-micro);
-  font-weight: 500;
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
   color: var(--provisional);
-  background: var(--provisional-soft);
-  border: 1px solid color-mix(in srgb, var(--provisional) 40%, transparent);
-  border-radius: var(--radius-pill);
-  padding: 0.15rem 0.75rem;
+}
+
+.live__queued-badge::before {
+  content: "◷ ";
 }
 
 .live__queued-title {
-  font-size: var(--text-body);
-  font-weight: 550;
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 500;
   color: var(--ink-1);
 }
 
 .live__queued-note {
   font-size: var(--text-small);
-  color: var(--ink-3);
-  line-height: 1.6;
-}
-
-/* 干预窗口说明：运行中（尚无事件时）提醒研究者检查点机制的位置与边界。 */
-.live__checkpoint-note {
-  font-size: var(--text-small);
-  color: var(--ink-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-2);
-  line-height: 1.6;
-}
-
-/* 主列：席位思考流（上）→ 检索与文献（中）→ 议会动作（下），全部全宽。 */
-.live__main {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-width: 0;
-}
-
-/* Council action log: precommitments, challenges, final judgments --
-   the structured output of the council, alongside the raw token stream. */
-.live__actions {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  background: var(--surface-0);
-  padding: var(--space-4);
-}
-
-.live__actions h3 {
-  margin-bottom: var(--space-3);
-  font-size: var(--text-small);
   color: var(--ink-2);
+  line-height: 1.7;
+}
+
+.live__checkpoint-note {
+  max-width: var(--measure);
+  margin: 0;
+  padding: var(--space-3) 0;
+  border-top: 1px dashed var(--line-strong);
+  border-bottom: 1px dashed var(--line-strong);
+  font-size: var(--text-small);
+  line-height: 1.7;
+  color: var(--ink-2);
+}
+
+/* --- council action log: a ruled register --------------------------------- */
+
+.live__actions,
+.live__tools {
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  background: none;
+  padding: var(--space-3) 0 0;
+}
+
+.live__actions h3,
+.live__tools h3 {
+  margin-bottom: var(--space-3);
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: var(--ink-1);
 }
 
 .live__action-log {
   margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  border-top: 1px solid var(--rule);
 }
 
 .live__action {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--space-1) var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
+  grid-template-columns: 7rem minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-3) 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule-soft);
   font-size: var(--text-small);
   animation: fade-in-up var(--duration-standard) var(--ease-standard);
 }
 
 .live__action-kind {
-  font-size: var(--text-micro);
+  font-family: var(--mono);
+  font-size: var(--label-size);
   font-weight: 500;
+  letter-spacing: 0.06em;
   white-space: nowrap;
-  padding: 0.1em 0.5em;
-  border-radius: var(--radius-pill);
+  padding: 0;
+  background: none;
   align-self: start;
+  line-height: 1.9;
 }
 
 .live__action-kind--admitted {
   color: var(--admitted);
-  background: var(--admitted-soft);
 }
 
 .live__action-kind--provisional {
   color: var(--provisional);
-  background: var(--provisional-soft);
 }
 
 .live__action-kind--refuted {
   color: var(--refuted);
-  background: var(--refuted-soft);
 }
 
 .live__action-kind--unknown {
   color: var(--unknown);
-  background: var(--unknown-soft);
 }
 
 .live__action-body {
-  color: var(--ink-2);
-  line-height: 1.5;
+  color: var(--ink-1);
+  line-height: 1.7;
   word-break: break-word;
-  /* 议会动作正文（预承诺/质询/复判的 statement、judgment 等长文本）带 \n，
-     默认折叠成空格会成一坨；pre-line 保留换行（与思考流/结构化产物一致）。 */
   white-space: pre-line;
 }
 
-/* 检索与文献：主界面下方，一行多个资料卡片，每个卡片是一次检索动作
-   （查询 + 命中结果 + 跳转链接），由 tool_call/tool_result 事件配对而成。 */
-.live__tools {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  background: var(--surface-0);
-  padding: var(--space-4);
-}
-
-.live__tools h3 {
-  margin-bottom: var(--space-3);
-  font-size: var(--text-small);
-  color: var(--ink-2);
-}
+/* --- searches and literature: an index of retrievals ---------------------- */
 
 .live__tool-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  column-gap: var(--space-5);
+  row-gap: var(--space-4);
 }
 
 .live__tool-card {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  background: var(--surface-1);
+  padding: var(--space-3) 0 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  background: none;
   min-width: 0;
   animation: fade-in-up var(--duration-standard) var(--ease-standard);
-  transition:
-    border-color var(--duration-fast) var(--ease-standard),
-    transform var(--duration-fast) var(--ease-standard);
-}
-
-.live__tool-card:hover {
-  border-color: var(--line-strong);
 }
 
 .live__tool-card-head {
@@ -325,11 +433,19 @@
   min-width: 0;
 }
 
-.live__tool-kind {
-  flex: none;
-  font-size: var(--text-micro);
+.live__tool-kind,
+.live__tool-seats,
+.live__tool-citations,
+.live__tool-folded {
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
   color: var(--ink-4);
   white-space: nowrap;
+}
+
+.live__tool-kind {
+  flex: none;
 }
 
 .live__tool-query {
@@ -344,12 +460,8 @@
 .live__tool-seats {
   flex: none;
   margin-left: auto;
-  font-size: var(--text-micro);
-  color: var(--ink-4);
 }
 
-/* 折叠的科学家徽标（round-9）：多个席位共享同一动作时显示「第一个 + N」，
-   完整名单经 HoverPopover（可停留、可复制）展示，不再用不可复制的 ::after。 */
 .live__tool-seats--cluster {
   cursor: default;
   border-bottom: 1px dotted var(--ink-4);
@@ -369,13 +481,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line);
 }
 
 .live__tool-title {
+  font-family: var(--serif);
   color: var(--ink-1);
-  font-size: var(--text-small);
+  font-size: var(--text-medium);
   line-height: 1.45;
   word-break: break-word;
   display: -webkit-box;
@@ -391,30 +502,19 @@
 .live__tool-meta {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-}
-
-.live__tool-citations {
-  font-size: var(--text-micro);
-  color: var(--ink-4);
-  white-space: nowrap;
+  gap: var(--space-3);
 }
 
 .live__tool-link {
   align-self: flex-start;
-  font-size: var(--text-micro);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
   color: var(--accent);
-  text-decoration: none;
-}
-
-.live__tool-link:hover {
-  text-decoration: underline;
 }
 
 .live__tool-empty {
   margin: 0;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--line);
   font-size: var(--text-small);
   color: var(--ink-3);
 }
@@ -423,8 +523,6 @@
   color: var(--refuted);
 }
 
-/* 未命中原因行：压缩文本与可点击链接并排，一行内放下；完整原因在
-   title 里（悬停可审计），卡片永不被整段报错撑破。 */
 .live__tool-miss {
   display: inline-flex;
   align-items: baseline;
@@ -441,7 +539,6 @@
   flex: none;
 }
 
-/* 检索等待态：把服务端的 45s/600s 硬上限变成可见的倒计时（卡死感知）。 */
 .live__tool-empty--warn {
   color: var(--provisional);
   font-weight: 500;
@@ -452,131 +549,14 @@
   font-weight: 600;
 }
 
-/* Round-12 恢复：席位流式思考过程。过程数据，非正式证据。 */
-.live__seat-stream {
-  margin-top: var(--space-2);
-  max-height: 12rem;
-  overflow-y: auto;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--app-hairline, var(--line));
-  border-radius: var(--radius-2);
-  background: var(--app-surface, var(--surface-0));
-}
-
-.live__seat-stream-text {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: var(--text-small);
-  line-height: 1.5;
-  color: var(--app-ink-2, var(--ink-2));
-}
-
-.live__seat-stream--empty {
-  margin-top: var(--space-2);
-  font-size: var(--text-small);
-  color: var(--app-ink-3, var(--ink-3));
-}
-
-/* Durable fallback seat cards (checkpoint resume / replay tail gap): the
-   seven scientists must never visually vanish when the process stream has
-   no live slice yet. Slightly muted to read as standing state, not live
-   deliberation. */
-.live__seat--durable {
-  background: var(--surface-0);
-}
-
-.live__seat--durable .live__seat-head {
-  background: var(--surface-0);
-}
-
-.live__seat-durable {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  list-style: none;
-}
-
-.live__seat-durable li {
-  font-size: var(--text-micro);
-  line-height: 1.5;
-  color: var(--ink-3);
-}
-
-.live__seat-durable li + li {
-  margin-top: 2px;
-}
-
-/* round-18：分阶段切片标签 + 结构化产物块（预承诺/质询/最终复判），
-   让科学家的正式输出在卡片内全程留痕、与流式思考区分层级。 */
-.live__seat-slice-phase {
-  display: block;
-  margin-bottom: 4px;
-  font-size: var(--text-micro);
-  color: var(--ink-4);
-  letter-spacing: 0.02em;
-}
-
-.live__seat-stream + .live__seat-stream {
-  border-style: dashed;
-  opacity: 0.92;
-}
-
-.live__seat-record {
-  margin: var(--space-2) var(--space-3) 0;
-  padding: var(--space-2);
-  border-radius: var(--radius-2);
-  border: 1px solid var(--app-hairline, var(--line));
-  background: var(--surface-1);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.live__seat-record--pre {
-  border-left: 3px solid var(--admitted, #2f7d4f);
-}
-
-.live__seat-record--chal {
-  border-left: 3px solid var(--danger, #b3403a);
-}
-
-.live__seat-record--final {
-  border-left: 3px solid var(--accent, #345995);
-}
-
-.live__seat-record-tag {
-  font-size: var(--text-micro);
-  font-weight: 600;
-  color: var(--ink-3);
-}
-
-.live__seat-record-text {
-  margin: 0;
-  font-size: var(--text-small);
-  line-height: 1.55;
-  color: var(--app-ink-2, var(--ink-2));
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* 检索卡折叠提示（超过渲染上限的更早检索仍可在审计轨迹查看）。 */
 .live__tool-folded {
   margin: 0 0 var(--space-2);
-  font-size: var(--text-micro);
-  color: var(--ink-4);
 }
 
-/* 可停留、可复制的悬停弹窗（替代原生 title）。触发元素是内联 flex 项；
-   弹窗本体经 portal 固定定位到 body —— 正文可选中复制，鼠标移入不关闭。
-   动画：淡入 + 轻微上移，走 --ease-smooth / --duration-standard 令牌。 */
+/* --- copyable hover note --------------------------------------------------- */
+
 .hover-popover {
   display: inline-flex;
-}
-
-/* 席位卡的缺席 pill：原生 margin-left:auto 在 pill 内，包一层后由外层
-   承接这个「推到最右」的 flex 行为。 */
-.live__seat-pill {
-  margin-left: auto;
 }
 
 .hover-popover__card {
@@ -586,17 +566,16 @@
   max-height: 16rem;
   overflow: auto;
   padding: var(--space-2) var(--space-3);
-  background: var(--surface-0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  box-shadow: var(--shadow-2);
+  background: var(--paper-raised);
+  border: 0;
+  box-shadow: var(--shadow-float);
   font-size: var(--text-micro);
-  line-height: 1.5;
+  line-height: 1.6;
   color: var(--ink-2);
   white-space: pre-wrap;
   word-break: break-word;
   opacity: 0;
-  transform: translateY(-4px) scale(0.98);
+  transform: translateY(-4px);
   visibility: hidden;
   pointer-events: none;
   transition:
@@ -619,27 +598,21 @@
 @media (prefers-reduced-motion: reduce) {
   .hover-popover__card {
     transform: none;
-    transition:
-      opacity var(--duration-fast) var(--ease-smooth),
-      visibility 0s linear var(--duration-fast);
   }
 }
 
-/* 结论整合：七席终审之后、最终结论出现之前的那一步。以前这里一片静默。
-   运行中只用一条左边线标出状态，不加动画（CLAUDE.md 11：无无意义动画）。 */
+/* --- conclusion being written ---------------------------------------------
+ * The synthesis is streamed: while it runs the reader sees the one-line
+ * answer appear as the model writes it, and a faint tail of its reasoning. */
 .live__synthesis {
   display: grid;
-  gap: var(--space-2);
-  padding: var(--space-4) var(--space-5);
-  margin-bottom: var(--space-4);
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--admitted);
-  border-radius: var(--radius-3);
-  background: var(--surface-0);
-}
-
-.live__synthesis--running {
-  border-left-color: var(--accent);
+  gap: var(--space-3);
+  padding: var(--space-3) 0 var(--space-4);
+  margin: 0;
+  border: 0;
+  border-top: 3px double var(--rule-heavy);
+  border-bottom: 1px solid var(--rule);
+  background: none;
 }
 
 .live__synthesis-head {
@@ -650,20 +623,73 @@
 }
 
 .live__synthesis-title {
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 1.375rem;
+  font-weight: 500;
   color: var(--ink-1);
 }
 
 .live__synthesis-time {
-  font-size: var(--text-micro);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
   color: var(--ink-3);
+}
+
+.live__synthesis--running .live__synthesis-time {
+  color: var(--accent);
 }
 
 .live__synthesis-note {
   margin: 0;
+  max-width: var(--measure);
   font-size: var(--text-small);
-  line-height: 1.65;
+  line-height: 1.7;
   color: var(--ink-2);
+}
+
+.live__synthesis-draft {
+  margin: 0;
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--rule-soft);
+}
+
+.live__synthesis-draft-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  color: var(--accent);
+}
+
+.live__synthesis-draft p {
+  max-width: 44em;
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  line-height: 1.75;
+  color: var(--ink-1);
+}
+
+.live__caret {
+  display: inline-block;
+  width: 0.08em;
+  height: 1.05em;
+  margin-left: 0.1em;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: live-blink 1s steps(2, start) infinite;
+}
+
+.live__synthesis-thinking {
+  max-height: 7.5rem;
+  overflow: hidden;
+  font-size: var(--text-micro);
+  line-height: 1.65;
+  color: var(--ink-3);
+  white-space: pre-wrap;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 45%);
+  mask-image: linear-gradient(to bottom, transparent, #000 45%);
 }
 
 .live__synthesis .button {

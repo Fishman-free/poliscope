@@ -28,10 +28,10 @@
   color: var(--ink-3, #6e6e73);
 }
 
-.shared__card {
-  background: var(--surface-parchment, #f5f5f7);
-  border: 1px solid var(--line, rgba(0, 0, 0, 0.09));
-  border-radius: var(--radius-3, 16px);
+.shared__card {  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
   padding: 20px;
   display: flex;
   flex-direction: column;
@@ -55,9 +55,10 @@
   margin: 0;
   font-size: 12.5px;
   line-height: 1.6;
-  color: var(--ink-3, #6e6e73);
-  border-left: 3px solid var(--provisional, #9a6700);
-  padding-left: 10px;
+  color: var(--ink-3);
+  padding: var(--space-2) 0;
+  border-top: 1px dashed var(--line-strong);
+  border-bottom: 1px dashed var(--line-strong);
 }
 
 .shared section h2 {

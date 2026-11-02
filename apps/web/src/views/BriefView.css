@@ -1,23 +1,37 @@
 .brief {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-7);
+  padding-top: var(--space-4);
 }
 
+/* The standing notice, set like the small print under a journal's masthead:
+ * between rules, no fill, so it is read rather than skipped as a banner. */
 .brief__safety {
-  padding: var(--space-4) var(--space-5);
-  border: 1px solid color-mix(in srgb, var(--provisional) 35%, transparent);
-  background: var(--provisional-soft);
-  border-radius: var(--radius-3);
-  color: var(--ink-1);
+  display: grid;
+  grid-template-columns: 9rem minmax(0, 1fr);
+  column-gap: var(--space-5);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--rule-heavy);
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-2);
   font-size: var(--text-small);
-  line-height: 1.5;
+  line-height: 1.7;
 }
 
 .brief__safety strong {
-  display: block;
-  margin-bottom: var(--space-1);
+  grid-row: span 2;
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  font-weight: 500;
+  letter-spacing: var(--label-track);
   color: var(--provisional);
+}
+
+@media (max-width: 700px) {
+  .brief__safety {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Two equal columns. Equal, not 2:1 -- the layout is the claim that
@@ -36,25 +50,26 @@
 }
 
 .brief__column h3 {
-  margin-bottom: var(--space-2);
-  color: var(--ink-2);
+  margin-bottom: var(--space-3);
+  font-size: 1.125rem;
+  color: var(--ink-1);
 }
 
 .brief__column h3:not(:first-child) {
   margin-top: var(--space-5);
 }
 
-/* A left rule, not a coloured box: the limitations must read as part of the
- * same argument, not as a warning banner people learn to skip. */
+/* A column rule between two columns of equal weight (a page, not a card):
+ * the limitations read as the facing half of the same argument. */
 .brief__column--limits {
-  border-left: 2px solid var(--line-strong);
+  border-left: 1px solid var(--rule);
   padding-left: var(--space-5);
 }
 
 @media (max-width: 900px) {
   .brief__column--limits {
     border-left: none;
-    border-top: 2px solid var(--line-strong);
+    border-top: 1px solid var(--rule);
     padding-left: 0;
     padding-top: var(--space-4);
   }
@@ -85,17 +100,17 @@
 }
 
 .brief__limits li::before {
-  content: "";
+  content: "⊥";
   position: absolute;
   left: 0;
-  top: 0.62em;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--provisional);
+  font-family: var(--mono);
+  font-size: 0.8em;
+  color: var(--provisional);
 }
 
 .brief__claim-statement {
+  font-family: var(--serif);
+  font-size: 1.0625rem;
   font-weight: 500;
 }
 
@@ -116,22 +131,34 @@
   margin: 0;
 }
 
+/* Figures stand in a ruled row, each with a hairline column rule. */
 .brief__metrics {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: var(--space-5);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0;
+}
+
+.brief__metrics > * {
+  padding: 0 var(--space-4);
+  border-left: 1px solid var(--rule);
+}
+
+.brief__metrics > *:first-child {
+  padding-left: 0;
+  border-left: 0;
 }
 
 .brief__grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: var(--space-4);
+  gap: var(--space-6);
 }
 
 .brief__ai-notice {
-  font-size: var(--text-small);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--rule);
+  font-size: var(--text-micro);
   color: var(--ink-3);
-  padding: var(--space-3) var(--space-1);
 }
 
 /* 按钮基类已上移到 base.css（全站共享的语言）；本文件只保留 Brief 专属覆盖。 */

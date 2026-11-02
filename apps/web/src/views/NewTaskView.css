@@ -1,32 +1,32 @@
 .newtask__form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 
-/* 模式切换（round-7）：Apple 风格 segmented pill。选中态用唯一交互色
-   Action Blue，未选中为透明描边；pill 全圆角与全站按钮语法一致。 */
+/* 模式切换：两个词，当前的那个下面压一道墨线 —— 与主页切换同一语法。 */
 .newtask__mode {
   display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  margin-bottom: var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-pill);
-  background: var(--surface-1);
+  gap: var(--space-5);
+  padding: 0;
+  margin-bottom: var(--space-1);
+  border: 0;
+  background: none;
 }
 
 .newtask__mode-pill {
-  padding: 6px 18px;
+  padding: var(--space-1) 0;
   border: none;
-  border-radius: var(--radius-pill);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--ink-3);
   font: inherit;
-  font-size: var(--text-small);
+  font-family: var(--serif);
+  font-size: 1.0625rem;
   cursor: pointer;
   transition:
-    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
     color var(--duration-fast) var(--ease-standard);
 }
 
@@ -40,43 +40,77 @@
 }
 
 .newtask__mode-pill--active {
-  background: var(--accent);
-  color: #ffffff;
+  border-bottom-color: var(--ink-1);
+  color: var(--ink-1);
 }
 
 .newtask__mode-pill--active:hover:not(:disabled) {
-  color: #ffffff;
+  color: var(--ink-1);
 }
 
 .newtask__label {
-  font-size: var(--text-small);
-  color: var(--ink-2);
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  color: var(--ink-3);
 }
 
+/* The question is written on the page, not into a box: serif, large, on a
+ * heavy rule -- the one place the researcher writes the argument's subject. */
 .newtask__textarea {
   width: 100%;
-  padding: var(--space-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-2);
-  background: var(--surface-0);
+  padding: var(--space-2) 0 var(--space-3);
+  border: 0;
+  border-bottom: 2px solid var(--ink-1);
+  border-radius: 0;
+  background: transparent;
   color: var(--ink-1);
   font: inherit;
-  font-size: var(--text-body);
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  line-height: 1.5;
   resize: vertical;
 }
 
+.newtask__textarea:focus-visible {
+  box-shadow: none;
+  border-bottom-color: var(--accent);
+}
+
+.newtask__textarea::placeholder {
+  color: var(--ink-4);
+}
+
 .newtask__advanced {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  padding: var(--space-3);
-  background: var(--surface-1);
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  padding: var(--space-3) 0;
+  background: none;
 }
 
 .newtask__advanced summary {
   cursor: pointer;
+  list-style: none;
   font-size: var(--text-small);
   color: var(--ink-2);
   transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.newtask__advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.newtask__advanced summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1.25em;
+  color: var(--ink-3);
+  transition: transform var(--duration-standard) var(--ease-smooth);
+}
+
+.newtask__advanced[open] > summary::before {
+  transform: rotate(90deg);
 }
 
 .newtask__advanced summary:hover {
@@ -300,24 +334,29 @@
   gap: var(--space-2);
 }
 
+.newtask__claims {
+  border-top: 1px solid var(--rule-heavy);
+}
+
 .newtask__claim {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-  background: var(--surface-1);
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  background: none;
 }
 
 .newtask__claim-row {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
-  padding: var(--space-3);
-  border-radius: var(--radius-2);
+  padding: var(--space-3) 0;
+  border-radius: 0;
   cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
 .newtask__claim-row:hover {
-  background: var(--surface-2);
+  background: var(--paper-raised);
 }
 
 .newtask__claim-row input {
@@ -332,7 +371,8 @@
 }
 
 .newtask__claim-statement {
-  font-size: var(--text-body);
+  font-family: var(--serif);
+  font-size: 1.0625rem;
   color: var(--ink-1);
 }
 

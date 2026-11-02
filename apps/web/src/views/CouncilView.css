@@ -12,10 +12,10 @@
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-4);
-  background: var(--surface-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-}
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;}
 
 .council__seat-head {
   display: flex;
@@ -192,10 +192,10 @@
 .council__stance {
   margin-bottom: var(--space-5);
   padding: var(--space-4);
-  background: var(--surface-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-}
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;}
 
 .council__stance-note {
   font-size: var(--text-small);
@@ -218,10 +218,10 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-2);
-}
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;}
 
 .council__stance-head {
   display: flex;
@@ -266,10 +266,10 @@
 .council__consensus {
   margin-bottom: var(--space-5);
   padding: var(--space-4);
-  background: var(--surface-1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-}
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;}
 
 .council__consensus-text {
   line-height: 1.65;
@@ -315,11 +315,10 @@
 }
 
 .council__reasoning,
-.council__bounty {
-  border: 1px solid var(--app-hairline, var(--line));
-  border-radius: var(--radius-2);
-  background: var(--app-surface, var(--surface-0));
-}
+.council__bounty {  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: none;}
 
 .council__reasoning + .council__reasoning,
 .council__bounty + .council__bounty {
@@ -355,4 +354,157 @@
   word-break: break-word;
   font-size: var(--text-small);
   line-height: 1.5;
+}
+
+/* --- Dossier layout (overrides above) --------------------------------------
+ * Seats are columns opened by an ink rule, not cards; the per-seat timeline
+ * is a register of phase headings and entries, not a rail down the left; the
+ * stance summary and the consensus are sections of the page. */
+.council__grid,
+.council__stance-grid {
+  column-gap: var(--space-6);
+  row-gap: var(--space-6);
+}
+
+.council__seat,
+.council__stance-card {
+  padding: var(--space-3) 0 0;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule-heavy);
+  border-radius: 0;
+}
+
+.council__seat-name,
+.council__stance-head strong,
+.council__stance-head > span:first-child {
+  font-family: var(--serif);
+  font-size: 1.125rem;
+  font-weight: 500;
+}
+
+.council__block h4,
+.council__consensus h5 {
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  font-weight: 500;
+  letter-spacing: var(--label-track);
+}
+
+.council__text,
+.council__stance-text,
+.council__consensus-text {
+  color: var(--ink-1);
+  line-height: 1.7;
+}
+
+.council__stance-text--missing {
+  font-style: normal;
+}
+
+.council__stance,
+.council__consensus {
+  margin-bottom: var(--space-7);
+  padding: var(--space-3) 0 0;
+  background: none;
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  border-radius: 0;
+}
+
+.council__stance h3,
+.council__consensus h3,
+.council__stance > h4,
+.council__consensus > h4 {
+  font-family: var(--serif);
+  font-size: 1.375rem;
+  font-weight: 500;
+}
+
+.council__stance-meta dd {
+  font-family: var(--mono);
+}
+
+/* Timeline as a register: the phase is a mono heading followed by a rule;
+ * each entry hangs from a small mark instead of a vertical rail. */
+.council__tl-phase {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: var(--label-track);
+  color: var(--ink-3);
+}
+
+.council__tl-phase::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--rule);
+}
+
+.council__tl-items {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.council__tl-item {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  column-gap: var(--space-1);
+}
+
+.council__tl-item::before {
+  content: "·";
+  grid-row: span 3;
+  color: var(--ink-4);
+  font-weight: 700;
+}
+
+.council__tl-item > * {
+  grid-column: 2;
+}
+
+.council__tl-item--final {
+  border-top: 0;
+}
+
+.council__tl-item--final::before {
+  content: "■";
+  font-size: 0.6em;
+  line-height: 2.4;
+  color: var(--accent);
+}
+
+.council__unavailable {
+  border-top: 1px dashed var(--line-strong);
+}
+
+.council__reasoning,
+.council__bounty {
+  border: 0;
+  border-top: 1px dotted var(--line-strong);
+  border-radius: 0;
+  background: none;
+}
+
+.council__reasoning summary,
+.council__bounty summary {
+  padding: var(--space-2) 0;
+  min-height: 0;
+  font-family: var(--mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.04em;
+}
+
+.council__reasoning-text {
+  padding: var(--space-2) 0;
+  border-top: 0;
+  font-size: var(--text-micro);
+  color: var(--ink-2);
 }

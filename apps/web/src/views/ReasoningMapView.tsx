@@ -16,7 +16,7 @@
  * 所以整合之后仍可审计、异议不会因为被「总结」而消失（CLAUDE.md 4、5.3）。
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 
 import type {
   FinalPaper,
@@ -71,7 +71,8 @@ const DIMENSION_SHORT: Record<string, string> = {
   mechanism: "机制",
 };
 
-const STEP_NUMERALS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
+/** 推理链的序号用罗马数字：它是一条论证的章节，不是待办清单。 */
+const STEP_NUMERALS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
 
 function seatName(seat: string | null): string {
   if (!seat) return "";
@@ -279,12 +280,19 @@ function StepCard({
 function PositionCard({
   position,
   items,
+  firstInRow,
 }: {
   position: MapPosition;
   items: Map<string, MapItem>;
+  firstInRow: boolean;
 }) {
   return (
-    <article className="rmap__position">
+    <article
+      className={
+        `rmap__position rmap__position--${position.stance}` +
+        (firstInRow ? " rmap__position--row-start" : "")
+      }
+    >
       <header className="rmap__position-head">
         <span className="rmap__position-label">{position.label}</span>
         <h4>{position.thesis}</h4>
@@ -330,9 +338,17 @@ function PositionsSection({
               "先把各方的论证分别讲完整：每一方的论点、推理、依据与盲点并排列出，不按持有人数排序；下方的逐步推理再权衡各方。",
             )}
       </p>
-      <div className="rmap__positions-grid">
+      <div
+        className="rmap__positions-grid"
+        style={{ "--cols": Math.min(positions.length, 3) } as CSSProperties}
+      >
         {positions.map((position, index) => (
-          <PositionCard key={`${position.stance}-${index}`} position={position} items={items} />
+          <PositionCard
+            key={`${position.stance}-${index}`}
+            position={position}
+            items={items}
+            firstInRow={index % Math.min(positions.length, 3) === 0}
+          />
         ))}
       </div>
     </section>

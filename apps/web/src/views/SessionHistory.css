@@ -51,11 +51,12 @@
   gap: var(--space-2);
   padding: var(--space-3);
   overflow-y: auto;
-  background: var(--chrome-bg, color-mix(in srgb, var(--surface-0) 92%, transparent));
-  backdrop-filter: var(--chrome-blur, blur(24px) saturate(180%));
-  border: 1px solid var(--line);
-  border-radius: var(--radius-3);
-  box-shadow: var(--shadow-3);
+  /* A slip of paper laid over the page: opaque, square, lifted. */
+  background: var(--paper-raised);
+  border: 0;
+  border-top: 2px solid var(--rule-heavy);
+  border-radius: 0;
+  box-shadow: var(--shadow-float);
   animation: popover-in var(--duration-standard) var(--ease-smooth);
   /* 从触发器（右上角）缩放展开，而非元素中心 —— 触发锚定面板的 origin 规则。 */
   transform-origin: top right;
@@ -109,12 +110,13 @@
 }
 
 .session__row:hover {
-  background: var(--surface-2);
+  background: var(--paper);
 }
 
 .session__row--current {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: transparent;
+  background: var(--paper);
+  box-shadow: inset 0 -2px 0 var(--ink-1);
 }
 
 .session__question {

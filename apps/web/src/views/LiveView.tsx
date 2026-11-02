@@ -336,7 +336,27 @@ interface SynthesisState {
   /** 结束时实际得到的结论：model / deterministic / unavailable。 */
   outcome: string | null;
   elapsed: number;
+  /** 流式整合（synthesis_reasoning / synthesis_token）：模型的思考与正在
+   * 写出的结论 JSON。只用于实时显示，正式结论以账本里的事件为准。 */
+  reasoning: string;
+  answer: string;
 }
+
+/** 从尚未写完的结论 JSON 里取出「一句话回答」已写出的部分。 */
+function partialBottomLine(answer: string): string {
+  const match = /"bottom_line"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(answer);
+  if (!match) return "";
+  // A string cut mid-escape ends in a lone backslash; drop it before parsing.
+  const body = match[1]!.replace(/\\$/, "");
+  try {
+    return JSON.parse(`"${body}"`) as string;
+  } catch {
+    return body;
+  }
+}
+
+/** 流式片段只保留最近的一段，避免长思考把页面撑满。 */
+const SYNTHESIS_TAIL = 1600;
 
 function synthesisState(processEvents: ProcessEvent[]): SynthesisState | null {
   const state: SynthesisState = {
@@ -344,6 +364,8 @@ function synthesisState(processEvents: ProcessEvent[]): SynthesisState | null {
     mode: "model",
     outcome: null,
     elapsed: 0,
+    reasoning: "",
+    answer: "",
   };
   let seen = false;
   for (const event of processEvents) {
@@ -356,6 +378,14 @@ function synthesisState(processEvents: ProcessEvent[]): SynthesisState | null {
       state.mode = String(payload.mode ?? "model");
       state.outcome = null;
       state.elapsed = 0;
+      state.reasoning = "";
+      state.answer = "";
+    } else if (seen && event.kind === "synthesis_reasoning") {
+      state.reasoning = (state.reasoning + String(payload.text ?? "")).slice(
+        -SYNTHESIS_TAIL,
+      );
+    } else if (seen && event.kind === "synthesis_token") {
+      state.answer += String(payload.text ?? "");
     } else if (seen && event.kind === "synthesis_working") {
       state.elapsed = elapsed;
     } else if (seen && event.kind === "synthesis_done") {
@@ -381,6 +411,7 @@ function SynthesisCard({
   state: SynthesisState;
   onOpenPaper?: () => void;
 }) {
+  const bottomLine = partialBottomLine(state.answer);
   return (
     <section
       className={"live__synthesis" + (state.running ? " live__synthesis--running" : "")}
@@ -404,6 +435,18 @@ function SynthesisCard({
             )
           : t(SYNTHESIS_OUTCOME_NOTES[state.outcome ?? ""] ?? SYNTHESIS_OUTCOME_NOTES.unavailable!)}
       </p>
+      {state.running && bottomLine ? (
+        <blockquote className="live__synthesis-draft">
+          <span className="live__synthesis-draft-label">{t("一句话回答 · 正在写出")}</span>
+          <p>
+            {bottomLine}
+            <span className="live__caret" aria-hidden="true" />
+          </p>
+        </blockquote>
+      ) : null}
+      {state.running && state.reasoning ? (
+        <p className="live__synthesis-thinking">{state.reasoning}</p>
+      ) : null}
       {!state.running && state.outcome !== "unavailable" && onOpenPaper ? (
         <button type="button" className="button button--primary" onClick={onOpenPaper}>
           {t("查看研究结论")}

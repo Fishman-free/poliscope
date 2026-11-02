@@ -7,7 +7,7 @@
   z-index: 30;
   display: grid;
   place-items: center;
-  background: rgba(29, 29, 31, 0.35);
+  background: rgba(25, 23, 20, 0.32);
   padding: var(--space-4);
 }
 
@@ -16,10 +16,11 @@
   /* 弹层入场：复用全局 panel-in（320ms 柔和上浮），与主面板语言一致；
      prefers-reduced-motion 已由 base.css 全局兜底。 */
   animation: panel-in var(--duration-slow) var(--ease-smooth);
-  background: var(--app-surface, var(--surface-0));
-  border: 1px solid var(--app-hairline, var(--line));
-  border-radius: var(--radius-3);
-  box-shadow: 0 12px 40px rgba(29, 29, 31, 0.16);
+  background: var(--paper-raised);
+  border: 0;
+  border-top: 3px double var(--rule-heavy);
+  border-radius: 0;
+  box-shadow: var(--shadow-float);
   padding: var(--space-5);
   display: flex;
   flex-direction: column;
@@ -35,8 +36,9 @@
 
 .rerun-dialog__title {
   margin: 0;
-  font-size: var(--text-medium);
-  font-weight: 600;
+  font-family: var(--serif);
+  font-size: 1.375rem;
+  font-weight: 500;
   letter-spacing: -0.01em;
   color: var(--app-ink, var(--ink-1));
 }
