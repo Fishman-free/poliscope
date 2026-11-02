@@ -34,6 +34,12 @@ class ModelRequest(ContractModel):
     messages: tuple[ModelMessage, ...]
     output_schema: str
     evidence_refs: tuple[UUID, ...]
+    # Overrides the gateway's whole-call ceiling for this one request. Only
+    # the final synthesis sets it: its single answer covers the whole council
+    # and routinely ran past the default (5 of 16 production syntheses timed
+    # out at 300 s and fell back to mechanical filing). None keeps the
+    # gateway default for every seat call.
+    deadline_seconds: float | None = None
 
 
 class ModelResult(ContractModel):

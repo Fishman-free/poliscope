@@ -242,13 +242,14 @@ def _user_prompt(seat: Seat, context: PhaseContext) -> str:
     if context.confirmed_claims:
         statements = context.claim_statements
         if statements:
-            lines.append("Confirmed atomic claims:")
+            # The id is printed beside the statement: CHALLENGE.claim_id and
+            # strongest_opposition_refs must name a real claim, and a seat
+            # shown statements alone invents UUIDs (91% of production
+            # challenges pointed at no claim before this).
+            lines.append("Confirmed atomic claims (claim_id: statement):")
             for claim_id in context.confirmed_claims:
                 text = statements.get(claim_id)
-                if text:
-                    lines.append(f"- {text}")
-                else:
-                    lines.append(f"- {claim_id}")
+                lines.append(f"- {claim_id}: {text}" if text else f"- {claim_id}")
         else:
             joined = ", ".join(str(claim) for claim in context.confirmed_claims)
             lines.append(f"Confirmed atomic claims: {joined}")
@@ -538,8 +539,19 @@ class GatewayDeliberator:
         # Why the most recent deliberate() call came back None. Read by the
         # round collector so a SEAT_UNAVAILABLE event reports the real reason
         # (provider outage, 401, quarantined schema) instead of a fixed
-        # "no model provider" string that is wrong half the time.
+        # "no model provider" string that is wrong half the time. Kept per
+        # seat as well: the collector asks several seats at once, and a
+        # single shared slot would hand one seat another seat's reason.
         self.last_error: str | None = None
+        self._seat_errors: dict[Seat, str | None] = {}
+
+    def error_for(self, seat: Seat) -> str | None:
+        """Why ``seat``'s most recent call came back None, if it did."""
+        return self._seat_errors.get(seat)
+
+    def _record_error(self, seat: Seat, reason: str | None) -> None:
+        self.last_error = reason
+        self._seat_errors[seat] = reason
 
     def _request(self, seat: Seat, phase: TaskPhase, ctx: PhaseContext) -> ModelRequest:
         return ModelRequest(
@@ -705,9 +717,9 @@ class GatewayDeliberator:
         phase: TaskPhase,
         context: PhaseContext,
     ) -> Mapping[str, object] | None:
-        self.last_error = None
+        self._record_error(seat, None)
         if phase not in PHASE_OUTPUT_SCHEMAS:
-            self.last_error = f"no output schema for phase {phase.value}"
+            self._record_error(seat, f"no output schema for phase {phase.value}")
             return None
         # Built outside the try on purpose. A malformed request is our bug, not a
         # provider outage, and letting it surface as an absent seat would hide a
@@ -824,14 +836,15 @@ class GatewayDeliberator:
             # forever from an open slice (the 「思考中… 已等待 Ns」 production
             # failure), so emit ``seat_absent`` -- the process-stream analogue
             # of the ledger's SEAT_UNAVAILABLE -- with the honest reason.
-            self.last_error = str(error)[:300] or error.__class__.__name__
+            reason = str(error)[:300] or error.__class__.__name__
+            self._record_error(seat, reason)
             if self._on_process is not None:
                 self._on_process(
                     "seat_absent",
                     {
                         "seat": seat.value,
                         "phase": phase.value,
-                        "reason": self.last_error,
+                        "reason": reason,
                     },
                 )
             return None
@@ -867,7 +880,9 @@ class GatewayDeliberator:
         if result.schema_status is SchemaStatus.QUARANTINED:
             # CLAUDE.md 10: structured output that could not be repaired is
             # quarantined and must not reach the formal graph.
-            self.last_error = "structured output quarantined after schema repair failed"
+            self._record_error(
+                seat, "structured output quarantined after schema repair failed"
+            )
             return None
         return dict(result.payload)
 

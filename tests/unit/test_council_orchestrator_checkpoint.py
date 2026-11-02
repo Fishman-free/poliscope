@@ -25,7 +25,7 @@ from packages.epistemo.contracts import (
     TaskPhase,
     TaskStatus,
 )
-from packages.epistemo.orchestrator import CouncilOrchestrator
+from packages.epistemo.orchestrator import ALWAYS_RUN_PHASES, CouncilOrchestrator
 
 _GENEROUS_BUDGET = ResearchBudget(
     wall_clock_minutes=1000,
@@ -34,10 +34,12 @@ _GENEROUS_BUDGET = ResearchBudget(
     source_limit=1000,
 )
 
+# A spent wall clock is the one budget that stops the council between
+# phases; a spent tool budget only refuses acquisition requests.
 _EXHAUSTED_BUDGET = ResearchBudget(
-    wall_clock_minutes=1000,
+    wall_clock_minutes=0,
     model_cost_usd=Decimal("1000"),
-    tool_call_limit=0,
+    tool_call_limit=1000,
     source_limit=1000,
 )
 
@@ -288,9 +290,13 @@ async def test_budget_exhaustion_takes_priority_over_checkpoint_halt() -> None:
 
     assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
     assert report.checkpoint is not None
-    assert report.checkpoint.run_phases == ()
-    assert report.phases_run == ()
-    assert report.phases_skipped == PHASE_SEQUENCE
+    # The protocol's close still runs; everything before it is a reported gap.
+    closing = tuple(phase for phase in PHASE_SEQUENCE if phase in ALWAYS_RUN_PHASES)
+    assert report.checkpoint.run_phases == closing
+    assert report.phases_run == closing
+    assert report.phases_skipped == tuple(
+        phase for phase in PHASE_SEQUENCE if phase not in ALWAYS_RUN_PHASES
+    )
     assert report.stop_reason.value == "BUDGET_EXHAUSTED"
 
 

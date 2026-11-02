@@ -96,13 +96,15 @@ async def test_a_fast_phase_runs_all_seats() -> None:
 
 async def test_deadline_cancels_a_mid_call_seat() -> None:
     """A seat whose call outlives the deadline is cancelled and reported."""
-    # Each seat takes 0.15s; deadline 0.35s means seats 1-2 finish, the third
-    # starts but is cancelled mid-call, and the rest are skipped.
+    # Serial collection (concurrency=1). Each seat takes 0.15s; deadline 0.35s
+    # means seats 1-2 finish, the third starts but is cancelled mid-call, and
+    # the rest are skipped.
     deliberator = _SlowDeliberator(delay=0.15)
     started = monotonic()
     outputs, unfilled, absent, reasons, attempts = await _collect(
         _context(deliberator),
         deadline_seconds=0.35,
+        concurrency=1,
     )
     elapsed = monotonic() - started
 
@@ -125,3 +127,41 @@ async def test_deadline_seconds_default_is_large_but_present() -> None:
     from packages.council.rounds.registry import _COLLECT_DEADLINE_SECONDS
 
     assert _COLLECT_DEADLINE_SECONDS >= 60.0
+
+
+async def test_concurrent_seats_fit_where_serial_seats_were_cut() -> None:
+    """The production failure: seven slow seats, one after another, ran past
+    the phase deadline and the last ones were recorded absent. Asked three at
+    a time, the same seats all answer inside the same deadline."""
+    deliberator = _SlowDeliberator(delay=0.15)
+    outputs, unfilled, absent, _reasons, _attempts = await _collect(
+        _context(deliberator),
+        deadline_seconds=0.7,
+        concurrency=3,
+    )
+    assert len(outputs) == 7
+    assert not absent and not unfilled
+    # Outputs come back in roster order whatever order the seats answered in.
+    assert list(outputs) == list(_context(deliberator).seats)
+
+
+async def test_concurrency_never_exceeds_its_bound() -> None:
+    deliberator = _PeakDeliberator()
+    await _collect(_context(deliberator), deadline_seconds=5.0, concurrency=3)
+    assert deliberator.peak == 3
+
+
+class _PeakDeliberator:
+    def __init__(self) -> None:
+        self.active = 0
+        self.peak = 0
+        self.last_error: str | None = None
+
+    async def deliberate(
+        self, seat: Seat, phase: TaskPhase, context: PhaseContext
+    ) -> Mapping[str, object] | None:
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        await asyncio.sleep(0.02)
+        self.active -= 1
+        return {"statement": seat.value}

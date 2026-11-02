@@ -638,10 +638,14 @@ async def _deliberate_impl(
             on_reasoning=_reasoning_emitter(session),
             on_process=None if process is None else process.emit,
             on_flush=None if process is None else process.flush,
+            # Seats are asked concurrently, so the fallback poll on the
+            # shared session queues behind the other seats' writes.
             cancel_check=(
                 _isolated_cancel_probe(probe_sessions, task_id)
                 if probe_sessions is not None
-                else lambda: repository.check_cancel_request(task_id)
+                else lambda: guarded_write(
+                    session, lambda: repository.check_cancel_request(task_id)
+                )
             ),
         )
     async def _persist_running_checkpoint(
@@ -762,7 +766,18 @@ async def _deliberate_impl(
     # failure for this task type, so all of them raise (CLAUDE.md 7).
     paper_understanding: dict[str, object] | None = None
     if getattr(task, "task_type", "deep_research") == "paper_review":
-        if checkpoint is None:
+        # A run killed before its first checkpoint already committed the
+        # understanding (the first audited model call commits the session);
+        # reading it the second time would hit its idempotency key with a
+        # different model answer and fail the review on an EventConflict.
+        captured = (
+            await load_paper_understanding(session, task_id)
+            if checkpoint is None
+            else None
+        )
+        if captured is not None:
+            paper_understanding = captured
+        elif checkpoint is None:
             understanding = await understand_paper(
                 session,
                 task_id,
@@ -837,10 +852,14 @@ async def _deliberate_impl(
     else:
         await repository.set_checkpoint(task_id, None)
     await repository.set_status(task_id, report.final_status)
-    # Round-10: a CANCELLED terminal status means this run *was* stopped by a
-    # cancel request -- clear it so a later re-research starts clean, and so a
-    # stray request row can never stop a future run of the same task.
-    if report.final_status == TaskStatus.CANCELLED:
+    # Round-10: a terminal status ends whatever stop request this run had --
+    # honoured (CANCELLED) or overtaken (the run finished first). Clear it so
+    # a stray request row can never stop a later resume or re-research.
+    if report.final_status in (
+        TaskStatus.CANCELLED,
+        TaskStatus.COMPLETED,
+        TaskStatus.COMPLETED_WITH_GAPS,
+    ):
         await repository.clear_cancel_request(task_id)
 
     # The synthesis step only runs once the council reached a terminal
@@ -1016,6 +1035,7 @@ async def _mark_failed(
     async with app_sessions() as session:
         repository = ResearchRepository(session)
         await repository.set_status(task_id, TaskStatus.FAILED)
+        await repository.clear_cancel_request(task_id)
         await session.commit()
     try:
         async with app_sessions() as fallback_session:

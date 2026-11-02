@@ -519,6 +519,17 @@ poliscope resume --task-id <id>
 
 数据库连接在运行中断开（例如 `PendingRollbackError: Can't reconnect until invalid transaction is rolled back`）不再判任务失败：worker 在同一进程内换新 session、从最近一次阶段检查点续跑（退避 3 / 10 / 30 秒，共 3 次），席位不会被误记为缺席。根因也已消除——审计写入免疫取消并按 session 串行（`packages/kernel/database.py` 的 `guarded_write`），停止请求探测改用独立 session，所以单席超时不会再作废整场议会共用的连接。
 
+其余会让研究中途停下的路径（2026-11 逐条核对生产库后修复）：
+
+- **部署或崩溃后的孤儿任务**：worker 在运行期间持有该任务的 PostgreSQL 会话级 advisory lock（租约）。进程被 SIGKILL 时连接断开、租约即释放，新进程启动后立刻回收并从检查点续跑；原来要等「2×墙钟预算+15 分钟」（默认 135 分钟，生产中有任务等了 138 分钟后失败）。worker 主循环单次迭代出错不再退出进程，compose 加了 `restart: unless-stopped` 与 `init: true`。
+- **数据库长时间不可达**：进程内 3 次重试之后不再判 FAILED，而是放回队列，数据库恢复后从检查点续跑。
+- **预算**：工具调用预算只在检索调用点生效（超出的请求照常记为未填证据槽），不再跳过其后的全部议会阶段；墙钟预算用完时其余阶段照常记为缺口跳过，但最终独立复判（及空的 REPORTING）总会运行，结论不会失去各席最终立场。
+- **看门狗**：缓冲从 300 秒改为 2700 秒（进行中的一个阶段 + 必跑的最终复判 + 600 秒的结论整合），健康但偏慢的运行不再被判 FAILED。
+- **结论整合**：单次调用上限从 300 秒提高到 600 秒（`ModelRequest.deadline_seconds`）。
+- **重放冲突**：同一阶段再次以不同错误失败会各记一条 `PHASE_FAILED`，不再撞幂等键；论文审查在首个检查点前被杀时复用已存的论文理解。
+- **停止请求**：任何终态都会清理停止请求，原地重新研究也会清理；盲点悬赏末尾按下的停止在人类检查点之前生效，不再被检查点吞掉。
+- **主张 id**：席位提示词列出 `claim_id: 原文`。此前只给原文，生产中 93 条质询里 85 条指向不存在的主张。
+
 崩溃续跑时若检查点尚未抵达人类引导门（`gate_reached=False` 且 JOINT_MODELING 未开始），续跑会在该门前再次停住，不会因崩溃绕过研究者的方向性引导。
 
 ### 上传 PDF：没有 DOI 的来源怎么进证据管线
@@ -848,7 +859,7 @@ cd apps/web && npm run build               # tsc --noEmit && vite build
 8. **Evolution View：定性轨迹，不是数值置信度曲线。** 关键阶段边界（证据交换、交叉质询、联合建模、最终复判结束时）都会为受影响的 `Claim` 追加一条 `CONFIDENCE_UPDATED` 过程事件（`_confidence_marker()`，`registry.py:345-376`），`_evolution()`（`workspace.py:238-291`）读取后画出跨越全部四个阶段的连续轨迹点。每条事件携带一段文字说明（`confidence_delta_note`），刻意不产出数值置信度——CLAUDE.md 第 16 条禁止用模型置信度替代统计不确定性，定性变化轨迹就是这个原则在产品上的落实。
 9. **域名 HTTPS。** `deploy/caddy/` 的域名切换逻辑（把 `POLISCOPE_SITE_ADDRESS` 改成真实域名即自动签发证书）依赖 Caddy 自身广泛验证过的行为，配置经过语法与拓扑核查（`docker compose config`）；接入真实域名时按 Caddy 官方文档的期望行为自动签发与续期。
 10. **模型设置快照语义。** 任务级 `model_config` 在创建时从账号永久设置（`app_settings`）复制一份（`apps/api/routers/tasks.py`），此后任务永远用这份快照——这是刻意的隔离设计：研究者可以把不同任务指向不同端点。「在面板换了 Key/模型名，旧任务不变」是预期行为；面板保存成功文案与任务行徽章（「你保存的配置 / 系统默认」）已把这条语义讲清楚。
-11. **流畅性、席位参与度与研究者画布（按 CLAUDE.md 第 17 条记录的有意增强，不改变证据边界）。** 三处一起交付：① *历史会话与后台切换提速*——工作台快照 `_assemble_snapshot()`（`apps/api/routers/workspace.py`）原来要 13+N 次串行数据库往返（三类面板节点各查一次、论文/共识事件重复取、席位面板扫全量事件账本、每个隔离事件单独查一次审计），现合并为「面板节点一次查、最新事件一次查、隔离审计批量查、席位面板只查四类席位事件」；前端 `useWorkspace` 增加 `visibilitychange`/`online` 自愈（切回标签页立即拉取并重建已 CLOSED 的 EventSource，重建有 3 秒节流防紧密循环）、非终态可见时 15 秒保险轮询（隐藏时不轮询）、切换会话立即清空旧快照显示加载态。② *七席参与度 / 减少可避免的 COMPLETED_WITH_GAPS*——`_collect()`（`packages/council/rounds/registry.py`）原来只捕获 `TimeoutError`，单个席位抛出的任何其他异常（HTTP 5xx、连接重置、一次性 JSON 解析失败）会穿透并让**整个阶段**失败、七席全丢；现在异常被收敛为该席位一次失败尝试，其余六席继续，`MAX_SEAT_ATTEMPTS` 从 2 提到 3（初次 + 两次重试），重试间使用 1.5s→3s 线性退避（`POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS` 等既有覆盖不变；`CouncilCancelled` 仍立即穿透，绝不被当成缺席重试）。席位仍保持顺序调用而非并发，以避免触发模型提供方限流——这是刻意取舍。人类引导门的无输入宽限期默认从 120 秒调整为 300 秒（`POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS` 可覆盖，下限 30 秒不变），前端检查点面板显示 5 分钟自动续跑倒计时。③ *研究者画布*——证据图（`views/MapView.tsx`）改为自定义节点、平滑边、MiniMap 与毛玻璃工具条；SSE 增量到达时合入新节点但保留研究者拖动的布局；研究者可添加可拖动便签、给节点写私人备注、一键重置布局，并离线导出 PNG（2x）/SVG/JSON。**这些创造与编辑全部是浏览器 localStorage 中的私人覆盖层（`views/map/overlayStore.ts`），不经过 API、不进 Scientific Event Ledger、不写证据图，界面明确标注「不是证据」**——Graph Projector 单一写入权（CLAUDE.md 5.3）完全不变。
+11. **流畅性、席位参与度与研究者画布（按 CLAUDE.md 第 17 条记录的有意增强，不改变证据边界）。** 三处一起交付：① *历史会话与后台切换提速*——工作台快照 `_assemble_snapshot()`（`apps/api/routers/workspace.py`）原来要 13+N 次串行数据库往返（三类面板节点各查一次、论文/共识事件重复取、席位面板扫全量事件账本、每个隔离事件单独查一次审计），现合并为「面板节点一次查、最新事件一次查、隔离审计批量查、席位面板只查四类席位事件」；前端 `useWorkspace` 增加 `visibilitychange`/`online` 自愈（切回标签页立即拉取并重建已 CLOSED 的 EventSource，重建有 3 秒节流防紧密循环）、非终态可见时 15 秒保险轮询（隐藏时不轮询）、切换会话立即清空旧快照显示加载态。② *七席参与度 / 减少可避免的 COMPLETED_WITH_GAPS*——`_collect()`（`packages/council/rounds/registry.py`）原来只捕获 `TimeoutError`，单个席位抛出的任何其他异常（HTTP 5xx、连接重置、一次性 JSON 解析失败）会穿透并让**整个阶段**失败、七席全丢；现在异常被收敛为该席位一次失败尝试，其余六席继续，`MAX_SEAT_ATTEMPTS` 从 2 提到 3（初次 + 两次重试），重试间使用 1.5s→3s 线性退避（`POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS` 等既有覆盖不变；`CouncilCancelled` 仍立即穿透，绝不被当成缺席重试）。席位当时保持顺序调用而非并发，以避免触发模型提供方限流——这是刻意取舍。**（2026-11 按 CLAUDE.md 第 17 条修订）** 生产数据推翻了这一取舍：交叉质询单阶段最长 15.6 分钟、撞上 900 秒阶段上限，按名册顺序排在后面的席位被记为「phase collection deadline exceeded」；强推理阶段的单次调用最长 118–119 秒，被 120 秒上限截断。现在席位以有界并发提问（`POLISCOPE_SEAT_CONCURRENCY`，默认 3），强推理阶段单次上限 240 秒；限流由既有的 429 退避重试承接，低限流端点设 `POLISCOPE_SEAT_CONCURRENCY=1` 即恢复原来的顺序调用。各席提示词仍在任何一席作答前由同一阶段上下文构造，独立性不变；共享会话上的写入经 `guarded_write` 串行。人类引导门的无输入宽限期默认从 120 秒调整为 300 秒（`POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS` 可覆盖，下限 30 秒不变），前端检查点面板显示 5 分钟自动续跑倒计时。③ *研究者画布*——证据图（`views/MapView.tsx`）改为自定义节点、平滑边、MiniMap 与毛玻璃工具条；SSE 增量到达时合入新节点但保留研究者拖动的布局；研究者可添加可拖动便签、给节点写私人备注、一键重置布局，并离线导出 PNG（2x）/SVG/JSON。**这些创造与编辑全部是浏览器 localStorage 中的私人覆盖层（`views/map/overlayStore.ts`），不经过 API、不进 Scientific Event Ledger、不写证据图，界面明确标注「不是证据」**——Graph Projector 单一写入权（CLAUDE.md 5.3）完全不变。
 
 ---
 

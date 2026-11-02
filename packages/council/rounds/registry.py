@@ -60,7 +60,6 @@ from packages.council.rounds.precommitment import (
 )
 from packages.epistemo.contracts import CouncilCancelled, TaskPhase
 from packages.evidence.adversarial_retrieval import adversarial_retrieval_queries
-
 from packages.evidence.contracts import ClaimType, EvidenceEdgeType, EvidenceNodeType
 from packages.evidence.dialectical_fold import DebateCapsule
 from packages.evidence.lifecycle import QuarantinedNode, check_resurrection_conditions
@@ -526,16 +525,76 @@ MAX_SEAT_ATTEMPTS = 3
 _SEAT_RETRY_PAUSE_SECONDS = 1.5
 _SEAT_RETRY_PAUSE_ENV = "POLISCOPE_SEAT_RETRY_PAUSE_SECONDS"
 
+# The phases a seat answers in thinking mode (packages/council/deliberation.py
+# PHASE_MODEL_CLASSES -> STRONG_REASONING). Their replies are long: production
+# cross-examination and blindspot-bounty calls averaged ~65 s and the slowest
+# recorded ones sat at 118-119 s, i.e. right under the old flat 120 s cap --
+# the distribution was cut off there, and every call that needed longer was
+# killed and the seat recorded absent. They get the same ceiling as the
+# gateway's own stream deadline, so a seat is never cut off by a tighter limit
+# than the model call itself would enforce.
+STRONG_PHASE_ATTEMPT_TIMEOUT_SECONDS = 240.0
+_STRONG_PHASES = frozenset(
+    {
+        TaskPhase.PRECOMMITMENT,
+        TaskPhase.CROSS_EXAMINATION,
+        TaskPhase.BLINDSPOT_BOUNTY,
+        TaskPhase.FINAL_REJUDGMENT,
+    }
+)
 
-def _seat_attempt_timeout_seconds() -> float:
-    """The per-call timeout, honouring the env override for operators."""
+# How many seats are asked at once. Seats used to be asked one after another,
+# so a phase took the *sum* of seven model calls -- up to the whole 900 s
+# deadline, which then cut the last seats in roster order (production
+# cross-examination: 15.6 min, seats lost to "phase collection deadline
+# exceeded"). The calls are network-bound, so a few in flight cost the 2-core
+# host nothing. Seats stay independent: every prompt is built from the same
+# phase context before any seat answers, and each seat's shared-session writes
+# go through ``guarded_write``. 1 restores the old serial behaviour, e.g. for
+# an endpoint with a very low rate limit.
+DEFAULT_SEAT_CONCURRENCY = 3
+_SEAT_CONCURRENCY_ENV = "POLISCOPE_SEAT_CONCURRENCY"
+
+
+def _seat_attempt_timeout_seconds(phase: TaskPhase | None = None) -> float:
+    """The per-call timeout, honouring the env override for operators.
+
+    The override applies to every phase; without it, thinking-mode phases
+    get the longer default.
+    """
     raw = os.environ.get(_SEAT_ATTEMPT_TIMEOUT_ENV)
     if raw is not None:
         try:
             return max(float(raw), 0.0)
         except ValueError:
             pass
+    if phase in _STRONG_PHASES:
+        return STRONG_PHASE_ATTEMPT_TIMEOUT_SECONDS
     return SEAT_ATTEMPT_TIMEOUT_SECONDS
+
+
+def _seat_concurrency() -> int:
+    raw = os.environ.get(_SEAT_CONCURRENCY_ENV)
+    if raw is not None:
+        try:
+            return max(int(raw), 1)
+        except ValueError:
+            pass
+    return DEFAULT_SEAT_CONCURRENCY
+
+
+def _seat_error(deliberator: object, seat: Seat) -> str | None:
+    """Why ``seat``'s last call came back None, read per seat when possible.
+
+    Seats are asked concurrently, so a deliberator's single ``last_error``
+    may already hold another seat's reason; ``error_for`` does not.
+    """
+    error_for = getattr(deliberator, "error_for", None)
+    if callable(error_for):
+        reason = error_for(seat)
+        return None if reason is None else str(reason)
+    err = getattr(deliberator, "last_error", None)
+    return None if err is None else str(err)
 
 
 def _seat_retry_pause_seconds() -> float:
@@ -571,6 +630,7 @@ async def _collect(
     attempt_timeout_seconds: float | None = None,
     max_attempts: int = MAX_SEAT_ATTEMPTS,
     retry_pause_seconds: float | None = None,
+    concurrency: int | None = None,
 ) -> tuple[
     dict[Seat, Mapping[str, object]],
     tuple[str, ...],
@@ -581,24 +641,28 @@ async def _collect(
     """Ask every seat for its output, recording the ones that cannot answer.
 
     The returned reasons map holds, per absent seat, why it could not answer
-    (from the deliberator's ``last_error``). An absence caused by a dead model
+    (from the deliberator's per-seat error). An absence caused by a dead model
     endpoint must surface as the actual connection error -- CLAUDE.md 7 does
     not let the system paper over the difference between "no provider
     configured" and "provider rejected us".
 
-    The whole pass is bounded by ``deadline_seconds`` (default 15 minutes):
-    each seat's call is awaited with the time remaining on that deadline, and
-    a seat that could not answer before it is reported absent. This is what
-    makes a slow provider degrade the round instead of stalling it -- the
-    "交叉质询卡死" failure mode where one phase held the task for an hour.
+    Up to ``concurrency`` seats are asked at once (default
+    ``POLISCOPE_SEAT_CONCURRENCY``, 3), in roster order. The whole pass is
+    bounded by ``deadline_seconds`` (default 15 minutes): each call is awaited
+    with the time remaining on that deadline, and a seat that could not answer
+    before it -- including one still waiting for a free slot -- is reported
+    absent. This is what makes a slow provider degrade the round instead of
+    stalling it -- the "交叉质询卡死" failure mode where one phase held the
+    task for an hour.
 
-    A seat that fails -- times out against ``attempt_timeout_seconds`` (default
-    120s) or returns ``None`` with a non-empty ``last_error`` -- is asked again
-    immediately, up to ``max_attempts`` times in total, so a transient provider
-    hiccup re-admits the scientist to the round instead of recording an
-    avoidable absence (round-9). Two failures are deliberately NOT retried:
+    A seat that fails -- times out against ``attempt_timeout_seconds``
+    (default 240 s in thinking-mode phases, 120 s otherwise) or returns
+    ``None`` with a recorded error -- is asked again, up to ``max_attempts``
+    times in total, so a transient provider hiccup re-admits the scientist
+    instead of recording an avoidable absence (round-9). Two failures are
+    deliberately NOT retried:
 
-    * a seat that returns ``None`` with no ``last_error`` (e.g. the
+    * a seat that returns ``None`` with no recorded error (e.g. the
       ``UnavailableDeliberator`` with no provider configured) is the truthful
       "no answer is possible" case -- retrying would just re-burn the round's
       budget asking the same question;
@@ -606,109 +670,134 @@ async def _collect(
       the phase ceiling, not given a second chance.
 
     Any other exception a seat raises is caught as a failed attempt for that
-    seat alone (it used to escape and fail the whole phase, losing every
-    scientist); ``CouncilCancelled`` is the sole exception that propagates.
-    Retries use a short linear backoff so a rate-limited or restarting
-    provider has room to recover between asks.
+    seat alone. ``CouncilCancelled``, ``DatabaseSessionLost`` and a raw lost
+    connection propagate: the other seats' calls are cancelled first (their
+    in-flight database writes finish, see ``guarded_write``), so nothing keeps
+    running against a run that is ending. Retries use a short linear backoff
+    so a rate-limited or restarting provider has room to recover.
 
     The fifth element, ``attempts``, records how many times each seat was asked
     (0 for a seat never reached because the deadline had already expired).
+    Outputs are returned in roster order whatever order the seats answered in.
     """
     deadline = time.monotonic() + deadline_seconds
     attempt_timeout = (
         attempt_timeout_seconds
         if attempt_timeout_seconds is not None
-        else _seat_attempt_timeout_seconds()
+        else _seat_attempt_timeout_seconds(context.phase)
     )
     retry_pause = (
         retry_pause_seconds
         if retry_pause_seconds is not None
         else _seat_retry_pause_seconds()
     )
-    outputs: dict[Seat, Mapping[str, object]] = {}
-    unfilled: list[str] = []
-    absent: set[Seat] = set()
+    slots = asyncio.Semaphore(
+        max(1, concurrency if concurrency is not None else _seat_concurrency())
+    )
+    answered: dict[Seat, Mapping[str, object]] = {}
     reasons: dict[Seat, str] = {}
     attempts: dict[Seat, int] = {seat: 0 for seat in context.seats}
-    for seat in context.seats:
-        reason: str | None = None
-        while attempts[seat] < max_attempts:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                reason = _COLLECT_DEADLINE_REASON
-                break
-            timeout = min(attempt_timeout, remaining)
-            attempts[seat] += 1
-            try:
-                result = await asyncio.wait_for(
-                    context.deliberator.deliberate(seat, context.phase, context),
-                    timeout=timeout,
-                )
-            except (CouncilCancelled, DatabaseSessionLost):
-                # Researcher stop (round-10): a redirection, never a failed
-                # attempt -- propagate so the orchestrator halts at the phase
-                # boundary instead of turning it into seven absences. A lost
-                # database session likewise ends the pass: every later seat
-                # would fail the same way, and the worker resumes the phase.
-                raise
-            except TimeoutError:
-                # Distinguish a single attempt that outlived its 120s window
-                # (retryable) from one cut short by the whole-pass deadline
-                # (not). Comparing the actual timeout used against the
-                # configured per-attempt value tells the two apart.
-                reason = (
-                    _SEAT_ATTEMPT_TIMEOUT_REASON
-                    if timeout == attempt_timeout
-                    else _COLLECT_DEADLINE_REASON
-                )
-                if attempts[seat] >= max_attempts:
+    # Set when one seat hits an error that ends the pass, so seats still
+    # waiting for a slot never start a call nothing could record.
+    ending = asyncio.Event()
+
+    async def ask(seat: Seat) -> None:
+        try:
+            await ask_one(seat)
+        except BaseException:
+            # Whatever ends one seat's call abnormally -- a stop, a lost
+            # session, the worker being cancelled -- ends the pass: no seat
+            # still waiting for a slot starts a call nothing will record.
+            ending.set()
+            raise
+
+    async def ask_one(seat: Seat) -> None:
+        async with slots:
+            reason: str | None = None
+            while attempts[seat] < max_attempts:
+                if ending.is_set():
+                    return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    reason = _COLLECT_DEADLINE_REASON
                     break
-                # Linear backoff: 1.5s after attempt 1, 3s after attempt 2,
-                # clamped so it can never eat the whole-pass deadline.
-                await _backoff_pause(
-                    retry_pause, attempts[seat], deadline
-                )
-                continue
-            except Exception as error:  # noqa: BLE001 - recorded per seat
-                if is_connection_failure(error):
-                    # Same as DatabaseSessionLost above, raised unwrapped.
+                timeout = min(attempt_timeout, remaining)
+                attempts[seat] += 1
+                try:
+                    result = await asyncio.wait_for(
+                        context.deliberator.deliberate(seat, context.phase, context),
+                        timeout=timeout,
+                    )
+                except (CouncilCancelled, DatabaseSessionLost):
+                    # Researcher stop (round-10): a redirection, never a
+                    # failed attempt -- propagate so the orchestrator halts at
+                    # the phase boundary instead of turning it into seven
+                    # absences. A lost database session likewise ends the
+                    # pass: every other seat would fail the same way, and the
+                    # worker resumes the phase.
                     raise
-                # Gap-reduction: previously any non-timeout provider error
-                # (HTTP 5xx, connection reset, malformed JSON once) escaped
-                # _collect and failed the ENTIRE phase, losing all seven
-                # seats. It is now a failed attempt for THIS seat only: the
-                # other six keep running, and this seat is retried with
-                # backoff before it is honestly reported absent
-                # (AGENTS.md 10: a single scientist never aborts the task).
-                reason = f"{type(error).__name__}: {error}"[:200]
-                if attempts[seat] >= max_attempts:
-                    break
-                await _backoff_pause(
-                    retry_pause, attempts[seat], deadline
-                )
-                continue
-            if result is None:
-                err = getattr(context.deliberator, "last_error", None)
-                reason = str(err) if err else None
-                if reason is None:
-                    # The truthful "no provider / cannot answer at all" case:
-                    # retrying would re-burn budget without a chance of a
-                    # different answer. Report absent, do not loop.
-                    break
-                if attempts[seat] >= max_attempts:
-                    break
-                await _backoff_pause(
-                    retry_pause, attempts[seat], deadline
-                )
-                continue
-            outputs[seat] = result
-            break
-        if seat in outputs:
-            continue
-        unfilled.append(f"{context.phase.value}:{seat.value}")
-        absent.add(seat)
-        reasons[seat] = reason or _DEFAULT_ABSENCE_REASON
-    return outputs, tuple(unfilled), frozenset(absent), reasons, attempts
+                except TimeoutError:
+                    # Distinguish a single attempt that outlived its window
+                    # (retryable) from one cut short by the whole-pass
+                    # deadline (not), by the timeout actually used.
+                    reason = (
+                        _SEAT_ATTEMPT_TIMEOUT_REASON
+                        if timeout == attempt_timeout
+                        else _COLLECT_DEADLINE_REASON
+                    )
+                    if attempts[seat] >= max_attempts:
+                        break
+                    await _backoff_pause(retry_pause, attempts[seat], deadline)
+                    continue
+                except Exception as error:  # noqa: BLE001 - recorded per seat
+                    if is_connection_failure(error):
+                        # Same as DatabaseSessionLost above, raised unwrapped.
+                        raise
+                    # Gap-reduction: any other provider error (HTTP 5xx,
+                    # connection reset, malformed JSON once) is a failed
+                    # attempt for THIS seat only: the other six keep running,
+                    # and this seat is retried with backoff before it is
+                    # honestly reported absent (AGENTS.md 10: a single
+                    # scientist never aborts the task).
+                    reason = f"{type(error).__name__}: {error}"[:200]
+                    if attempts[seat] >= max_attempts:
+                        break
+                    await _backoff_pause(retry_pause, attempts[seat], deadline)
+                    continue
+                if result is None:
+                    reason = _seat_error(context.deliberator, seat)
+                    if reason is None:
+                        # The truthful "no provider / cannot answer at all"
+                        # case: retrying would re-burn budget without a chance
+                        # of a different answer. Report absent, do not loop.
+                        break
+                    if attempts[seat] >= max_attempts:
+                        break
+                    await _backoff_pause(retry_pause, attempts[seat], deadline)
+                    continue
+                answered[seat] = result
+                return
+            reasons[seat] = reason or _DEFAULT_ABSENCE_REASON
+
+    tasks = [asyncio.ensure_future(ask(seat)) for seat in context.seats]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+    outputs = {seat: answered[seat] for seat in context.seats if seat in answered}
+    absent = [seat for seat in context.seats if seat not in answered]
+    unfilled = tuple(f"{context.phase.value}:{seat.value}" for seat in absent)
+    return (
+        outputs,
+        unfilled,
+        frozenset(absent),
+        {seat: reasons.get(seat, _DEFAULT_ABSENCE_REASON) for seat in absent},
+        attempts,
+    )
 
 
 # What a seat's absence event says when no specific failure was recorded.

@@ -106,6 +106,14 @@ services:
     build:
       context: .
       dockerfile: apps/worker/Dockerfile
+    # A worker that exits (an OOM kill on the 4 GB host, a crash) must come
+    # back on its own: while it is down every queued task waits. The task it
+    # was running resumes from its checkpoint as soon as the new process
+    # finds the lease free (apps/worker/main.py, task_lease).
+    restart: unless-stopped
+    # tini as PID 1 forwards SIGTERM, so a deploy stops the worker at once
+    # instead of after Docker's 10 s SIGKILL timeout.
+    init: true
     environment:
       POLISCOPE_APP_DATABASE_URL: "postgresql+asyncpg://poliscope_app:${POLISCOPE_APP_DATABASE_PASSWORD:?set in .env}@postgres:5432/${POLISCOPE_DB_NAME:-poliscope}"
       POLISCOPE_PROJECTOR_DATABASE_URL: "postgresql+asyncpg://poliscope_projector:${POLISCOPE_PROJECTOR_DATABASE_PASSWORD:?set in .env}@postgres:5432/${POLISCOPE_DB_NAME:-poliscope}"

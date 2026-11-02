@@ -17,7 +17,8 @@ import asyncio
 import logging
 import math
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
@@ -32,6 +33,7 @@ from packages.kernel.database import (
     canonical_uuid,
     create_database_engine,
     create_session_factory,
+    is_connection_failure,
 )
 from packages.models.contracts import ModelGateway
 from packages.models.openai_compatible import gateway_from_env
@@ -39,6 +41,7 @@ from packages.papers.object_store import PrivateObjectStore
 from packages.reports.safety import sanitize_export
 from packages.reports.synthesis import synthesize_paper
 from packages.research.models import ResearchTaskModel
+from packages.research.repository import ResearchRepository
 from packages.tools.contracts import ToolGateway
 from packages.tools.fulltext_fetcher import FullTextFetcher, fulltext_fetcher_from_env
 from packages.tools.http_gateway import tool_gateway_from_env
@@ -46,6 +49,7 @@ from packages.tools.http_gateway import tool_gateway_from_env
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 2.0
+MAX_LOOP_BACKOFF_SECONDS = 60.0
 COUNCIL_INPUT_GRACE_ENV = "POLISCOPE_COUNCIL_INPUT_GRACE_SECONDS"
 # 15 分钟（900 秒）：留给研究者充足时间查看前 5 轮立场并提交方向性备注，
 # 但仍有界——超时后以「无方向性干预」自动继续，研究不会因走开而卡死。
@@ -203,62 +207,163 @@ async def claim_queued_tasks(
             raise
 
 
-# A claimed task may legally run for its wall-clock budget (the budget stops
-# the run when exhausted). Anything still RUNNING after twice that budget plus
-# this buffer has outlived any legitimate run and is a crashed worker's stale
-# claim.
-STALE_RUNNING_BUFFER_MINUTES = 15
+# A worker holds a session-level advisory lock on every task it runs, on a
+# connection of its own, for the whole run. PostgreSQL drops the lock the
+# moment that connection closes -- including when the process is SIGKILLed,
+# which is how every `docker compose up -d --build` ends a running worker
+# (Python as PID 1 ignores SIGTERM). A RUNNING row nobody holds the lease for
+# is therefore orphaned *now*, not "after twice its budget": the old
+# time-only rule left a deploy-killed task silent for 135 minutes before it
+# was resumed (a production task waited 138 minutes, then failed).
+#
+# The two-key form keeps these locks out of the single-bigint key space the
+# ledger's per-append ``pg_advisory_xact_lock`` uses, so the lease can never
+# block an append of the task it protects.
+TASK_LEASE_NAMESPACE = 0x504C5343  # "PLSC"
+# Covers the instant between the claim commit and the lease acquisition, so a
+# just-claimed task is never mistaken for an orphan.
+LEASE_CLAIM_GRACE_SECONDS = 120
+
+_LEASE_KEY = "hashtext(cast(:task_id as text))"
 
 # The run_one watchdog fails a task that outlives wall_clock + this buffer.
-# The wall-clock budget already stops a *healthy* run between phases; this
-# catches a *stuck* run (a stalled vendor stream, a deadlocked transaction)
-# that never reaches a phase boundary. Without it the loop is blocked inside
-# the hung task forever, the stale reclaimer never runs, and every queued
-# task waits behind it.
-WATCHDOG_BUFFER_SECONDS = 300.0
+# The wall-clock budget stops a *healthy* run only between phases, so the
+# buffer must cover the longest thing a healthy run may still legally do
+# after the budget's last check: the phase already in flight and the final
+# rejudgment that always runs (two 900 s seat-collection deadlines), the
+# final synthesis call (its own 600 s deadline) and the projection. A shorter
+# buffer turned a slow but healthy run into FAILED (the old 300 s was less
+# than a single phase). What the watchdog is for is a *stuck* run that never
+# reaches a phase boundary.
+WATCHDOG_BUFFER_SECONDS = 2700.0
 DEFAULT_WATCHDOG_SECONDS = 3600.0
+
+
+@asynccontextmanager
+async def task_lease(engine: AsyncEngine, task_id: UUID) -> AsyncIterator[bool]:
+    """Hold the task's liveness lease for the duration of the block.
+
+    Yields whether the lease was taken. Not taking it (a hash collision with
+    another running task, or a database blip) never stops the run: the claim
+    already made the task ours, and the lease only tells reclaimers that a
+    live worker is on it. Every failure here degrades to "no lease".
+    """
+    try:
+        connection = await engine.connect()
+    except Exception:
+        logger.warning("could not open a lease connection for %s", task_id)
+        yield False
+        return
+    try:
+        try:
+            taken = bool(
+                await connection.scalar(
+                    text(f"SELECT pg_try_advisory_lock(:ns, {_LEASE_KEY})"),
+                    {"ns": TASK_LEASE_NAMESPACE, "task_id": str(task_id)},
+                )
+            )
+            # Session-level locks outlive transactions; end the implicit one
+            # so the lease connection is not "idle in transaction".
+            await connection.commit()
+        except Exception:
+            logger.warning("could not take the lease for %s", task_id)
+            taken = False
+        yield taken
+    finally:
+        with suppress(Exception):
+            await connection.execute(text("SELECT pg_advisory_unlock_all()"))
+            await connection.commit()
+        with suppress(Exception):
+            await connection.close()
 
 
 async def recover_stale_running(
     sessions: async_sessionmaker[AsyncSession],
 ) -> int:
-    """Reset crashed workers' ``RUNNING`` claims back to ``QUEUED``.
+    """Reset orphaned ``RUNNING`` claims back to ``QUEUED``.
 
-    B7 crash-safe council: a worker that dies mid-task rolls back only the
-    interrupted phase's open transaction; every already-finished phase was
-    committed by the per-phase checkpoint hook, so the reclaimed run resumes
-    from its stored checkpoint instead of re-running PRECOMMITMENT. Stable
-    idempotency keys make any surviving event replay a no-op. Both
-    ``RUNNING`` and ``DEGRADED_RUNNING`` claims are reclaimed: a degraded run
-    is still a live run, and a worker killed while degraded must not hang
-    forever. A run whose terminal status committed is never in either state
-    here, so resetting stale rows can never resurrect a finished task.
+    A claim is orphaned when no live worker holds its lease (see
+    :func:`task_lease`) and it is older than the claim grace. B7 crash-safe
+    council: the dead worker rolled back only the interrupted phase's open
+    transaction; every finished phase was committed by the per-phase
+    checkpoint hook, so the reclaimed run resumes from its stored checkpoint
+    instead of re-running PRECOMMITMENT. Both ``RUNNING`` and
+    ``DEGRADED_RUNNING`` claims are reclaimed: a degraded run is still a live
+    run. A run whose terminal status committed is in neither state, so this
+    can never resurrect a finished task. ``SKIP LOCKED`` passes over a row a
+    live deliberation transaction is writing.
 
     Returns how many claims were reclaimed.
+    """
+    async with sessions() as session:
+        try:
+            rows = await session.execute(
+                select(ResearchTaskModel.task_id)
+                .where(
+                    ResearchTaskModel.status.in_(
+                        (TaskStatus.RUNNING, TaskStatus.DEGRADED_RUNNING)
+                    ),
+                    ResearchTaskModel.updated_at
+                    < func.now()
+                    - text(":grace * interval '1 second'").bindparams(
+                        grace=LEASE_CLAIM_GRACE_SECONDS
+                    ),
+                )
+                .with_for_update(skip_locked=True)
+            )
+            orphaned: list[UUID] = []
+            for task_id in rows.scalars():
+                # Taking the lease proves nobody holds it; it is released at
+                # once (the lock is session-level, the transaction is not).
+                free = await session.scalar(
+                    text(f"SELECT pg_try_advisory_lock(:ns, {_LEASE_KEY})"),
+                    {"ns": TASK_LEASE_NAMESPACE, "task_id": str(task_id)},
+                )
+                if free:
+                    await session.execute(
+                        text(f"SELECT pg_advisory_unlock(:ns, {_LEASE_KEY})"),
+                        {"ns": TASK_LEASE_NAMESPACE, "task_id": str(task_id)},
+                    )
+                    orphaned.append(task_id)
+            if orphaned:
+                await session.execute(
+                    update(ResearchTaskModel)
+                    .where(ResearchTaskModel.task_id.in_(orphaned))
+                    .values(status=TaskStatus.QUEUED, updated_at=func.now())
+                )
+            await session.commit()
+            return len(orphaned)
+        except BaseException:
+            with suppress(Exception):
+                await session.rollback()
+            raise
+
+
+async def requeue_task(
+    sessions: async_sessionmaker[AsyncSession],
+    task_id: UUID,
+) -> bool:
+    """Put a still-RUNNING task back in the queue to resume from its checkpoint.
+
+    Used when the run lost its database connection for longer than the
+    in-process recovery window: that says nothing about the research, so the
+    task waits for the database instead of ending FAILED. If even this write
+    fails (the database is still down), the row stays RUNNING without a
+    lease and :func:`recover_stale_running` requeues it once it is back.
     """
     async with sessions() as session:
         result = await session.execute(
             update(ResearchTaskModel)
             .where(
+                ResearchTaskModel.task_id == task_id,
                 ResearchTaskModel.status.in_(
-                    (
-                        TaskStatus.RUNNING,
-                        TaskStatus.DEGRADED_RUNNING,
-                    )
+                    (TaskStatus.RUNNING, TaskStatus.DEGRADED_RUNNING)
                 ),
-                ResearchTaskModel.updated_at
-                < func.now()
-                - text(
-                    "((wall_clock_minutes * 2) + :buffer) * interval '1 minute'"
-                ).bindparams(buffer=STALE_RUNNING_BUFFER_MINUTES),
             )
-            .values(status=TaskStatus.QUEUED)
+            .values(status=TaskStatus.QUEUED, updated_at=func.now())
         )
         await session.commit()
-        # execute() returns Result; an UPDATE's row count lives on the
-        # underlying CursorResult, which mypy cannot see through the base type.
-        cursor = cast(CursorResult[Any], result)
-        return int(cursor.rowcount or 0)
+        return bool(cast(CursorResult[Any], result).rowcount)
 
 
 async def resume_expired_council_inputs(
@@ -342,6 +447,10 @@ async def emergency_finalize_task(
         )
         cursor = cast(CursorResult[Any], result)
         terminalized = bool(cursor.rowcount)
+        if terminalized:
+            # The run is over; a stop request left for it must not cancel a
+            # later re-research of the same task.
+            await ResearchRepository(status_session).clear_cancel_request(task_id)
         await status_session.commit()
     if not terminalized:
         return False
@@ -392,18 +501,19 @@ async def run_one(context: WorkerContext, task_id: UUID) -> JobResult | None:
     """
     timeout_seconds = await _watchdog_timeout(context.app_sessions, task_id)
     try:
-        return await asyncio.wait_for(
-            run_task(
-                context.app_sessions,
-                context.projector_sessions,
-                task_id,
-                gateway=context.gateway,
-                tools=context.tools,
-                fulltext_fetcher=context.fulltext_fetcher,
-                object_store=context.object_store,
-            ),
-            timeout=timeout_seconds,
-        )
+        async with task_lease(context.app_engine, task_id):
+            return await asyncio.wait_for(
+                run_task(
+                    context.app_sessions,
+                    context.projector_sessions,
+                    task_id,
+                    gateway=context.gateway,
+                    tools=context.tools,
+                    fulltext_fetcher=context.fulltext_fetcher,
+                    object_store=context.object_store,
+                ),
+                timeout=timeout_seconds,
+            )
     except TimeoutError:
         logger.error(
             "task %s exceeded its watchdog deadline (%.0fs); failing it",
@@ -417,6 +527,19 @@ async def run_one(context: WorkerContext, task_id: UUID) -> JobResult | None:
         logger.info("task %s was no longer runnable", task_id)
         return None
     except Exception as error:
+        if is_connection_failure(error):
+            # run_task already retried in-process; the database is still
+            # unreachable. Nothing about the research failed, so the task
+            # waits in the queue and resumes from its checkpoint.
+            logger.warning(
+                "task %s lost the database beyond in-process recovery; "
+                "requeueing it to resume from its checkpoint",
+                task_id,
+                exc_info=True,
+            )
+            with suppress(Exception):
+                await requeue_task(context.app_sessions, task_id)
+            return None
         logger.exception("task %s failed", task_id)
         await emergency_finalize_task(
             context.app_sessions,
@@ -450,23 +573,43 @@ async def run_worker(
     owned = context is None
     active = WorkerContext.from_env() if context is None else context
     council_input_grace = _council_input_grace_seconds()
+    failures = 0
     try:
         while True:
-            # A crashed worker leaves RUNNING claims behind; reclaim them
-            # before claiming anything new so they do not wait forever.
-            reclaimed = await recover_stale_running(active.app_sessions)
-            if reclaimed:
-                logger.info("reclaimed %d stale RUNNING task(s)", reclaimed)
-            resumed = await resume_expired_council_inputs(
-                active.app_sessions,
-                grace_seconds=council_input_grace,
-            )
-            if resumed:
-                logger.info(
-                    "automatically resumed %d expired council checkpoint(s)",
-                    resumed,
+            try:
+                # A killed worker leaves RUNNING claims behind; reclaim them
+                # before claiming anything new. On a fresh start (a deploy)
+                # this is what resumes the task the old process was running.
+                reclaimed = await recover_stale_running(active.app_sessions)
+                if reclaimed:
+                    logger.info("reclaimed %d orphaned RUNNING task(s)", reclaimed)
+                resumed = await resume_expired_council_inputs(
+                    active.app_sessions,
+                    grace_seconds=council_input_grace,
                 )
-            if not await drain(active):
+                if resumed:
+                    logger.info(
+                        "automatically resumed %d expired council checkpoint(s)",
+                        resumed,
+                    )
+                drained = await drain(active)
+                failures = 0
+            except Exception:
+                # One bad iteration (a database restart, a lost connection in
+                # a claim or a reclaim) must not end the process: a dead
+                # worker strands every queued task until the next deploy. A
+                # task caught mid-claim stays RUNNING without a lease and is
+                # reclaimed on a later iteration.
+                failures += 1
+                delay = min(poll_interval * 2**failures, MAX_LOOP_BACKOFF_SECONDS)
+                logger.exception(
+                    "worker loop iteration failed (%d in a row); retrying in %.0fs",
+                    failures,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            if not drained:
                 await asyncio.sleep(poll_interval)
     except asyncio.CancelledError:
         logger.info("worker stopping")

@@ -20,6 +20,7 @@ honest description of what happened.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -54,7 +55,7 @@ from packages.epistemo.contracts import (
     checkpoint_failed_phases,
 )
 from packages.epistemo.state_machine import TaskStateMachine
-from packages.epistemo.stopping import StopReason, decide_stop
+from packages.epistemo.stopping import StopReason
 from packages.evidence.lifecycle import QuarantinedNode
 from packages.kernel.database import DatabaseSessionLost, is_connection_failure
 from packages.memory.collective import CollectiveMemory
@@ -63,6 +64,17 @@ from packages.memory.recall import get_policy, perspective_recall
 
 PHASE_FAILED = "PHASE_FAILED"
 PHASE_SKIPPED = "PHASE_SKIPPED"
+
+# Phases a spent wall-clock budget does not skip. The final independent
+# rejudgment is the protocol's close (CLAUDE.md 4): every seat's last
+# position, its dissent and its stance come from it, and without it the
+# conclusion has no sides to lay out. It is one bounded phase, and the worker
+# watchdog's buffer is sized to cover it. The phases before it that the
+# budget did skip are still reported as gaps. A researcher's stop still ends
+# the run before it.
+ALWAYS_RUN_PHASES: frozenset[TaskPhase] = frozenset(
+    {TaskPhase.FINAL_REJUDGMENT, TaskPhase.REPORTING}
+)
 
 # Seats are asked in a fixed order so that a replay produces the same event
 # sequence. A set iteration order would differ between processes and break the
@@ -486,6 +498,40 @@ class CouncilOrchestrator:
                 # was part of the original run, so it was fast-forwarded past;
                 # re-executing it does not need a second transition.
                 machine.transition_to(phase)
+            # Round-10 「停止研究」: check the side channel at the phase
+            # boundary. A stop lands between rounds, never mid-round, so the
+            # phases that ran keep their events and the report says exactly
+            # how far the run got before the researcher stopped it. Checked
+            # before the researcher checkpoint below: a stop pressed late in
+            # the bounty round used to park the task at the checkpoint and
+            # only fire once the researcher answered it.
+            if (
+                self._cancel_check is not None
+                and (stop is StopReason.CONTINUE or phase in ALWAYS_RUN_PHASES)
+                and await self._cancel_check()
+            ):
+                report.phases_run = tuple(run_phases)
+                report.phases_skipped = tuple(skipped)
+                report.events_appended = state.events
+                report.unfilled_slots = tuple(state.unfilled)
+                report.absent_seats = frozenset(state.absent)
+                report.failures = tuple(state.failures)
+                report.seat_runs = tuple(state.seat_runs)
+                report.stop_reason = StopReason.CANCELLED
+                report.final_status = TaskStatus.CANCELLED
+                report.checkpoint = CouncilCheckpoint(
+                    run_phases=tuple(run_phases),
+                    carried=state.carried,
+                    unfilled=tuple(state.unfilled),
+                    absent_seats=tuple(
+                        sorted(state.absent, key=lambda seat: seat.value)
+                    ),
+                    failures=tuple(state.failures),
+                    events_appended=state.events,
+                    phase_snapshots=tuple(snapshots),
+                )
+                machine.transition_to(TaskStatus.CANCELLED)
+                return report
             if (
                 stop_before is not None
                 and phase == stop_before
@@ -524,40 +570,9 @@ class CouncilOrchestrator:
                 )
                 machine.transition_to(TaskStatus.AWAITING_COUNCIL_INPUT)
                 return report
-            # Round-10 「停止研究」: check the side channel at the phase
-            # boundary. A stop lands between rounds, never mid-round, so the
-            # phases that ran keep their events and the report says exactly
-            # how far the run got before the researcher stopped it.
-            if (
-                self._cancel_check is not None
-                and stop is StopReason.CONTINUE
-                and await self._cancel_check()
-            ):
-                report.phases_run = tuple(run_phases)
-                report.phases_skipped = tuple(skipped)
-                report.events_appended = state.events
-                report.unfilled_slots = tuple(state.unfilled)
-                report.absent_seats = frozenset(state.absent)
-                report.failures = tuple(state.failures)
-                report.seat_runs = tuple(state.seat_runs)
-                report.stop_reason = StopReason.CANCELLED
-                report.final_status = TaskStatus.CANCELLED
-                report.checkpoint = CouncilCheckpoint(
-                    run_phases=tuple(run_phases),
-                    carried=state.carried,
-                    unfilled=tuple(state.unfilled),
-                    absent_seats=tuple(
-                        sorted(state.absent, key=lambda seat: seat.value)
-                    ),
-                    failures=tuple(state.failures),
-                    events_appended=state.events,
-                    phase_snapshots=tuple(snapshots),
-                )
-                machine.transition_to(TaskStatus.CANCELLED)
-                return report
             if stop is StopReason.CONTINUE:
                 stop = self._check_budget()
-            if stop is not StopReason.CONTINUE:
+            if stop is not StopReason.CONTINUE and phase not in ALWAYS_RUN_PHASES:
                 # A phase that never ran is a gap, not a silent omission.
                 skipped.append(phase)
                 state.unfilled.append(f"{phase.value}:not_reached")
@@ -724,6 +739,12 @@ class CouncilOrchestrator:
         requires all seven rounds, and a round that produced nothing is a finding
         about the evidence, not a reason to skip the falsifier.
 
+        Nor can the tool-call budget. Only ACQUISITION calls tools, and it
+        already refuses each request the budget cannot pay for and reports it
+        as an unfilled slot. Stopping the *council* on it skipped every
+        deliberation phase -- cross-examination, the falsifier, the final
+        rejudgment -- over a budget none of them spends.
+
         The wall-clock check runs first: it is the one budget dimension that
         had no enforcement (``consume_wall_clock`` was defined but never
         called), so a run whose model calls kept the worker alive could
@@ -736,11 +757,7 @@ class CouncilOrchestrator:
                 self._budget.record_elapsed(time.monotonic() - self._run_started)
             except BudgetExhausted:
                 return StopReason.BUDGET_EXHAUSTED
-        decision = decide_stop(
-            no_new_information_rounds=0,
-            budget_remaining=self._budget.tool_calls_remaining,
-        )
-        return decision.reason
+        return StopReason.CONTINUE
 
     async def _append_skip(
         self,
@@ -833,7 +850,13 @@ class CouncilOrchestrator:
                 task_id=task_id,
                 event_type=PHASE_FAILED,
                 payload={"phase": phase.value, "error": repr(error)},
-                idempotency_key=f"{phase.value}:failed",
+                # One event per distinct failure: a phase re-run by
+                # re-research that fails again with a different error is a
+                # second fact, not an identity conflict that fails the task.
+                idempotency_key=(
+                    f"{phase.value}:failed:"
+                    + hashlib.sha256(repr(error).encode()).hexdigest()[:16]
+                ),
             )
             state.events += 1
             return
@@ -979,6 +1002,7 @@ class CouncilOrchestrator:
 
 
 __all__ = [
+    "ALWAYS_RUN_PHASES",
     "PHASE_FAILED",
     "PHASE_SKIPPED",
     "CouncilOrchestrator",

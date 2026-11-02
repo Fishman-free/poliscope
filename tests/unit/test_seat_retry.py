@@ -17,6 +17,7 @@ against real event loops without real 120s waits.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from uuid import uuid4
 
@@ -306,3 +307,62 @@ async def test_council_cancelled_propagates_instead_of_being_retried() -> None:
             attempt_timeout_seconds=5.0,
             retry_pause_seconds=0.0,
         )
+
+
+def test_thinking_phases_get_the_longer_attempt_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production cross-examination calls clustered at 118-119 s under the old
+    flat 120 s cap: the window, not the model, was cutting them off."""
+    from packages.council.rounds.registry import (
+        STRONG_PHASE_ATTEMPT_TIMEOUT_SECONDS,
+        _seat_attempt_timeout_seconds,
+    )
+
+    monkeypatch.delenv("POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS", raising=False)
+    for phase in (
+        TaskPhase.PRECOMMITMENT,
+        TaskPhase.CROSS_EXAMINATION,
+        TaskPhase.BLINDSPOT_BOUNTY,
+        TaskPhase.FINAL_REJUDGMENT,
+    ):
+        timeout = _seat_attempt_timeout_seconds(phase)
+        assert timeout == STRONG_PHASE_ATTEMPT_TIMEOUT_SECONDS
+    timeout = _seat_attempt_timeout_seconds(TaskPhase.ACQUISITION)
+    assert timeout == SEAT_ATTEMPT_TIMEOUT_SECONDS
+    # An operator override still wins everywhere.
+    monkeypatch.setenv("POLISCOPE_SEAT_ATTEMPT_TIMEOUT_SECONDS", "30")
+    assert _seat_attempt_timeout_seconds(TaskPhase.CROSS_EXAMINATION) == 30.0
+
+
+async def test_each_absent_seat_keeps_its_own_reason_when_asked_concurrently() -> None:
+    """Seats answer concurrently now; a shared ``last_error`` slot would hand
+    one seat another seat's failure reason."""
+    deliberator = _PerSeatErrorDeliberator()
+    _outputs, _unfilled, absent, reasons, _attempts = await _collect(
+        _context(deliberator),
+        attempt_timeout_seconds=5.0,
+        retry_pause_seconds=0.0,
+        max_attempts=1,
+        concurrency=7,
+    )
+    assert absent == frozenset(Seat)
+    assert all(reasons[seat] == f"{seat.value} is down" for seat in Seat)
+
+
+class _PerSeatErrorDeliberator:
+    def __init__(self) -> None:
+        self.last_error: str | None = None
+        self._errors: dict[Seat, str] = {}
+
+    def error_for(self, seat: Seat) -> str | None:
+        return self._errors.get(seat)
+
+    async def deliberate(
+        self, seat: Seat, phase: TaskPhase, context: PhaseContext
+    ) -> Mapping[str, object] | None:
+        self._errors[seat] = self.last_error = f"{seat.value} is down"
+        # Yield after recording, as the real deliberator does while it stops
+        # its heartbeat: the other seats overwrite ``last_error`` meanwhile.
+        await asyncio.sleep(0.01)
+        return None

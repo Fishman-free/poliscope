@@ -27,6 +27,7 @@ from apps.worker.main import (
     emergency_finalize_task,
     recover_stale_running,
     resume_expired_council_inputs,
+    task_lease,
 )
 from packages.council.contracts import Seat
 from packages.council.models import CouncilRoundModel, ScientistRunModel
@@ -43,6 +44,7 @@ from packages.epistemo.contracts import (
     TaskStatus,
 )
 from packages.epistemo.orchestrator import (
+    ALWAYS_RUN_PHASES,
     SEAT_RUN_ABSENT,
     SEAT_RUN_COMPLETED,
 )
@@ -52,6 +54,7 @@ from packages.evidence.models import (
     GraphNodeModel,
     ScientificEventModel,
 )
+from packages.evidence.sql_ledger import SqlEventLedger
 from packages.reports.synthesis import FINAL_PAPER_DRAFTED
 from packages.research.models import AtomicClaimModel, ResearchTaskModel
 from packages.research.repository import CLAIM_CONFIRMED, ResearchRepository
@@ -64,6 +67,7 @@ async def _seed_queued_task(
     sessions: async_sessionmaker[AsyncSession],
     *,
     tool_call_limit: int = 100,
+    wall_clock_minutes: int = 60,
 ) -> tuple[UUID, UUID]:
     """Create one QUEUED task with one confirmed claim. Returns (task, claim)."""
     task_id = uuid4()
@@ -76,7 +80,7 @@ async def _seed_queued_task(
                 question=QUESTION,
                 status=TaskStatus.QUEUED,
                 created_by="worker_pipeline_test",
-                wall_clock_minutes=60,
+                wall_clock_minutes=wall_clock_minutes,
                 model_cost_usd=Decimal("10.0000"),
                 tool_call_limit=tool_call_limit,
                 source_limit=50,
@@ -486,15 +490,38 @@ async def test_an_exhausted_budget_skips_phases_and_says_so(
     app_sessions: async_sessionmaker[AsyncSession],
     projector_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    """CLAUDE.md 10 forbids faking a complete result when the budget runs out."""
+    """CLAUDE.md 10 forbids faking a complete result when the budget runs out.
+
+    A spent wall clock skips the investigative phases and reports each as a
+    gap, but the protocol's close (the final independent rejudgment) still
+    runs, so the conclusion is never left without the seats' last positions.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions, wall_clock_minutes=0)
+
+    result = await run_task(app_sessions, projector_sessions, task_id)
+
+    skipped = tuple(p for p in PHASE_SEQUENCE if p not in ALWAYS_RUN_PHASES)
+    assert result.run.phases_skipped == skipped
+    assert set(result.run.phases_run) == set(ALWAYS_RUN_PHASES)
+    assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
+    assert {f"{phase.value}:not_reached" for phase in skipped} <= set(
+        result.run.unfilled_slots
+    )
+
+
+async def test_a_spent_tool_budget_does_not_stop_the_council(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """Only acquisition spends tool calls; the deliberation phases still run."""
     task_id, _ = await _seed_queued_task(app_sessions, tool_call_limit=0)
 
     result = await run_task(app_sessions, projector_sessions, task_id)
 
-    assert result.run.phases_run == ()
-    assert result.run.phases_skipped == PHASE_SEQUENCE
-    assert result.run.final_status == TaskStatus.COMPLETED_WITH_GAPS
-    assert all(slot.endswith(":not_reached") for slot in result.run.unfilled_slots)
+    assert result.run.phases_skipped == ()
+    # The first pass runs up to the researcher's checkpoint, as usual.
+    assert result.run.final_status == TaskStatus.AWAITING_COUNCIL_INPUT
+    assert TaskPhase.CROSS_EXAMINATION in result.run.phases_run
 
 
 async def test_claim_queued_tasks_returns_the_canonical_uuid_type(
@@ -650,14 +677,12 @@ async def test_claim_marks_the_task_running_so_it_is_never_claimed_twice(
 async def test_recover_stale_running_requeues_only_crashed_claims(
     app_sessions: async_sessionmaker[AsyncSession],
 ) -> None:
-    """A crashed worker leaves RUNNING rows; reclaim only the stale ones.
+    """A crashed worker leaves RUNNING rows; reclaim only the orphaned ones.
 
-    The stale threshold is the task's own wall-clock budget times two plus a
-    buffer: a legitimate run stops when its budget is exhausted, so anything
-    still RUNNING beyond that is a dead claim. Re-running a reclaimed task is
-    safe because a crashed run's transaction rolled back -- no committed event
-    can collide with the rerun, and a run whose events *were* committed also
-    committed its terminal status, so it is never RUNNING here.
+    Orphaned means no live worker holds the task's lease and the claim is
+    older than the claim grace. Re-running a reclaimed task is safe because a
+    crashed run's open transaction rolled back and it resumes from its last
+    committed phase checkpoint.
     """
     task_id, _ = await _seed_queued_task(app_sessions)  # wall_clock_minutes=60
     fresh_task, _ = await _seed_queued_task(app_sessions)
@@ -667,7 +692,7 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
     await claim_queued_tasks(app_sessions, limit=10)
     assert await _status(app_sessions, fresh_task) == TaskStatus.RUNNING
 
-    # Age the first claim beyond its 2*60 + 15 = 135 minute threshold.
+    # Age the first claim beyond the claim grace; nobody holds its lease.
     async with app_sessions() as session:
         await session.execute(
             update(ResearchTaskModel)
@@ -694,6 +719,94 @@ async def test_recover_stale_running_requeues_only_crashed_claims(
 
     # The reclaimed task can be claimed and run again.
     assert task_id in await claim_queued_tasks(app_sessions, limit=10)
+
+
+async def test_a_task_whose_lease_is_held_is_never_reclaimed(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """A live worker's long run is not an orphan, however old its claim is.
+
+    The lease is what tells the two apart: a deploy-killed worker's
+    connection is gone (lease free, reclaimed at once), a live worker's
+    lease is held (left alone). The lease dies with its connection, so the
+    task is reclaimable the moment the holder goes away.
+    """
+    task_id, _ = await _seed_queued_task(app_sessions)
+    await claim_queued_tasks(app_sessions, limit=10)
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(updated_at=func.now() - text("interval '4 hours'"))
+        )
+        await session.commit()
+
+    engine = app_sessions.kw["bind"]
+    async with task_lease(engine, task_id) as taken:
+        assert taken
+        assert await recover_stale_running(app_sessions) == 0
+        assert await _status(app_sessions, task_id) == TaskStatus.RUNNING
+
+    assert await recover_stale_running(app_sessions) == 1
+    assert await _status(app_sessions, task_id) == TaskStatus.QUEUED
+
+
+async def test_a_stop_left_by_a_failed_run_does_not_cancel_the_next_run(
+    app_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """The stop channel belongs to one run. A run that ends FAILED (watchdog,
+    crash) with a stop request still recorded used to leave the row behind,
+    and the re-research of the same task was CANCELLED at its first phase."""
+    task_id, _ = await _seed_queued_task(app_sessions)
+    await claim_queued_tasks(app_sessions, limit=10)
+    async with app_sessions() as session:
+        await ResearchRepository(session).request_cancel(task_id, "researcher")
+        await session.commit()
+
+    assert await emergency_finalize_task(app_sessions, task_id, reason="watchdog")
+
+    assert await _status(app_sessions, task_id) == TaskStatus.FAILED
+    async with app_sessions() as session:
+        assert not await ResearchRepository(session).check_cancel_request(task_id)
+
+
+async def test_a_paper_review_killed_before_its_first_checkpoint_resumes(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The understanding is committed by the first audited model call, long
+    before the first phase checkpoint. A worker killed in between used to
+    read the paper again on resume, hit the stored event's key with a
+    different answer, and FAIL the review. The resumed run now reuses it."""
+    task_id, _ = await _seed_queued_task(app_sessions)
+    async with app_sessions() as session:
+        await session.execute(
+            update(ResearchTaskModel)
+            .where(ResearchTaskModel.task_id == task_id)
+            .values(task_type="paper_review")
+        )
+        await SqlEventLedger(session).append(
+            task_id,
+            "PAPER_UNDERSTANDING_CAPTURED",
+            {
+                "title": "Ladies first",
+                "research_question": "Does it help gender equality?",
+                "main_claims": [],
+                "unverifiable": [],
+                "truncated": False,
+            },
+            "PAPER_UNDERSTANDING:captured",
+        )
+        await session.commit()
+
+    async def must_not_reread(*args: object, **kwargs: object) -> object:
+        raise AssertionError("the captured understanding must be reused")
+
+    monkeypatch.setattr("apps.worker.jobs.understand_paper", must_not_reread)
+    result = await run_task(app_sessions, projector_sessions, task_id)
+
+    assert result.run.final_status == TaskStatus.AWAITING_COUNCIL_INPUT
 
 
 def test_council_input_grace_configuration_is_bounded_and_validated() -> None:

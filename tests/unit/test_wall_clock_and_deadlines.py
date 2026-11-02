@@ -30,7 +30,7 @@ from apps.worker.main import WorkerContext, run_one
 from packages.council.contracts import Seat
 from packages.epistemo.budget import BudgetExhausted, BudgetTracker, ResearchBudget
 from packages.epistemo.contracts import PHASE_SEQUENCE, TaskStatus
-from packages.epistemo.orchestrator import CouncilOrchestrator
+from packages.epistemo.orchestrator import ALWAYS_RUN_PHASES, CouncilOrchestrator
 from packages.epistemo.stopping import StopReason
 from packages.kernel.contracts import FrozenDict
 from packages.models.contracts import (
@@ -211,6 +211,13 @@ async def test_invoke_deadline_cancels_transport_retry_after_backoff() -> None:
     assert calls == 1
 
 
+class _UnreachableEngine:
+    """No database: the liveness lease degrades to "not taken"."""
+
+    async def connect(self) -> object:
+        raise OSError("no database in unit tests")
+
+
 async def test_worker_watchdog_waits_for_cancellation_before_emergency_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -238,6 +245,7 @@ async def test_worker_watchdog_waits_for_cancellation_before_emergency_fallback(
     context = cast(
         WorkerContext,
         SimpleNamespace(
+            app_engine=_UnreachableEngine(),
             app_sessions=object(),
             projector_sessions=object(),
             gateway=None,
@@ -272,6 +280,7 @@ async def test_worker_unexpected_exception_triggers_emergency_fallback(
     context = cast(
         WorkerContext,
         SimpleNamespace(
+            app_engine=_UnreachableEngine(),
             app_sessions=object(),
             projector_sessions=object(),
             gateway=None,
@@ -319,7 +328,9 @@ class _FakeEventSink:
 
 async def test_orchestrator_stops_when_wall_clock_budget_is_zero() -> None:
     """A zero wall-clock budget stops the council between phases with an
-    honest skip, instead of running all eight rounds regardless."""
+    honest skip, instead of running all eight rounds regardless -- except the
+    protocol's close, which always runs so the conclusion keeps the seats'
+    final positions."""
     sink = _FakeEventSink()
     orchestrator = CouncilOrchestrator(
         ledger=sink,  # type: ignore[arg-type]
@@ -335,8 +346,11 @@ async def test_orchestrator_stops_when_wall_clock_budget_is_zero() -> None:
     report = await orchestrator.run(task_id=uuid4(), question="Is X caused by Y?")
     assert report.stop_reason is StopReason.BUDGET_EXHAUSTED
     assert report.final_status is TaskStatus.COMPLETED_WITH_GAPS
-    # Every phase was skipped (none ran), and each skip is on the ledger.
-    assert list(report.phases_skipped) == list(PHASE_SEQUENCE)
+    # Every investigative phase was skipped, and each skip is on the ledger.
+    assert list(report.phases_skipped) == [
+        phase for phase in PHASE_SEQUENCE if phase not in ALWAYS_RUN_PHASES
+    ]
+    assert set(report.phases_run) == set(ALWAYS_RUN_PHASES)
     assert any(key.endswith(":skipped") for _, key, _ in sink.calls)
 
 

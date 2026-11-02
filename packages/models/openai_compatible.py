@@ -185,17 +185,20 @@ class OpenAICompatibleModelGateway:
         if self._owns_client:
             await self._client.aclose()
 
+    def _invoke_deadline(self, request: ModelRequest) -> float:
+        return request.deadline_seconds or self._config.invoke_total_timeout_seconds
+
     async def invoke(self, request: ModelRequest) -> ModelResult:
         """Run the complete transport/repair matrix under one hard deadline."""
+        total = self._invoke_deadline(request)
         try:
             return await asyncio.wait_for(
                 self._invoke_with_repair(request),
-                timeout=self._config.invoke_total_timeout_seconds,
+                timeout=total,
             )
         except TimeoutError as error:
             raise TimeoutError(
-                "model invoke exceeded the "
-                f"{self._config.invoke_total_timeout_seconds:g}s total deadline"
+                f"model invoke exceeded the {total:g}s total deadline"
             ) from error
 
     async def _invoke_with_repair(self, request: ModelRequest) -> ModelResult:
@@ -237,13 +240,13 @@ class OpenAICompatibleModelGateway:
         # silence for one seat. A total deadline turns that worst case into a
         # single bounded failure the caller degrades from, never a worker-wide
         # hang. Checked between attempts -- a natural cancellation point.
-        deadline = started + self._config.invoke_total_timeout_seconds
+        deadline = started + self._invoke_deadline(request)
 
         for attempt in range(MAX_SCHEMA_REPAIR_ATTEMPTS + 1):
             if time.monotonic() > deadline:
                 raise TimeoutError(
                     f"model invoke exceeded the "
-                    f"{self._config.invoke_total_timeout_seconds:g}s total deadline"
+                    f"{self._invoke_deadline(request):g}s total deadline"
                 )
             if attempt:
                 repaired = True

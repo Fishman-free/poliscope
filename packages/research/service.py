@@ -234,6 +234,9 @@ class ResearchService:
                 await self._repository.set_checkpoint(
                     task_id, checkpoint.model_dump(mode="json")
                 )
+                # A stop pressed during the earlier run belongs to that run;
+                # left behind, it would cancel this one at its first phase.
+                await self._repository.clear_cancel_request(task_id)
                 await self._repository.set_status(
                     task_id, TaskStatus.QUEUED
                 )

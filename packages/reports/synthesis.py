@@ -111,6 +111,9 @@ FINAL_PAPER_DRAFTED = "FINAL_PAPER_DRAFTED"
 FINAL_PAPER_FAILED = "FINAL_PAPER_FAILED"
 
 _PAPER_IDEMPOTENCY_KEY = "REPORTING:final_paper"
+# The synthesis call's own ceiling (see ModelRequest.deadline_seconds). The
+# worker watchdog's buffer is sized to include it.
+SYNTHESIS_DEADLINE_SECONDS = 600.0
 _EMERGENCY_PAPER_IDEMPOTENCY_KEY = "REPORTING:emergency_fallback"
 _FAILED_IDEMPOTENCY_KEY = "REPORTING:final_paper_failed"
 
@@ -1254,6 +1257,7 @@ async def _synthesize(
             ModelMessage(role="user", content=user_prompt),
         ),
         output_schema=output_schema,
+        deadline_seconds=SYNTHESIS_DEADLINE_SECONDS,
         evidence_refs=(
             # asyncpg returns its own UUID subclass, which ContractModel
             # rejects on purpose (packages/kernel/contracts.py) -- normalise
