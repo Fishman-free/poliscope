@@ -21,6 +21,7 @@ a gap, not a Level B fallback.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -269,7 +270,10 @@ class FindingExtractor:
             return _gap(f"full text fetch failed: {error!r}")
 
         try:
-            pages = extract_pages(fetched.content)
+            # Parsing (and OCR of scanned pages) is CPU-bound and can run for
+            # minutes; on the event loop it froze every heartbeat, stop poll
+            # and seat timeout of the run. A worker thread keeps it live.
+            pages = await asyncio.to_thread(extract_pages, fetched.content)
         except PdfExtractionError as error:
             return _gap(f"pdf parsing failed: {error}")
         if not pages:
@@ -468,7 +472,7 @@ class FindingExtractor:
             return _gap("uploaded object not found in private object store")
 
         try:
-            pages, _ = extract_text(content, file_name)
+            pages, _ = await asyncio.to_thread(extract_text, content, file_name)
         except InvalidDocument as error:
             return _gap(str(error))
         if not pages:
@@ -547,7 +551,7 @@ class FindingExtractor:
                 )
 
             try:
-                pages = extract_pages(content)
+                pages = await asyncio.to_thread(extract_pages, content)
             except PdfExtractionError as error:
                 return _gap(f"pdf parsing failed: {error}")
             if not pages:

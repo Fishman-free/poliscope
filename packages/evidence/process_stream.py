@@ -58,7 +58,9 @@ MAX_CLOSING_RETRIES = 2
 # long phase -- essential on the 2-core/2 GB deployment -- without losing any
 # text (the deltas are concatenated in order). Structural kinds are never
 # merged, since they open/close live-view slices.
-COALESCE_TOKEN_KINDS = frozenset({"model_reasoning", "model_token"})
+COALESCE_TOKEN_KINDS = frozenset(
+    {"model_reasoning", "model_token", "synthesis_reasoning", "synthesis_token"}
+)
 
 
 def _coalesce_batch(

@@ -12,16 +12,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
+from types import SimpleNamespace
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
+from apps.worker.jobs import JobResult, TaskNotRunnable, deliberate, run_task
 from apps.worker.main import (
     WorkerContext,
     _council_input_grace_seconds,
+    backfill_projections,
     claim_queued_tasks,
     drain,
     emergency_finalize_task,
@@ -807,6 +810,40 @@ async def test_a_paper_review_killed_before_its_first_checkpoint_resumes(
     result = await run_task(app_sessions, projector_sessions, task_id)
 
     assert result.run.final_status == TaskStatus.AWAITING_COUNCIL_INPUT
+
+
+async def test_a_task_left_without_its_graph_is_projected_by_the_sweep(
+    app_sessions: async_sessionmaker[AsyncSession],
+    projector_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    """The deliberation committed its terminal status, then the worker died
+    before projecting (or the projection failed). Nothing projected the task
+    again, so its evidence graph stayed empty forever. The worker's sweep now
+    projects it."""
+    task_id, _ = await _seed_queued_task(app_sessions, wall_clock_minutes=0)
+    async with app_sessions() as session:
+        report = await deliberate(session, task_id)
+        await session.commit()
+    assert report.final_status == TaskStatus.COMPLETED_WITH_GAPS
+    before = await _events(app_sessions, task_id)
+    assert any(event.status == "pending" for event in before)
+
+    context = cast(
+        WorkerContext,
+        SimpleNamespace(
+            app_sessions=app_sessions, projector_sessions=projector_sessions
+        ),
+    )
+    projected = 0
+    for _ in range(50):  # other tests may leave unprojected tasks behind
+        if not any(
+            event.status == "pending" for event in await _events(app_sessions, task_id)
+        ):
+            break
+        projected += await backfill_projections(context, limit=50)
+    assert projected >= 1
+    after = await _events(app_sessions, task_id)
+    assert all(event.status != "pending" for event in after)
 
 
 def test_council_input_grace_configuration_is_bounded_and_validated() -> None:

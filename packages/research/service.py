@@ -230,6 +230,11 @@ class ResearchService:
                     phase_snapshots=checkpoint.phase_snapshots,
                     restart_from=first,
                     guidance=checkpoint.guidance,
+                    # The researcher already had their steer; a re-run must
+                    # not park at the checkpoint again, and the seats keep
+                    # what they remembered.
+                    gate_reached=checkpoint.gate_reached,
+                    memory_snapshot=checkpoint.memory_snapshot,
                 )
                 await self._repository.set_checkpoint(
                     task_id, checkpoint.model_dump(mode="json")

@@ -145,6 +145,12 @@ class CouncilCheckpoint(ContractModel):
     # halts at the gate again on resume instead of running straight through
     # JOINT_MODELING without a human ever being offered the steer.
     gate_reached: bool = False
+    # Every seat's private process memory as of this checkpoint
+    # (``CouncilMemory.snapshot``), so a resumed run -- after the researcher
+    # gate, a deploy, a crash or a lost connection -- continues with seats
+    # that remember the debate instead of seven freshly initialised ones.
+    # Written by the worker; empty when no memory was captured.
+    memory_snapshot: FrozenDict[str, object] = FrozenDict()
 
 
 class CouncilPhaseSnapshot(ContractModel):

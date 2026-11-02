@@ -16,7 +16,9 @@ from packages.models.contracts import (
 # task_id identifies the research task, not the prompt, so it must not take
 # part in the recording key; deadline_seconds is how long we wait, not what we
 # ask. Everything else changes what the model is asked.
-VOLATILE_REQUEST_FIELDS = frozenset({"task_id", "deadline_seconds"})
+VOLATILE_REQUEST_FIELDS = frozenset(
+    {"task_id", "deadline_seconds", "stream_idle_seconds"}
+)
 
 
 class RecordingNotFound(Exception):

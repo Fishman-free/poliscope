@@ -39,6 +39,15 @@ BLINDSPOT_EVENT = "Blindspot"
 DISSENT_EVENT = "DissentCertificate"
 CONSENSUS_EVENT = "CONSENSUS_DRAFTED"
 CAPSULE_EVENT = "DebateCapsule"
+COLLECTIVE_EVENT_TYPES: tuple[str, ...] = (
+    CLAIM_EVENT,
+    CHALLENGE_EVENT,
+    EVIDENCE_EVENT,
+    BLINDSPOT_EVENT,
+    DISSENT_EVENT,
+    CONSENSUS_EVENT,
+    CAPSULE_EVENT,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +324,7 @@ __all__ = [
     "DISSENT_EVENT",
     "CONSENSUS_EVENT",
     "CAPSULE_EVENT",
+    "COLLECTIVE_EVENT_TYPES",
     "CollectiveEvent",
     "CollectiveMemory",
     "CollectiveView",

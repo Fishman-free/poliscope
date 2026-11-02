@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 import os
+import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -26,8 +27,10 @@ from uuid import UUID
 from sqlalchemy import CursorResult, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from apps.worker.jobs import JobResult, TaskNotRunnable, run_task
+from apps.worker.jobs import JobResult, TaskNotRunnable, project, run_task
 from packages.epistemo.contracts import TaskStatus
+from packages.evidence.models import ScientificEventModel
+from packages.evidence.sql_projector import STATUS_PENDING
 from packages.kernel.config import DatabaseConfig
 from packages.kernel.database import (
     canonical_uuid,
@@ -231,11 +234,12 @@ _LEASE_KEY = "hashtext(cast(:task_id as text))"
 # buffer must cover the longest thing a healthy run may still legally do
 # after the budget's last check: the phase already in flight and the final
 # rejudgment that always runs (two 900 s seat-collection deadlines), the
-# final synthesis call (its own 600 s deadline) and the projection. A shorter
+# streamed synthesis (900 s cap) plus its one non-streaming fallback (600 s)
+# and the projection. A shorter
 # buffer turned a slow but healthy run into FAILED (the old 300 s was less
 # than a single phase). What the watchdog is for is a *stuck* run that never
 # reaches a phase boundary.
-WATCHDOG_BUFFER_SECONDS = 2700.0
+WATCHDOG_BUFFER_SECONDS = 3600.0
 DEFAULT_WATCHDOG_SECONDS = 3600.0
 
 
@@ -337,6 +341,70 @@ async def recover_stale_running(
             with suppress(Exception):
                 await session.rollback()
             raise
+
+
+# Statuses in which no worker will project a task's events on its own: the
+# run is over, parked at the researcher checkpoint, or paused. A task whose
+# projection failed (a crash between the terminal commit and the projection,
+# a database outage, a watchdog FAILED) used to stay without its evidence
+# graph forever; the sweep below projects whatever such tasks left pending.
+_UNATTENDED_STATUSES = (
+    TaskStatus.COMPLETED,
+    TaskStatus.COMPLETED_WITH_GAPS,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELLED,
+    TaskStatus.AWAITING_COUNCIL_INPUT,
+    TaskStatus.PAUSED,
+)
+PROJECTION_SWEEP_INTERVAL_SECONDS = 60.0
+PROJECTION_SWEEP_BATCH = 3
+
+
+async def backfill_projections(
+    context: WorkerContext,
+    *,
+    limit: int = PROJECTION_SWEEP_BATCH,
+) -> int:
+    """Project the pending events of tasks nobody else will project.
+
+    Candidates are found with the app identity (the projector cannot read
+    ``research_tasks``) and projected with the projector identity, so the
+    single-writer rule (CLAUDE.md 5.3) holds. Projection is a pure function
+    of the committed ledger, so running it again is always safe. Bounded per
+    sweep; a task whose projection keeps failing is logged and retried on a
+    later sweep, never allowed to stop the worker.
+
+    Returns how many tasks were projected.
+    """
+    async with context.app_sessions() as session:
+        rows = await session.execute(
+            select(ScientificEventModel.task_id)
+            .join(
+                ResearchTaskModel,
+                ResearchTaskModel.task_id == ScientificEventModel.task_id,
+            )
+            .where(
+                ScientificEventModel.status == STATUS_PENDING,
+                ResearchTaskModel.status.in_(_UNATTENDED_STATUSES),
+            )
+            .distinct()
+            .limit(limit)
+        )
+        task_ids = [canonical_uuid(value) for value in rows.scalars()]
+    projected = 0
+    for task_id in task_ids:
+        async with context.projector_sessions() as session:
+            try:
+                await project(session, task_id)
+                await session.commit()
+                projected += 1
+            except Exception:
+                with suppress(Exception):
+                    await session.rollback()
+                logger.warning(
+                    "backfill projection failed for task %s", task_id, exc_info=True
+                )
+    return projected
 
 
 async def requeue_task(
@@ -574,9 +642,18 @@ async def run_worker(
     active = WorkerContext.from_env() if context is None else context
     council_input_grace = _council_input_grace_seconds()
     failures = 0
+    next_sweep = 0.0
     try:
         while True:
             try:
+                if time.monotonic() >= next_sweep:
+                    next_sweep = time.monotonic() + PROJECTION_SWEEP_INTERVAL_SECONDS
+                    backfilled = await backfill_projections(active)
+                    if backfilled:
+                        logger.info(
+                            "projected %d task(s) left without their graph",
+                            backfilled,
+                        )
                 # A killed worker leaves RUNNING claims behind; reclaim them
                 # before claiming anything new. On a fresh start (a deploy)
                 # this is what resumes the task the old process was running.

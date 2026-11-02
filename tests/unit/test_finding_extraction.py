@@ -675,3 +675,51 @@ async def test_extract_injects_researcher_skill_into_system_prompt() -> None:
     # never be mistaken for a source that supports a claim.
     assert "技能指令（非正式证据，来源：measurement-deep-dive）" in system_content
     assert "Always report the exact measurement instrument." in system_content
+
+
+async def test_slow_pdf_parsing_never_freezes_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OCR of a scanned paper runs for minutes. On the event loop it froze
+    every heartbeat, stop poll and seat timeout of the run; in a worker thread
+    the loop keeps ticking while the page is being read."""
+    import asyncio
+    import time
+
+    import packages.papers.finding_extraction as module
+
+    real_extract = module.extract_pages
+
+    def slow_extract(content: bytes) -> object:
+        time.sleep(0.3)  # a blocking parse, like PyMuPDF OCR
+        return real_extract(content)
+
+    monkeypatch.setattr(module, "extract_pages", slow_extract)
+    quote = "We found a significant association between screen time and anxiety."
+    extractor = FindingExtractor(
+        _FakeSession(),
+        _FakeToolGateway(url="https://example.test/paper.pdf"),
+        _FakeModelGateway(_valid_payload(quote)),
+        uuid4(),
+        fulltext_fetcher=_fetcher(_pdf_bytes(quote)),
+    )
+    # A timer callback, not asyncio.sleep: the module's autouse fixture makes
+    # sleep instant, which would turn a heartbeat loop into a busy spin.
+    loop = asyncio.get_running_loop()
+    ticks = 0
+    handle: asyncio.TimerHandle | None = None
+
+    def tick() -> None:
+        nonlocal ticks, handle
+        ticks += 1
+        handle = loop.call_later(0.02, tick)
+
+    handle = loop.call_later(0.02, tick)
+    try:
+        result = await extractor.extract(uuid4(), "10.1234/example")
+    finally:
+        handle.cancel()
+
+    assert result.ok is True
+    # ~15 ticks fit in the 0.3 s parse; a blocked loop would manage at most 1.
+    assert ticks >= 5

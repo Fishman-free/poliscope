@@ -158,6 +158,10 @@ class OpenAICompatibleConfig:
         )
 
 
+class StreamIdle(TimeoutError):
+    """A streamed call stopped producing text before it finished."""
+
+
 class OpenAICompatibleModelGateway:
     """Satisfies ``ModelGateway`` against any OpenAI-compatible provider."""
 
@@ -355,15 +359,23 @@ class OpenAICompatibleModelGateway:
         # (httpx closes it in ``__aexit__`` on cancellation), the caller falls
         # back to the bounded non-streaming invoke, and the deltas already
         # relayed stay on the wire as an honest partial trace.
+        total = request.deadline_seconds or self._config.stream_total_timeout_seconds
         try:
             return await asyncio.wait_for(
-                self._stream_once(body, schema, request.output_schema, on_event),
-                timeout=self._config.stream_total_timeout_seconds,
+                self._stream_once(
+                    body,
+                    schema,
+                    request.output_schema,
+                    on_event,
+                    idle_seconds=request.stream_idle_seconds,
+                ),
+                timeout=total,
             )
+        except StreamIdle:
+            raise
         except TimeoutError as error:
             raise TimeoutError(
-                f"model stream exceeded the "
-                f"{self._config.stream_total_timeout_seconds:g}s total deadline"
+                f"model stream exceeded the {total:g}s total deadline"
             ) from error
 
     async def _stream_once(
@@ -372,8 +384,13 @@ class OpenAICompatibleModelGateway:
         schema: dict[str, Any],
         output_schema: str,
         on_event: Callable[[StreamEvent], Awaitable[None]],
+        *,
+        idle_seconds: float | None = None,
     ) -> ModelResult:
         started = time.monotonic()
+        # Progress means new reasoning or answer text, not any line: vendors
+        # send keep-alive lines while a model is stuck.
+        last_progress = started
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_call_parts: dict[int, dict[str, Any]] = {}
@@ -386,6 +403,15 @@ class OpenAICompatibleModelGateway:
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
+                # Checked on every line, keep-alive comments included: those
+                # are exactly what a stalled vendor keeps sending.
+                if (
+                    idle_seconds is not None
+                    and time.monotonic() - last_progress > idle_seconds
+                ):
+                    raise StreamIdle(
+                        f"model stream produced no new text for {idle_seconds:g}s"
+                    )
                 if not line.startswith("data:"):
                     continue
                 raw = line[5:].strip()
@@ -403,12 +429,14 @@ class OpenAICompatibleModelGateway:
                     text = delta.get("content")
                     if text:
                         content_parts.append(text)
+                        last_progress = time.monotonic()
                         await on_event(StreamEvent(kind="token", text=text))
                     reasoning = delta.get("reasoning_content") or delta.get(
                         "reasoning"
                     )
                     if reasoning:
                         reasoning_parts.append(reasoning)
+                        last_progress = time.monotonic()
                         await on_event(StreamEvent(kind="reasoning", text=reasoning))
                     for call in delta.get("tool_calls") or []:
                         index = int(call.get("index", 0))

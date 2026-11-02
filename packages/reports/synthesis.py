@@ -59,7 +59,9 @@ from packages.models.contracts import (
     ModelGateway,
     ModelMessage,
     ModelRequest,
+    ModelResult,
     SchemaStatus,
+    StreamEvent,
 )
 from packages.models.gateway import AuditedModelGateway
 from packages.reports.contracts import (
@@ -111,9 +113,19 @@ FINAL_PAPER_DRAFTED = "FINAL_PAPER_DRAFTED"
 FINAL_PAPER_FAILED = "FINAL_PAPER_FAILED"
 
 _PAPER_IDEMPOTENCY_KEY = "REPORTING:final_paper"
-# The synthesis call's own ceiling (see ModelRequest.deadline_seconds). The
-# worker watchdog's buffer is sized to include it.
+# The synthesis is streamed: the live view shows the conclusion being written,
+# and the call is judged by whether it is still writing, not by a fixed clock.
+# It fails only when no new text has arrived for SYNTHESIS_IDLE_SECONDS (or
+# the generous hard cap is reached). A streamed answer that does not parse
+# falls back once to the non-streaming call, which owns schema repair, under
+# SYNTHESIS_DEADLINE_SECONDS. The worker watchdog's buffer covers all three.
+SYNTHESIS_IDLE_SECONDS = 120.0
+SYNTHESIS_STREAM_CAP_SECONDS = 900.0
 SYNTHESIS_DEADLINE_SECONDS = 600.0
+# Display-only stream rows (process stream, never ledger).
+SYNTHESIS_REASONING = "synthesis_reasoning"
+SYNTHESIS_TOKEN = "synthesis_token"
+_RELAY_FLUSH_EVERY = 40
 _EMERGENCY_PAPER_IDEMPOTENCY_KEY = "REPORTING:emergency_fallback"
 _FAILED_IDEMPOTENCY_KEY = "REPORTING:final_paper_failed"
 
@@ -513,6 +525,21 @@ class _SynthesisProgress:
         self._flush = flush
         self._started = time.monotonic()
         self._heartbeat: asyncio.Task[None] | None = None
+        self._since_flush = 0
+
+    async def relay(self, event: StreamEvent) -> None:
+        """Put one streamed delta on the live view, flushed in batches."""
+        if self._emit is None or not event.text:
+            return
+        kind = SYNTHESIS_REASONING if event.kind == "reasoning" else SYNTHESIS_TOKEN
+        self._emit(kind, {"text": event.text})
+        self._since_flush += 1
+        if self._since_flush >= _RELAY_FLUSH_EVERY and self._flush is not None:
+            self._since_flush = 0
+            try:
+                await self._flush()
+            except Exception:  # noqa: BLE001 -- display rows only
+                logger.warning("synthesis stream flush failed", exc_info=True)
 
     async def _push(self, kind: str, payload: dict[str, object]) -> None:
         if self._emit is None:
@@ -1149,6 +1176,7 @@ async def synthesize_paper(
             gateway,
             output_language,
             emergency_reason=emergency_reason,
+            relay=progress.relay,
         )
         return outcome
     finally:
@@ -1162,6 +1190,7 @@ async def _synthesize(
     output_language: str | None,
     *,
     emergency_reason: str | None,
+    relay: Callable[[StreamEvent], Awaitable[None]] | None = None,
 ) -> SynthesisOutcome:
     task_id = canonical_uuid(task_id)
     task_query = await session.execute(
@@ -1268,8 +1297,9 @@ async def _synthesize(
     )
 
     try:
-        audited = AuditedModelGateway(gateway, session)
-        model_result = await audited.invoke(request)
+        model_result = await _call_synthesizer(
+            AuditedModelGateway(gateway, session), request, relay
+        )
         if model_result.schema_status == SchemaStatus.QUARANTINED:
             raise ValueError(
                 "synthesis schema could not be repaired; output quarantined"
@@ -1327,6 +1357,38 @@ async def _synthesize(
         _PAPER_IDEMPOTENCY_KEY,
     )
     return SynthesisOutcome(available=True)
+
+
+async def _call_synthesizer(
+    gateway: AuditedModelGateway,
+    request: ModelRequest,
+    relay: Callable[[StreamEvent], Awaitable[None]] | None,
+) -> ModelResult:
+    """Stream the synthesis; fall back once to the non-streaming call.
+
+    The stream has no repair step, so an answer that arrives complete but
+    does not fit the schema -- or a stream that stalls -- gets one
+    non-streaming attempt with repair before the deterministic filing.
+    """
+
+    async def ignore(_event: StreamEvent) -> None:
+        return None
+
+    # Contracts are immutable and refuse model_copy(update=...): rebuild.
+    fields = {name: getattr(request, name) for name in ModelRequest.model_fields}
+    fields["deadline_seconds"] = SYNTHESIS_STREAM_CAP_SECONDS
+    fields["stream_idle_seconds"] = SYNTHESIS_IDLE_SECONDS
+    streamed = ModelRequest(**fields)
+    try:
+        return await gateway.stream_invoke(streamed, relay or ignore)
+    except DatabaseSessionLost:
+        raise
+    except Exception as error:  # noqa: BLE001 -- the fallback call decides
+        logger.warning(
+            "streamed synthesis failed (%s); retrying without streaming",
+            sanitize_export(str(error))[:200],
+        )
+    return await gateway.invoke(request)
 
 
 async def ensure_reasoning_map(

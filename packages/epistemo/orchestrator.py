@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -57,10 +58,13 @@ from packages.epistemo.contracts import (
 from packages.epistemo.state_machine import TaskStateMachine
 from packages.epistemo.stopping import StopReason
 from packages.evidence.lifecycle import QuarantinedNode
+from packages.kernel.contracts import thaw_for_serialization
 from packages.kernel.database import DatabaseSessionLost, is_connection_failure
 from packages.memory.collective import CollectiveMemory
 from packages.memory.council_memory import CouncilMemory
 from packages.memory.recall import get_policy, perspective_recall
+
+logger = logging.getLogger(__name__)
 
 PHASE_FAILED = "PHASE_FAILED"
 PHASE_SKIPPED = "PHASE_SKIPPED"
@@ -472,6 +476,10 @@ class CouncilOrchestrator:
 
         if self._memory is not None:
             await self._memory.open(self._seats, question)
+            if resume_from is not None and resume_from.memory_snapshot:
+                # Restore after open(): open() seeds a fresh memory, and the
+                # snapshot replaces it with what the seats had learned.
+                await self._restore_memory(resume_from)
 
         # Wall-clock enforcement starts here so a resumed run budgets only the
         # phases it still has left, not the ones already on the ledger.
@@ -696,6 +704,30 @@ class CouncilOrchestrator:
         for slot in report.unfilled_slots:
             self._budget.mark_unfilled_slot(slot)
         return report
+
+    async def _restore_memory(self, checkpoint: CouncilCheckpoint) -> None:
+        """Load the seats' private memory from a checkpoint, best effort.
+
+        Process memory improves the debate but is never evidence; a snapshot
+        that cannot be read leaves the freshly opened memory in place rather
+        than failing the run.
+        """
+        assert self._memory is not None
+        try:
+            await self._memory.restore(
+                thaw_for_serialization(checkpoint.memory_snapshot)
+            )
+        except Exception:  # noqa: BLE001 -- recall quality, not correctness
+            logger.warning("could not restore seat memory", exc_info=True)
+
+    def absorb_history(self, events: object) -> None:
+        """Rebuild the collective frontier from events an earlier pass wrote.
+
+        A resumed run does not re-emit the phases it skips, so without this
+        the shared frontier the later phases read starts empty. ``events`` is
+        what :meth:`CollectiveMemory.absorb` accepts.
+        """
+        self._collective.absorb(events)
 
     def _running_checkpoint(
         self,

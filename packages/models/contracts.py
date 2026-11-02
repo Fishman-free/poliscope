@@ -40,6 +40,11 @@ class ModelRequest(ContractModel):
     # out at 300 s and fell back to mechanical filing). None keeps the
     # gateway default for every seat call.
     deadline_seconds: float | None = None
+    # Streamed calls only: fail when no new reasoning or answer text has
+    # arrived for this long. A long answer that keeps writing is never cut
+    # off by it; a stalled one is noticed without waiting out the whole
+    # deadline. None keeps the gateway's total-deadline-only behaviour.
+    stream_idle_seconds: float | None = None
 
 
 class ModelResult(ContractModel):

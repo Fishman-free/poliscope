@@ -36,7 +36,10 @@ from packages.models.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleModelGateway,
 )
-from packages.reports.synthesis import SYNTHESIS_DEADLINE_SECONDS
+from packages.reports.synthesis import (
+    SYNTHESIS_DEADLINE_SECONDS,
+    SYNTHESIS_STREAM_CAP_SECONDS,
+)
 
 
 class _Sink:
@@ -172,7 +175,9 @@ def test_the_watchdog_outlasts_everything_a_healthy_run_may_still_do() -> None:
     run the closing rejudgment and the synthesis; the watchdog must not fire
     first (the old 300 s buffer was shorter than one phase)."""
     assert WATCHDOG_BUFFER_SECONDS >= (
-        2 * _COLLECT_DEADLINE_SECONDS + SYNTHESIS_DEADLINE_SECONDS
+        2 * _COLLECT_DEADLINE_SECONDS
+        + SYNTHESIS_STREAM_CAP_SECONDS
+        + SYNTHESIS_DEADLINE_SECONDS
     )
 
 

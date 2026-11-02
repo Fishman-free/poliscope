@@ -20,6 +20,7 @@ an unsupported format must stay visibly unsupported, never be guessed at).
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -95,7 +96,8 @@ async def upload_paper(
     # extraction here refuses an unreadable upload with its reason up front
     # instead of a silent gap deep in the council run.
     try:
-        extract_text(content, filename)
+        # Off the event loop, for the same reason as knowledge ingestion.
+        await asyncio.to_thread(extract_text, content, filename)
     except InvalidDocument as error:
         # error.reason already carries a concrete, user-facing reason (e.g. the
         # password-protected-PDF message from packages/papers/parser.py); the

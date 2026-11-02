@@ -10,6 +10,7 @@ the module boundary acyclic.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from uuid import UUID
 
@@ -56,7 +57,9 @@ class KnowledgeService:
             raise InvalidDocument("uploaded file is empty")
         if len(content) > MAX_UPLOAD_BYTES:
             raise InvalidDocument("uploaded file exceeds the 20 MB limit")
-        blocks, page_count = extract_text(content, filename)
+        # Off the event loop: one large scanned upload must not stall every
+        # other request (and every SSE stream) this API process serves.
+        blocks, page_count = await asyncio.to_thread(extract_text, content, filename)
 
         suffix, content_type = file_type(content, filename)
         stored = self._object_store.store_named(

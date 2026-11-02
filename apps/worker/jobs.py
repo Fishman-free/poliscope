@@ -47,6 +47,7 @@ from packages.epistemo.contracts import (
     TaskStatus,
 )
 from packages.epistemo.orchestrator import (
+    ORDERED_SEATS,
     CouncilOrchestrator,
     SeatRunRecord,
     TaskRunReport,
@@ -62,6 +63,7 @@ from packages.evidence.sql_projector import (
     SqlGraphProjector,
     node_id_for,
 )
+from packages.kernel.contracts import thaw_for_serialization
 from packages.kernel.database import (
     canonical_uuid,
     guarded_write,
@@ -70,6 +72,7 @@ from packages.kernel.database import (
 from packages.knowledge.models import KnowledgeDocumentModel
 from packages.knowledge.search import KnowledgeBaseSearch
 from packages.memory.adapter import create_memory_adapter
+from packages.memory.collective import COLLECTIVE_EVENT_TYPES
 from packages.memory.council_memory import CouncilMemory
 from packages.models.contracts import ModelClass, ModelGateway
 from packages.models.endpoint_config import normalize_base_url
@@ -666,10 +669,43 @@ async def _deliberate_impl(
                 running.run_phases[-1],
                 phase_seat_runs,
             )
-        await repository.set_checkpoint(
-            task_id, running.model_dump(mode="json")
-        )
+        await repository.set_checkpoint(task_id, await _checkpoint_json(running))
         await session.commit()
+
+    # Process memory, per CLAUDE.md 6. It is created per run rather than per
+    # process so one task's recall can never leak into another's.
+    # Round-16: the upstream MemoBrain adapter (vendored, Apache-2.0) is used
+    # only when the gateway is a real OpenAI-compatible endpoint -- scripted
+    # test gateways and missing providers keep the heuristic graph adapter,
+    # preserving the honest no-model run and the evaluation baselines' exact
+    # semantics.
+    council_memory = CouncilMemory(
+        create_memory_adapter(
+            AuditedModelGateway(gateway, session)
+            if isinstance(gateway, OpenAICompatibleModelGateway)
+            else None
+        ),
+        task_id,
+    )
+
+    async def _checkpoint_json(
+        checkpoint: CouncilCheckpoint,
+    ) -> dict[str, object]:
+        """The checkpoint as stored, with the seats' private memory in it.
+
+        Every resume -- after the researcher gate, a deploy, a crash, a lost
+        connection -- restores this, so the seats continue the debate they
+        were having. Memory is recall quality, not correctness: a snapshot
+        that cannot be taken is logged and the checkpoint is stored without it.
+        """
+        payload = checkpoint.model_dump(mode="json")
+        try:
+            snapshot = await council_memory.snapshot(ORDERED_SEATS)
+        except Exception:  # noqa: BLE001
+            logger.warning("could not snapshot seat memory", exc_info=True)
+        else:
+            payload["memory_snapshot"] = thaw_for_serialization(snapshot)
+        return payload
 
     orchestrator = CouncilOrchestrator(
         ledger=SqlEventLedger(session),
@@ -683,21 +719,7 @@ async def _deliberate_impl(
         # reuses this session -- the same one the run's ledger appends to, so
         # the check and the events it stops share one transaction.
         cancel_check=lambda: repository.check_cancel_request(task_id),
-        # Process memory, per CLAUDE.md 6. It is created per run rather than per
-        # process so one task's recall can never leak into another's.
-        # Round-16: the upstream MemoBrain adapter (vendored, Apache-2.0) is
-        # used only when the gateway is a real OpenAI-compatible endpoint --
-        # scripted test gateways and missing providers keep the heuristic
-        # graph adapter, preserving the honest no-model run and the
-        # evaluation baselines' exact semantics.
-        memory=CouncilMemory(
-            create_memory_adapter(
-                AuditedModelGateway(gateway, session)
-                if isinstance(gateway, OpenAICompatibleModelGateway)
-                else None
-            ),
-            task_id,
-        ),
+        memory=council_memory,
         # Only when a tool provider is configured. Without one the acquisition
         # round records requests and reports the gap, per CLAUDE.md 7 and 10.
         acquirer=(
@@ -812,6 +834,10 @@ async def _deliberate_impl(
     resume_guidance = (
         checkpoint.guidance if checkpoint is not None and past_gate else None
     )
+    if checkpoint is not None:
+        # The phases this pass skips do not re-emit their events, so the
+        # shared frontier the later phases read is rebuilt from the ledger.
+        orchestrator.absorb_history(await _collective_history(session, task_id))
     report = await orchestrator.run(
         task_id=task_id,
         question=task.question,
@@ -847,7 +873,7 @@ async def _deliberate_impl(
         # still stores the snapshot so first_unfinished_phase can see that
         # every phase ran; it then returns None and the service clones.
         await repository.set_checkpoint(
-            task_id, report.checkpoint.model_dump(mode="json")
+            task_id, await _checkpoint_json(report.checkpoint)
         )
     else:
         await repository.set_checkpoint(task_id, None)
@@ -894,6 +920,21 @@ async def _deliberate_impl(
                 outcome.reason,
             )
     return report
+
+
+async def _collective_history(
+    session: AsyncSession, task_id: UUID
+) -> tuple[tuple[str, dict[str, object]], ...]:
+    """The task's committed cognitive events, in ledger order."""
+    result = await session.execute(
+        select(ScientificEventModel.event_type, ScientificEventModel.payload)
+        .where(
+            ScientificEventModel.task_id == task_id,
+            ScientificEventModel.event_type.in_(COLLECTIVE_EVENT_TYPES),
+        )
+        .order_by(ScientificEventModel.sequence)
+    )
+    return tuple((str(kind), dict(payload)) for kind, payload in result.all())
 
 
 async def project(session: AsyncSession, task_id: UUID) -> ProjectionReport:

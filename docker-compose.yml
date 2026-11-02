@@ -18,6 +18,11 @@
 # `service_completed_successfully`.
 services:
   postgres:
+    # Every long-running service comes back on its own after a crash or a
+    # host reboot (`docker` itself starts on boot); without this a rebooted
+    # server served nothing until someone ran `docker compose up` by hand.
+    # `migrate` is a one-shot job and deliberately has no restart policy.
+    restart: unless-stopped
     # Pulled from AWS ECR Public instead of Docker Hub: Hub is intermittently
     # unreachable from mainland-China hosts, and this deployment targets such a
     # host. The image is the same official postgres:16-alpine, just mirrored.
@@ -60,6 +65,7 @@ services:
         condition: service_healthy
 
   api:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -145,6 +151,7 @@ services:
         condition: service_completed_successfully
 
   web:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: apps/web/Dockerfile
@@ -168,6 +175,7 @@ services:
   # automatically requests and renews a real HTTPS certificate for it -- no
   # other change anywhere in this stack.
   caddy:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: deploy/caddy/Dockerfile

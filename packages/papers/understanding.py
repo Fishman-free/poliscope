@@ -26,6 +26,7 @@ Honesty invariants, mirroring ``packages/reports/synthesis.py``:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -160,7 +161,8 @@ async def load_paper_text(
         except ObjectNotFound:
             return "", False, f"uploaded object {object_key} missing from store"
         try:
-            blocks, _ = extract_text(content, filename)
+            # Off the event loop: OCR of a scanned upload can take minutes.
+            blocks, _ = await asyncio.to_thread(extract_text, content, filename)
         except InvalidDocument as error:
             return "", False, str(error)
         if not blocks:
