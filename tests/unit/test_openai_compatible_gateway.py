@@ -136,7 +136,9 @@ async def test_parses_forced_tool_call_structured_output() -> None:
         assert body["thinking"] == {"type": "disabled"}
         return _tool_call_response({"final_judgment": "narrowed, not withdrawn"})
 
-    gateway = _gateway(handler)
+    # `thinking` is DeepSeek's own field; this regression test is about
+    # DeepSeek's thinking-mode/tool_choice conflict, so name its host.
+    gateway = _gateway(handler, base_url="https://api.deepseek.com")
     result = await gateway.invoke(_request(model_class=ModelClass.MEDIUM))
     assert dict(result.payload) == {"final_judgment": "narrowed, not withdrawn"}
     assert result.schema_status is SchemaStatus.OK
@@ -163,7 +165,7 @@ async def test_extraction_calls_keep_thinking_mode_off() -> None:
         assert body["thinking"] == {"type": "disabled"}
         return _tool_call_response({"final_judgment": "thinking mode off"})
 
-    gateway = _gateway(handler)
+    gateway = _gateway(handler, base_url="https://api.deepseek.com")
     result = await gateway.invoke(_request(model_class=ModelClass.LIGHTWEIGHT))
     assert dict(result.payload) == {"final_judgment": "thinking mode off"}
 
@@ -185,10 +187,31 @@ async def test_thinking_phases_enable_thinking_without_forced_tool_choice() -> N
         assert "tools" in body
         return _tool_call_response({"final_judgment": "thinking mode on"})
 
-    gateway = _gateway(handler)
+    gateway = _gateway(handler, base_url="https://api.deepseek.com")
     result = await gateway.invoke(_request())
     assert dict(result.payload) == {"final_judgment": "thinking mode on"}
     assert result.schema_status is SchemaStatus.OK
+
+
+async def test_non_deepseek_endpoint_never_receives_thinking_field() -> None:
+    """Only DeepSeek's own host gets the proprietary ``thinking`` toggle.
+
+    Regression for the vendor-compatibility bug this release fixes: the field
+    used to be sent to every endpoint. OpenAI and many relay stations
+    validate the body strictly and answer an unknown field with 400, so a
+    researcher-supplied endpoint failed every seat while the DeepSeek trial
+    worked. The strong tier is the one that *would* add the field, so it is
+    the one this test invokes.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert "thinking" not in body
+        return _tool_call_response({"final_judgment": "vendor neutral"})
+
+    gateway = _gateway(handler)  # FULL_ENV's api.example.test: not DeepSeek
+    result = await gateway.invoke(_request())
+    assert dict(result.payload) == {"final_judgment": "vendor neutral"}
 
 
 async def test_captures_reasoning_content_on_thinking_phases() -> None:
@@ -254,7 +277,7 @@ async def test_degrades_to_thinking_mode_on_tool_choice_400() -> None:
         assert "tool_choice" not in body
         return _tool_call_response({"final_judgment": "degraded and recovered"})
 
-    gateway = _gateway(handler)
+    gateway = _gateway(handler, base_url="https://api.deepseek.com")
     result = await gateway.invoke(_request(model_class=ModelClass.MEDIUM))
     assert calls[0]["thinking"] == {"type": "disabled"}
     assert calls[0]["tool_choice"] == {

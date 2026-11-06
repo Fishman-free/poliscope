@@ -47,7 +47,12 @@ from packages.evidence.sql_ledger import SqlEventLedger
 from packages.kernel.contracts import FrozenDict
 from packages.knowledge.repository import KnowledgeBaseNotFound, KnowledgeRepository
 from packages.knowledge.service import KnowledgeService
-from packages.models.endpoint_config import normalize_base_url
+from packages.models.endpoint_config import (
+    DEFAULT_MODEL_NAME,
+    normalize_base_url,
+    probe_blocks_start,
+    probe_endpoint,
+)
 from packages.models.free_trial import (
     FREE_TRIAL_EXHAUSTED_MESSAGE,
     FREE_TRIAL_LIMIT,
@@ -312,6 +317,37 @@ async def create_task(
     }
 
 
+async def _model_preflight_failure(task: StoredTask) -> str | None:
+    """Probe the endpoint this task will actually use, before queueing it.
+
+    A dead key, an exhausted balance or an unknown model name is a
+    configuration error the researcher must fix. Starting the council anyway
+    spends a whole run on absent seats -- the production incident that
+    prompted this (2026-11-06) produced 232 failed calls and an empty report
+    from a Key with a -0.04 CNY balance. Only statuses that mean "this
+    configuration cannot work" block (``probe_blocks_start``): a timeout, a
+    429 or a 5xx is the vendor having a moment, and the run's own degradation
+    path owns that.
+
+    Returns the researcher-facing reason, or None when the endpoint may run
+    (including when the task uses the deployment default -- there is no
+    researcher-supplied configuration to validate).
+    """
+    effective = task.model_config_override or task.model_config
+    if not effective:
+        return None
+    try:
+        config = TaskModelConfig.model_validate(dict(effective))
+    except ValueError as error:
+        return f"任务保存的模型配置无效：{error}"
+    result = await probe_endpoint(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        model_name=config.model_name or DEFAULT_MODEL_NAME,
+    )
+    return result.message if probe_blocks_start(result) else None
+
+
 @router.post("/{task_id}/confirm-claims")
 async def confirm_claims(
     task_id: UUID,
@@ -341,6 +377,17 @@ async def confirm_claims(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="论文审查任务必须至少上传一篇论文，请先上传后再确认。",
             )
+    # Pre-start model check: refuse to queue a run whose endpoint cannot
+    # answer (bad key, exhausted balance, unknown model). This runs *before*
+    # the free-trial slot is consumed, so a dead trial endpoint costs the
+    # account nothing. The task stays AWAITING_CLAIM_CONFIRMATION: the
+    # researcher can hot-swap the endpoint (C10) and confirm again.
+    failure = await _model_preflight_failure(task)
+    if failure is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"模型端点预检失败：{failure}",
+        )
     # Free-trial quota (round-7): a task whose inherited config carries the
     # free-trial marker consumes one of the account's two slots the moment
     # the research actually starts -- a draft that is never confirmed costs

@@ -110,6 +110,49 @@ async def test_stream_invoke_relays_reasoning_then_content_in_order() -> None:
     assert result.output_tokens == 20
 
 
+async def test_stream_without_done_marker_is_accepted() -> None:
+    """A relay that closes right after the final chunk is a complete stream.
+
+    The OpenAI dialect ends with ``data: [DONE]``, but not every relay sends
+    it. A final chunk carrying ``finish_reason`` is the vendor saying the
+    answer is finished, so the stream path must accept it instead of falling
+    back to the non-streaming path (which would lose the live view). The same
+    request also proves the non-DeepSeek body carries no ``thinking`` field.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert "thinking" not in body  # api.example.test is not DeepSeek
+        chunks: list[dict[str, object]] = [
+            {"choices": [{"delta": {"content": '{"final_judgment": "ok"}'}}]},
+            {
+                "choices": [{"delta": {}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 6},
+            },
+        ]
+        # No trailing "data: [DONE]" -- the relay simply closes.
+        body_text = "".join(f"data: {json.dumps(chunk)}\n\n" for chunk in chunks)
+        return httpx.Response(200, text=body_text)
+
+    config = OpenAICompatibleConfig.from_env(FULL_ENV)
+    gateway = OpenAICompatibleModelGateway(
+        config,
+        client=httpx.AsyncClient(
+            base_url=config.base_url,
+            transport=httpx.MockTransport(handler),
+        ),
+    )
+    received: list[StreamEvent] = []
+
+    async def collect(event: StreamEvent) -> None:
+        received.append(event)
+
+    result = await gateway.stream_invoke(_request(), collect)
+    assert result.schema_status is SchemaStatus.OK
+    assert dict(result.payload) == {"final_judgment": "ok"}
+    assert [event.kind for event in received] == ["token", "done"]
+
+
 async def test_stream_invoke_raises_on_transport_error() -> None:
     def failing(request: httpx.Request) -> httpx.Response:
         return httpx.Response(502, text="bad gateway")

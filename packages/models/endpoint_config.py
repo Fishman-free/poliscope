@@ -80,11 +80,29 @@ class ProbeResult:
     """Outcome of one connectivity probe. ``message`` is researcher-facing:
     success states the latency, failure states what to fix (bad key, unknown
     model, unreachable host). Never contains the API key.
+
+    ``status_code`` is the vendor's HTTP status when the probe reached it;
+    None for transport failures (timeout, DNS, reset). Callers use it to tell
+    a configuration the researcher must change (401/402/403/404) from a
+    vendor blip that the run itself can survive (5xx/429/timeout).
     """
 
     ok: bool
     message: str
     latency_ms: int | None = None
+    status_code: int | None = None
+
+
+# HTTP statuses that mean "this endpoint cannot work as configured" rather
+# than "the vendor is having a moment". Used by the pre-start check: a dead
+# key or an exhausted balance must stop before the council spends a run on
+# absent seats, while a timeout or 5xx must not.
+START_BLOCKING_STATUS_CODES = frozenset({401, 402, 403, 404})
+
+
+def probe_blocks_start(result: ProbeResult) -> bool:
+    """Whether a failed probe is a configuration error, not a transient one."""
+    return not result.ok and result.status_code in START_BLOCKING_STATUS_CODES
 
 
 async def probe_endpoint(
@@ -137,22 +155,39 @@ async def probe_endpoint(
 
     latency_ms = int((time.monotonic() - started) * 1000)
     if 200 <= response.status_code < 300:
-        return ProbeResult(True, f"连接成功（{latency_ms} ms）", latency_ms)
+        return ProbeResult(
+            True,
+            f"连接成功（{latency_ms} ms）",
+            latency_ms,
+            status_code=response.status_code,
+        )
     detail = _error_detail(response)
     if response.status_code in (401, 403):
         return ProbeResult(
             False,
             f"API Key 无效或无权访问（HTTP {response.status_code}）：{detail}",
+            status_code=response.status_code,
+        )
+    if response.status_code == 402:
+        # Vendor-neutral: 402 is Payment Required in the HTTP spec, and every
+        # OpenAI-compatible vendor or relay that bills up front uses it.
+        return ProbeResult(
+            False,
+            f"模型账户余额不足（HTTP 402）：{detail or '服务商要求付款'}。"
+            "请充值后换用可用的 API Key 再开始研究",
+            status_code=response.status_code,
         )
     if response.status_code == 404:
         return ProbeResult(
             False,
             f"模型名「{model_name or DEFAULT_MODEL_NAME}」不存在，或 Base URL 路径不对"
             f"（HTTP 404）：{detail}",
+            status_code=response.status_code,
         )
     return ProbeResult(
         False,
         f"服务端返回错误（HTTP {response.status_code}）：{detail}",
+        status_code=response.status_code,
     )
 
 
@@ -173,7 +208,9 @@ __all__ = [
     "DEFAULT_MODEL_NAME",
     "KNOWN_PORTAL_HOSTS",
     "PROBE_TIMEOUT_SECONDS",
+    "START_BLOCKING_STATUS_CODES",
     "ProbeResult",
     "normalize_base_url",
+    "probe_blocks_start",
     "probe_endpoint",
 ]

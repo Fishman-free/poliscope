@@ -24,3 +24,25 @@ def pytest_collection_modifyitems(
     for item in items:
         if Path(str(item.path)).resolve().is_relative_to(INTEGRATION_ROOT):
             item.add_marker(pytest.mark.requires_docker)
+
+
+@pytest.fixture(autouse=True)
+def _stub_model_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep confirm-claims hermetic: the pre-flight probe is a real network
+    call by design, so integration tests must not depend on a vendor being
+    reachable. The probe's own mapping is unit-tested (test_endpoint_config),
+    and the blocking/transient branches are integration-tested with an
+    explicit override (test_task_api)."""
+
+    async def _ok(
+        *,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        client: object | None = None,
+    ) -> object:
+        from packages.models.endpoint_config import ProbeResult
+
+        return ProbeResult(True, "连接成功（测试）", 1)
+
+    monkeypatch.setattr("apps.api.routers.tasks.probe_endpoint", _ok)

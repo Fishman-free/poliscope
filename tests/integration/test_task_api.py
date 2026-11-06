@@ -502,6 +502,82 @@ async def test_model_config_without_a_url_scheme_is_normalized(
     assert row.model_config["base_url"] == "https://api.deepseek.com"
 
 
+async def test_confirm_refuses_a_dead_model_endpoint_before_queueing(
+    api_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production incident (2026-11-06): a Key with an empty balance ran a
+    whole council into absent seats. The pre-flight stops at confirm with the
+    vendor's own reason, and the task stays confirmable after the researcher
+    fixes the endpoint."""
+    from packages.models.endpoint_config import ProbeResult
+
+    payload = _contract_payload()
+    payload["task_model_config"] = {
+        "base_url": "https://relay.example.test/v1",
+        "api_key": "sk-dead",
+        "model_name": "any-model",
+    }
+    created = (await api_client.post("/api/tasks", json=payload)).json()
+    chosen = created["suggested_claims"][0]["id"]
+
+    async def _blocked(
+        *,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        client: object | None = None,
+    ) -> ProbeResult:
+        return ProbeResult(False, "模型账户余额不足（HTTP 402）", status_code=402)
+
+    monkeypatch.setattr("apps.api.routers.tasks.probe_endpoint", _blocked)
+    response = await api_client.post(
+        f"/api/tasks/{created['task_id']}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+    assert response.status_code == 422, response.text
+    assert "模型端点预检失败" in response.json()["detail"]
+    assert "余额不足" in response.json()["detail"]
+
+    readback = await api_client.get(f"/api/tasks/{created['task_id']}")
+    assert readback.json()["status"] == TaskStatus.AWAITING_CLAIM_CONFIRMATION
+
+
+async def test_confirm_proceeds_when_preflight_failure_is_transient(
+    api_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout or 5xx is the vendor having a moment; blocking on it would
+    stop research for an outage the run itself can survive."""
+    from packages.models.endpoint_config import ProbeResult
+
+    payload = _contract_payload()
+    payload["task_model_config"] = {
+        "base_url": "https://relay.example.test/v1",
+        "api_key": "sk-ok",
+        "model_name": "any-model",
+    }
+    created = (await api_client.post("/api/tasks", json=payload)).json()
+    chosen = created["suggested_claims"][0]["id"]
+
+    async def _timeout(
+        *,
+        base_url: str,
+        api_key: str,
+        model_name: str,
+        client: object | None = None,
+    ) -> ProbeResult:
+        return ProbeResult(False, "连接超时", status_code=None)
+
+    monkeypatch.setattr("apps.api.routers.tasks.probe_endpoint", _timeout)
+    response = await api_client.post(
+        f"/api/tasks/{created['task_id']}/confirm-claims",
+        json={"claim_ids": [chosen]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == TaskStatus.QUEUED
+
+
 async def test_create_with_dois_and_bibtex_stores_them(
     api_client: httpx.AsyncClient,
     app_sessions: async_sessionmaker[AsyncSession],

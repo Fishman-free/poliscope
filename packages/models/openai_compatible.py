@@ -38,6 +38,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -349,7 +350,11 @@ class OpenAICompatibleModelGateway:
             # (e.g. DashScope's enable_thinking) replace the DeepSeek-style
             # thinking toggle below.
             body.update(self._config.extra_body)
-        else:
+        elif _is_deepseek_endpoint(self._config.base_url):
+            # Same rule as _call_once: `thinking` is DeepSeek-only. An
+            # arbitrary OpenAI-compatible endpoint or relay must never
+            # receive it -- strict providers answer 400, which used to turn
+            # every seat on a researcher-supplied endpoint into an absence.
             body["thinking"] = {"type": "enabled"}
 
         # Total deadline, not just the per-read httpx timeout: a thinking-mode
@@ -453,8 +458,16 @@ class OpenAICompatibleModelGateway:
                 if chunk.get("usage"):
                     usage = chunk["usage"]
 
-        if not saw_done:
-            raise ValueError("model stream ended without a [DONE] marker")
+        if not saw_done and finish_reason is None:
+            # The OpenAI dialect ends with ``data: [DONE]``, but relays
+            # differ: some close the connection right after the final chunk.
+            # A final chunk carrying ``finish_reason`` is a complete stream,
+            # so accept it; no marker *and* no finish reason means the
+            # connection was cut mid-answer, which must fall back to the
+            # non-streaming repair path rather than serve half an answer.
+            raise ValueError(
+                "model stream ended without a [DONE] marker or finish reason"
+            )
         if finish_reason == "length":
             raise ValueError("model stream stopped at the token length limit")
         message: dict[str, Any] = {
@@ -522,20 +535,21 @@ class OpenAICompatibleModelGateway:
             # their own thinking mode; the DeepSeek-style `thinking` toggle
             # below is skipped so an unrecognised field never reaches them.
             body.update(self._config.extra_body)
-        elif thinking:
-            body["thinking"] = {"type": "enabled"}
-        else:
-            # DeepSeek's reasoning models default to "thinking mode", which
-            # rejects any forced tool_choice with 400 "Thinking mode does not
-            # support this tool_choice" -- confirmed directly against the live
-            # API. Extraction phases force a specific function, so thinking
-            # mode must be off on those calls. This is an extra field outside
-            # the OpenAI dialect proper; LongCat and the relay stations this
-            # gateway also targets are expected to ignore an unrecognised body
-            # field per ordinary REST leniency, not error on it -- there is no
-            # live credential for either to verify that here, so this is
-            # recorded as an assumption, per CLAUDE.md 17.
-            body["thinking"] = {"type": "disabled"}
+        elif _is_deepseek_endpoint(self._config.base_url):
+            # `thinking` is DeepSeek's proprietary toggle, not part of the
+            # OpenAI dialect. Sending it to any other vendor -- OpenAI itself,
+            # LongCat, or a relay station -- is a 400 on providers that
+            # validate the body strictly, which used to make every
+            # researcher-supplied endpoint fail while DeepSeek worked. Only
+            # DeepSeek's own host gets the field; the OpenAI-compatible
+            # subset is all everyone else sees.
+            #
+            # DeepSeek's reasoning models default to thinking mode, which
+            # rejects a forced tool_choice with 400 "Thinking mode does not
+            # support this tool_choice" -- confirmed against the live API.
+            # Extraction phases force a function, so thinking must be off
+            # there; strong phases turn it on.
+            body["thinking"] = {"type": "enabled" if thinking else "disabled"}
         response, transport_retries = await send_with_retry(
             lambda: self._client.post("/chat/completions", json=body)
         )
@@ -598,6 +612,19 @@ def _build_body(
     if force_tool:
         body["tool_choice"] = {"type": "function", "function": {"name": schema_name}}
     return body
+
+
+def _is_deepseek_endpoint(base_url: str) -> bool:
+    """Whether ``base_url`` is DeepSeek's own API host.
+
+    Only DeepSeek understands the proprietary top-level ``thinking`` field;
+    every other OpenAI-compatible vendor (including relay stations that front
+    DeepSeek under their own domain) gets the plain dialect. A relay that
+    still needs a vendor-specific field can set ``extra_body``, which takes
+    precedence in both the streaming and non-streaming paths.
+    """
+    hostname = (urlsplit(base_url).hostname or "").lower()
+    return hostname == "deepseek.com" or hostname.endswith(".deepseek.com")
 
 
 def _is_tool_choice_conflict(response: httpx.Response) -> bool:

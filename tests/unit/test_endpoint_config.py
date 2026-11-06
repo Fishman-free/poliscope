@@ -15,7 +15,9 @@ from collections.abc import Callable
 import httpx
 
 from packages.models.endpoint_config import (
+    ProbeResult,
     normalize_base_url,
+    probe_blocks_start,
     probe_endpoint,
 )
 
@@ -139,6 +141,40 @@ async def test_probe_404_means_unknown_model_or_path() -> None:
     assert not result.ok
     assert "no-such-model" in result.message
     assert "Model Not Exist" in result.message
+
+
+async def test_probe_402_means_insufficient_balance() -> None:
+    """402 is vendor-neutral: every OpenAI-compatible provider or relay that
+    bills up front uses it for an empty account."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            json={"error": {"message": "Insufficient Balance"}},
+        )
+
+    result = await probe_endpoint(
+        base_url="https://relay.example.test/v1",
+        api_key="sk-x",
+        model_name="any-model",
+        client=_MockProbeClient.of(handler),
+    )
+    assert not result.ok
+    assert result.status_code == 402
+    assert "余额不足" in result.message
+    assert "Insufficient Balance" in result.message
+    assert "sk-x" not in result.message
+
+
+def test_probe_blocks_start_only_for_configuration_errors() -> None:
+    """A dead key / empty balance / wrong model blocks the run; a vendor
+    blip does not -- the run's own retry and degradation path owns those."""
+
+    for code in (401, 402, 403, 404):
+        assert probe_blocks_start(ProbeResult(False, "x", status_code=code))
+    for code in (None, 400, 408, 429, 500, 502):
+        assert not probe_blocks_start(ProbeResult(False, "x", status_code=code))
+    assert not probe_blocks_start(ProbeResult(True, "ok", status_code=200))
 
 
 async def test_probe_timeout_is_reported_quickly() -> None:
