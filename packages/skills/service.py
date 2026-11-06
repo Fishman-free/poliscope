@@ -1,10 +1,15 @@
-"""Skill lifecycle: download from GitHub, persist, keep on disk.
+"""Skill lifecycle: download from GitHub, persist, serve the council.
 
 ``add_from_url`` owns the whole "a URL becomes a remembered skill" story:
-parse -> fetch -> write the SKILL.md into the account's directory -> record
-the row. ``ensure_downloaded`` is the worker's side: a task enabled this
-skill, so the file must exist on disk when the council runs -- a deleted or
-moved file is re-downloaded, never silently skipped.
+parse -> fetch -> write the SKILL.md into the account's directory *and* the
+row -> record the row. ``ensure_downloaded`` is the worker's side: a task
+enabled this skill, so the council gets its text. The row's ``content`` is
+the source of truth; the file is a per-container cache. Before 0027 the file
+was the only copy, and because the API and worker have separate filesystems
+the worker re-downloaded from GitHub on every run -- a GitHub outage then
+aborted research before the first phase. Now a missing file is re-cached
+from the row, and the network is only consulted for a row that predates the
+column.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from uuid import UUID
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.skills.github import fetch_skills_from_repo
+from packages.skills.github import SkillFetchError, fetch_skills_from_repo
 from packages.skills.repository import (
     SkillAlreadyAdded,
     SkillsRepository,
@@ -90,6 +95,7 @@ class SkillsService:
                         name=name,
                         github_url=url.strip(),
                         downloaded_path=str(target),
+                        content=markdown,
                     )
                 )
             except SkillAlreadyAdded:
@@ -99,27 +105,62 @@ class SkillsService:
         return tuple(added)
 
     async def ensure_downloaded(self, skill: StoredSkill) -> str:
-        """Return the skill's markdown, re-downloading if the file is gone.
+        """Return the skill's markdown from the most durable copy available.
 
-        The worker calls this for every skill a task enabled; a missing file
-        (deleted on disk, moved, or a restored backup without the directory)
-        is re-fetched from the recorded URL rather than reported as a gap --
-        the researcher's choice to enable the skill stands until they remove
-        it, and a disk hiccup must not silently drop it.
+        Order: the row's stored ``content`` -> the file cache -> GitHub. The
+        first two are local and cannot fail because of the network, which is
+        what makes a run start even when GitHub is unreachable from the
+        server. A legacy row (content NULL) is backfilled from whichever
+        source answered, so the next run does not need the network either.
+
+        Only the path that actually calls GitHub can raise ``SkillFetchError``;
+        the worker treats that as a degraded run (skill omitted) rather than a
+        failed one, because a skill is researcher instruction, not evidence.
         """
         path = Path(skill.downloaded_path)
+        if skill.content:
+            self._write_cache(path, skill.content)
+            return skill.content
         if path.is_file():
-            return path.read_text(encoding="utf-8")
-        # A collection repo carries several skills: re-download the one whose
-        # name this row records, falling back to the first entry.
-        fetched = await fetch_skills_from_repo(self._client, skill.github_url)
+            try:
+                markdown = path.read_text(encoding="utf-8")
+            except OSError:
+                pass  # Unreadable cache; fall through to the recorded URL.
+            else:
+                await SkillsRepository(self._session).set_content(
+                    skill.id, markdown
+                )
+                return markdown
+        try:
+            # A collection repo carries several skills: re-download the one
+            # whose name this row records, falling back to the first entry.
+            fetched = await fetch_skills_from_repo(
+                self._client, skill.github_url
+            )
+        except SkillFetchError:
+            raise
+        except httpx.HTTPError as error:
+            raise SkillFetchError(
+                f"无法从 GitHub 获取技能内容（{type(error).__name__}）：{error}"
+            ) from error
         markdown = next(
             (body for name, body in fetched if name == skill.name),
             fetched[0][1],
         )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(markdown, encoding="utf-8")
+        self._write_cache(path, markdown)
+        await SkillsRepository(self._session).set_content(skill.id, markdown)
         return markdown
+
+    @staticmethod
+    def _write_cache(path: Path, markdown: str) -> None:
+        """Best-effort disk cache write; the row already holds the truth."""
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(markdown, encoding="utf-8")
+        except OSError:
+            # A read-only or full filesystem must not cost the run its
+            # instructions -- the caller already has the markdown.
+            pass
 
 
 def _safe_name(name: str) -> str:

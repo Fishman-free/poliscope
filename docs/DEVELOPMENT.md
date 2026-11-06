@@ -534,6 +534,7 @@ poliscope resume --task-id <id>
 - **PDF 解析 / OCR 不再阻塞事件循环**：`extract_pages` / `extract_text` 全部走 `asyncio.to_thread`，心跳、停止检测、席位超时在解析期间照常工作。
 - **结论整合流式输出**：先流式调用（推理与正在写出的 JSON 推到实时进展，前端从未写完的 JSON 里实时取出「一句话回答」），只在 120 秒没有新内容时判超时（总上限 900 秒）；流式结果不合格式时回退一次带修复的非流式调用（600 秒），再不行才机械归档。看门狗缓冲相应改为 3600 秒。
 - **全部长驻服务自动重启**：postgres / api / web / caddy 也加了 `restart: unless-stopped`，服务器重启后整站自行恢复。
+- **技能加载失败不再中断研究**（2026-11-06 生产事故）：技能正文原先只存在于 API 容器自己的 `/tmp/poliscope-skills`，worker 是另一个容器、看不到这个文件，于是每个带技能的任务启动时都要现场重新从 GitHub 下载；服务器访问 GitHub 失败（`ConnectError`）时，异常从 `_skills_context` 一路冒到 worker，任务在提问后 9 秒被判 FAILED，议会一个阶段都没跑。现在正文随行存进 `skills.content`（迁移 0027），worker 先读数据库、再读本机缓存，网络只用于 0027 之前的老行（首次读到时回填，之后同样离线可用）；三者都失败时只跳过该技能并记 warning，议会照常跑完。追问侧同样降级为「本次不包含该技能」而不是让整条请求失败。
 
 崩溃续跑时若检查点尚未抵达人类引导门（`gate_reached=False` 且 JOINT_MODELING 未开始），续跑会在该门前再次停住，不会因崩溃绕过研究者的方向性引导。
 

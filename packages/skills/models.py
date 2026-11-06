@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -44,6 +44,13 @@ class SkillModel(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     github_url: Mapped[str] = mapped_column(String(1024), nullable=False)
     downloaded_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # The markdown itself, stored durably alongside the row (0027). The file
+    # at ``downloaded_path`` is a per-container cache, not a source of truth:
+    # the API and worker mount separate filesystems, so a worker-start run
+    # used to re-download from GitHub every time and died when GitHub was
+    # unreachable. Nullable only for rows added before 0027; the service
+    # backfills it from disk or the next successful download.
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(
         Boolean, server_default=func.true(), nullable=False, default=True
     )

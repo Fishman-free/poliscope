@@ -67,6 +67,7 @@ from packages.research.service import (
     ResearchService,
     UnconfirmedClaims,
 )
+from packages.skills.github import SkillFetchError
 from packages.skills.repository import SkillsRepository
 from packages.skills.service import SkillsService
 from packages.tools.adapters.openalex import OpenAlexAdapter
@@ -840,7 +841,17 @@ async def _followup_skills_context(
         stored = await repository.get_for_user(user.id, skill_id)
         if stored is None:
             continue
-        markdown = await service.ensure_downloaded(stored)
+        try:
+            markdown = await service.ensure_downloaded(stored)
+        except SkillFetchError as error:
+            # A follow-up must still be answerable when GitHub is down: say
+            # the skill was unavailable instead of failing the request or
+            # silently pretending it was followed.
+            lines.append(
+                f"## {stored.name}\n\n"
+                f"（该技能内容暂时无法加载，本次追问不包含其指令：{error.reason}）"
+            )
+            continue
         lines.append(f"## {stored.name}\n\n{markdown[:MAX_FOLLOWUP_SKILL_CHARS]}")
     if len(lines) == 1:
         return ""

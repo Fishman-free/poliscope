@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +37,9 @@ class StoredSkill:
     enabled: bool
     downloaded_at: datetime
     created_at: datetime
+    # The markdown itself (0027). None means a row created before the column
+    # existed and not yet read on a filesystem that still had its file.
+    content: str | None = None
 
 
 class SkillsRepository:
@@ -60,6 +63,7 @@ class SkillsRepository:
         name: str,
         github_url: str,
         downloaded_path: str,
+        content: str | None = None,
     ) -> StoredSkill:
         row = SkillModel(
             id=uuid4(),
@@ -67,6 +71,7 @@ class SkillsRepository:
             name=name,
             github_url=github_url,
             downloaded_path=downloaded_path,
+            content=content,
         )
         self._session.add(row)
         try:
@@ -85,6 +90,20 @@ class SkillsRepository:
             )
         )
         return to_stored(row) if row is not None else None
+
+    async def set_content(self, skill_id: UUID, content: str) -> None:
+        """Backfill the durable markdown copy for a row created before 0027.
+
+        Deliberately not scoped to a user: every caller reads the row it
+        already resolved for an account, and this only ever fills a column
+        that is NULL. A failure here is a database failure and is left to
+        propagate -- the run's connection-recovery layer owns those.
+        """
+        await self._session.execute(
+            update(SkillModel)
+            .where(SkillModel.id == skill_id)
+            .values(content=content)
+        )
 
     async def set_enabled(
         self, user_id: UUID, skill_id: UUID, enabled: bool
@@ -126,6 +145,7 @@ def to_stored(row: SkillModel) -> StoredSkill:
         enabled=row.enabled,
         downloaded_at=row.downloaded_at,
         created_at=row.created_at,
+        content=row.content,
     )
 
 

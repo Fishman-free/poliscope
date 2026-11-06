@@ -496,10 +496,18 @@ async def _skills_context(
 
     Only skills that are both listed on the task and still enabled join the
     council's prompts; a skill the researcher disabled after creating the
-    task no longer instructs the scientists. A missing file on disk is
-    re-downloaded rather than silently dropped (SkillsService.
-    ensure_downloaded), so a disk hiccup cannot quietly remove a skill the
-    researcher chose.
+    task no longer instructs the scientists.
+
+    A skill that cannot be loaded never stops the run. The row's stored
+    markdown means the normal path needs no network at all (see 0027 and
+    SkillsService.ensure_downloaded); if even that fails the skill is skipped
+    with a warning and the council runs without it. Before this, a GitHub
+    connect error here -- before the first phase -- was raised all the way to
+    the worker, which marked the whole task FAILED seconds after the
+    question was asked. Instructions are not evidence: losing one degrades
+    the answer's shape, losing the run answers nothing. A *database* failure
+    still propagates, because the run's recovery layer owns that and the
+    session must not continue on a broken connection.
     """
     if not task.skill_ids:
         return ()
@@ -516,7 +524,21 @@ async def _skills_context(
     service = SkillsService(session)
     result: list[tuple[str, str]] = []
     for row in rows:
-        result.append((row.name, await service.ensure_downloaded(to_stored(row))))
+        try:
+            markdown = await service.ensure_downloaded(to_stored(row))
+        except Exception as error:  # noqa: BLE001 -- degrade, never abort
+            if is_connection_failure(error):
+                raise
+            logger.warning(
+                "skill %s could not be loaded for task %s; "
+                "continuing without it: %s",
+                row.name,
+                task.task_id,
+                error,
+                exc_info=True,
+            )
+            continue
+        result.append((row.name, markdown))
     return tuple(result)
 
 
