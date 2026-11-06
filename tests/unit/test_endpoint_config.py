@@ -23,27 +23,29 @@ from packages.models.endpoint_config import (
 
 
 class TestNormalizeBaseUrl:
-    def test_keeps_plain_api_url_untouched(self) -> None:
-        assert normalize_base_url("https://api.deepseek.com") == (
-            "https://api.deepseek.com",
-            None,
-        )
+    def test_completes_a_bare_host_with_v1(self) -> None:
+        """A bare host is a landing page, not the API: a real relay answered
+        ``/chat/completions`` with its HTML dashboard and a 200."""
+        normalized, hint = normalize_base_url("https://www.micuapi.ai")
+        assert normalized == "https://www.micuapi.ai/v1"
+        assert hint is not None and "/v1" in hint
 
     def test_rewrites_console_portal_to_api_endpoint(self) -> None:
         normalized, hint = normalize_base_url("https://platform.deepseek.com")
-        assert normalized == "https://api.deepseek.com"
+        assert normalized == "https://api.deepseek.com/v1"
         assert hint is not None
         assert "platform.deepseek.com" in hint and "api.deepseek.com" in hint
+        assert "/v1" in hint
 
     def test_portal_rewrite_works_without_scheme(self) -> None:
         normalized, hint = normalize_base_url("platform.deepseek.com")
-        assert normalized == "https://api.deepseek.com"
+        assert normalized == "https://api.deepseek.com/v1"
         assert hint is not None
 
     def test_adds_scheme_and_trims_trailing_slash(self) -> None:
         assert normalize_base_url("api.deepseek.com/") == (
-            "https://api.deepseek.com",
-            None,
+            "https://api.deepseek.com/v1",
+            "已自动补全 /v1（OpenAI 兼容端点通常位于 /v1）",
         )
 
     def test_empty_input_stays_empty(self) -> None:
@@ -52,6 +54,13 @@ class TestNormalizeBaseUrl:
     def test_preserves_custom_paths_and_ports(self) -> None:
         assert normalize_base_url("http://relay.example:8080/v1/") == (
             "http://relay.example:8080/v1",
+            None,
+        )
+
+    def test_preserves_non_v1_custom_path(self) -> None:
+        # A vendor whose API lives at a custom path must not be rewritten.
+        assert normalize_base_url("https://example.test/openai/") == (
+            "https://example.test/openai",
             None,
         )
 
@@ -166,6 +175,30 @@ async def test_probe_402_means_insufficient_balance() -> None:
     assert "sk-x" not in result.message
 
 
+async def test_probe_rejects_a_200_html_landing_page() -> None:
+    """A relay's bare host answers the API path with its dashboard HTML and a
+    200. That is a broken configuration, not a connection."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text="<!doctype html><html><title>New API</title></html>",
+            headers={"content-type": "text/html"},
+        )
+
+    result = await probe_endpoint(
+        base_url="https://relay.example.test",
+        api_key="sk-x",
+        model_name="m",
+        client=_MockProbeClient.of(handler),
+    )
+    assert not result.ok
+    assert result.config_error
+    assert result.status_code == 200
+    assert "/v1" in result.message
+    assert probe_blocks_start(result)
+
+
 def test_probe_blocks_start_only_for_configuration_errors() -> None:
     """A dead key / empty balance / wrong model blocks the run; a vendor
     blip does not -- the run's own retry and degradation path owns those."""
@@ -175,6 +208,10 @@ def test_probe_blocks_start_only_for_configuration_errors() -> None:
     for code in (None, 400, 408, 429, 500, 502):
         assert not probe_blocks_start(ProbeResult(False, "x", status_code=code))
     assert not probe_blocks_start(ProbeResult(True, "ok", status_code=200))
+    # A 2xx that is not a chat completion is still a configuration error.
+    assert probe_blocks_start(
+        ProbeResult(False, "x", status_code=200, config_error=True)
+    )
 
 
 async def test_probe_timeout_is_reported_quickly() -> None:

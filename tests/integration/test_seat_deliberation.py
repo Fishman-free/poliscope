@@ -612,7 +612,7 @@ async def test_task_model_config_builds_a_per_task_gateway(
     assert result.run.failures == ()
     config = cast(dict[str, str], captured["config"])
     assert config["api_key"] == "sk-researcher-secret"
-    assert config["base_url"] == "https://api.researcher.example"
+    assert config["base_url"] == "https://api.researcher.example/v1"
     # Every seat call went through the per-task gateway (which forwards to the
     # scripted answerer) -- the worker really did run on the task's endpoint.
     # +1: the synthesizer's paper call also went through the per-task gateway.

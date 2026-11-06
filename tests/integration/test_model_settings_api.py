@@ -79,7 +79,7 @@ async def test_settings_round_trip_never_echoes_the_key(
     )
     assert save.status_code == 200
     body = save.json()
-    assert body["base_url"] == "https://api.example.com"
+    assert body["base_url"] == "https://api.example.com/v1"
     assert body["model_name"] == "gpt-test"
     assert body["has_api_key"] is True
     assert "api_key" not in body
@@ -125,7 +125,7 @@ async def test_blank_api_key_keeps_the_stored_key(
         )
     assert row is not None
     assert row.model_api_key == "sk-keep"
-    assert row.model_base_url == "https://b.example"
+    assert row.model_base_url == "https://b.example/v1"
 
 
 async def test_clear_api_key_is_deliberate_and_removes_it(
@@ -180,7 +180,7 @@ async def test_create_task_applies_saved_settings_when_no_explicit_config(
             )
         ).scalar_one()
     assert row.model_config is not None
-    assert row.model_config["base_url"] == "https://api.example.com"
+    assert row.model_config["base_url"] == "https://api.example.com/v1"
     assert row.model_config["api_key"] == "sk-auto"
     assert row.model_config["model_name"] == "auto-model"
 
@@ -213,7 +213,7 @@ async def test_explicit_per_task_config_wins_over_saved_settings(
             )
         ).scalar_one()
     assert row.model_config is not None
-    assert row.model_config["base_url"] == "https://explicit.example"
+    assert row.model_config["base_url"] == "https://explicit.example/v1"
     assert row.model_config["api_key"] == "sk-explicit"
 
 
@@ -265,7 +265,7 @@ async def test_test_endpoint_probes_current_values_without_saving(
     # seed PUT 也是一次探测（known.example）；最后一次探测必须是
     # 测试请求携带的值。
     assert probed[-1] == {
-        "base_url": "https://api.example.com",
+        "base_url": "https://api.example.com/v1",
         "api_key": "sk-probe-me",
         "model_name": "deepseek-v4-flash",
     }
@@ -278,7 +278,7 @@ async def test_test_endpoint_probes_current_values_without_saving(
             )
         )
     assert row is not None
-    assert row.model_base_url == "https://known.example"
+    assert row.model_base_url == "https://known.example/v1"
     assert row.model_api_key == "sk-known"
 
 
@@ -292,7 +292,7 @@ async def test_test_endpoint_reports_portal_correction(
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["corrected_base_url"] == "https://api.deepseek.com"
+    assert body["corrected_base_url"] == "https://api.deepseek.com/v1"
     assert body["correction"]
     # 回显红线：key 不出现在任何响应字段或文本里。
     assert "api_key" not in body
@@ -355,7 +355,7 @@ async def test_put_refuses_save_when_probe_fails(
             )
         )
     assert row is not None
-    assert row.model_base_url == "https://known.example"
+    assert row.model_base_url == "https://known.example/v1"
     assert row.model_api_key == "sk-known"
 
 
@@ -385,7 +385,7 @@ async def test_put_normalizes_portal_url_before_saving(
     )
     assert response.status_code == 200, response.text
     # 探测的就是纠正后的地址。
-    assert probed == ["https://api.deepseek.com"]
+    assert probed == ["https://api.deepseek.com/v1"]
     # 落库的也是纠正后的地址。
     async with app_sessions() as session:
         row = await session.scalar(
@@ -395,7 +395,7 @@ async def test_put_normalizes_portal_url_before_saving(
             )
         )
     assert row is not None
-    assert row.model_base_url == "https://api.deepseek.com"
+    assert row.model_base_url == "https://api.deepseek.com/v1"
 
 
 async def test_put_requires_an_api_key(

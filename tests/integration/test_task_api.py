@@ -466,7 +466,7 @@ async def test_create_with_model_config_stores_it_and_never_echoes_it(
             )
         ).scalar_one()
     assert row.model_config is not None
-    assert row.model_config["base_url"] == "https://api.deepseek.com"
+    assert row.model_config["base_url"] == "https://api.deepseek.com/v1"
     assert row.model_config["api_key"] == "sk-task-secret"
     assert row.model_config["model_name"] == "deepseek-chat"
 
@@ -499,7 +499,7 @@ async def test_model_config_without_a_url_scheme_is_normalized(
             )
         ).scalar_one()
     assert row.model_config is not None
-    assert row.model_config["base_url"] == "https://api.deepseek.com"
+    assert row.model_config["base_url"] == "https://api.deepseek.com/v1"
 
 
 async def test_confirm_refuses_a_dead_model_endpoint_before_queueing(
@@ -734,7 +734,7 @@ async def test_list_reports_effective_model_config(
     saved_entry = next(t for t in listing if t["task_id"] == saved_task)
     config = saved_entry["effective_model_config"]
     assert config["source"] == "saved"
-    assert config["base_url"] == "https://api.deepseek.com"
+    assert config["base_url"] == "https://api.deepseek.com/v1"
     assert config["model_name"] == "deepseek-chat"
     assert config["has_api_key"] is True
     assert "sk-account" not in str(listing)
@@ -742,7 +742,7 @@ async def test_list_reports_effective_model_config(
     # 详情接口同样带上生效配置。
     detail = (await api_client.get(f"/api/tasks/{saved_task}")).json()
     assert detail["effective_model_config"]["source"] == "saved"
-    assert detail["effective_model_config"]["base_url"] == "https://api.deepseek.com"
+    assert detail["effective_model_config"]["base_url"] == "https://api.deepseek.com/v1"
 
     # 清理：这个测试运行在共享的 session 级账号上，留下的设置会改变其他
     # 测试文件（及其它运行顺序）中任务创建的继承行为——测试不得依赖文件
