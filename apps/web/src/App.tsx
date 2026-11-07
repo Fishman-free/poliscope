@@ -15,7 +15,6 @@
  * task id" box, so every past session is one click away instead of a UUID.
  */
 
-import { flushSync } from "react-dom";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { ApiError, cancelTask, clearToken, fetchMe, fetchPaperMarkdown, fetchReportMarkdown, fetchTasks, getToken, logout, reResearch, rerunFresh, resumeTask } from "./api/client";
@@ -246,20 +245,6 @@ function computeQueue(
  * the workspace they are looking at. */
 function taskIdFromLocation(): string | null {
   return new URLSearchParams(window.location.search).get("task");
-}
-
-/** Apple-style screen switch: View Transitions API captures before/after
- * snapshots and plays the CSS transition between them. `flushSync` forces the
- * state commit inside the snapshot window -- React 18's async batching would
- * otherwise capture the old DOM as the "new" snapshot. Browsers without the
- * API fall back to the plain state change (whose entrance animation lives in
- * App.css). */
-function withTransition(apply: () => void) {
-  if (typeof document.startViewTransition === "function") {
-    document.startViewTransition(() => flushSync(apply));
-  } else {
-    apply();
-  }
 }
 
 /** "checking" while the remembered token is verified against /api/auth/me;
@@ -497,21 +482,25 @@ export function App() {
     if (next) setTab(next);
   }, [events, follow]);
 
+  /** Screen switches (opening a task from history, back to the home page, the
+   * home segmented control) are deliberately NOT view transitions: a
+   * cross-fade keeps a snapshot of the old screen painted over the new one
+   * until its fade ends, so a history open showed the previous task's panel
+   * over the next one's. The old screen unmounts in the same commit and the
+   * new panel's own CSS entrance (App.css `panel-in`) plays instead. */
   function open(taskIdToOpen: string) {
-    withTransition(() => {
-      const url = new URL(window.location.href);
-      url.searchParams.set("task", taskIdToOpen);
-      window.history.pushState({}, "", url);
-      setTaskId(taskIdToOpen);
-      // 打开任务直接落在「实时进展」：研究者要看到思考链路，不是干等结果。
-      // 任务若已终态，下方 snapshot 终态 effect 会把它带回 brief。
-      setTab("live");
-      setFollow(true);
-    });
+    const url = new URL(window.location.href);
+    url.searchParams.set("task", taskIdToOpen);
+    window.history.pushState({}, "", url);
+    setTaskId(taskIdToOpen);
+    // 打开任务直接落在「实时进展」：研究者要看到思考链路，不是干等结果。
+    // 任务若已终态，下方 snapshot 终态 effect 会把它带回 brief。
+    setTab("live");
+    setFollow(true);
   }
 
   function switchHome(next: HomeView) {
-    withTransition(() => setHomeView(next));
+    setHomeView(next);
   }
 
   /** 会话历史里删掉了当前正在看的任务：离开它，回到新建任务页。 */
@@ -524,11 +513,9 @@ export function App() {
 
   /** 「新建研究」：回到首页，重新打开一个空白的新任务表单。 */
   function handleNewResearch() {
-    withTransition(() => {
-      setTaskId(null);
-      window.history.replaceState({}, "", "/workspace");
-      setHomeView("newtask");
-    });
+    setTaskId(null);
+    window.history.replaceState({}, "", "/workspace");
+    setHomeView("newtask");
   }
 
   // busyTask 绑定具体正在变动的任务：让「重新研究/继续研究/停止」的 loading
@@ -648,12 +635,11 @@ export function App() {
 
   /** A manual tab choice always wins over auto-follow.
    *
-   * Deliberately NOT a view transition: a cross-fade keeps a snapshot of the
-   * old tab painted over the new one until every pseudo-element animation
-   * ends, and heavy tabs (radar SVG, React Flow map) stretch that window to
-   * seconds -- the two tabs visibly overlapped. `key={tab}` unmounts the old
-   * panel in the same commit, and the panel's own CSS entrance plays on the
-   * new one, so the switch is instant and never shows both. */
+   * Not a view transition either (see `open`): heavy tabs (radar SVG, React
+   * Flow map) stretched the cross-fade to seconds and the two tabs visibly
+   * overlapped. `key={tab}` unmounts the old panel in the same commit, and the
+   * panel's own CSS entrance plays on the new one, so the switch is instant
+   * and never shows both. */
   function selectTab(next: Tab) {
     setFollow(false);
     setTab(next);
@@ -797,19 +783,13 @@ export function App() {
               </div>
               {/* 两个主页视图同时挂载、以 CSS 显隐切换，而不是 key={homeView}
                   重挂载：切到知识库再切回时，新建任务已填的内容（问题、高级
-                  选项、勾选）与滚动位置都原样保留。切换动画由 View Transitions
-                  提供（withTransition 的快照交叉淡化）；无该 API 的浏览器直接
-                  切换。隐藏面板不参与视图过渡捕获（view-transition-name: none）。 */}
+                  选项、勾选）与滚动位置都原样保留。不用快照交叉淡化（两屏会
+                  短暂重叠，见 open 的说明）：面板从 display:none 变为可见时，
+                  .app__panel 的入场动画会重新播放一次。 */}
               <div className="app__home">
-                {/* 两个面板各自持有固定的 view-transition-name（home-newtask /
-                    home-knowledge，见 App.css）：切换时浏览器把它们当作两个
-                    独立元素各自淡出/淡入，快照不会在元素间转移 —— 那正是
-                    「先跳到知识库、又闪回新建任务、再跳回知识库」的来回跳的
-                    根因（同一个 name 从一个元素转移到另一个元素时，浏览器
-                    的快照配对会错乱）。 */}
                 <div
                   className={
-                    "app__panel app__panel--home-newtask" +
+                    "app__panel" +
                     (homeView === "newtask" ? "" : " app__panel--hidden")
                   }
                   aria-hidden={homeView !== "newtask"}
@@ -823,7 +803,7 @@ export function App() {
                 </div>
                 <div
                   className={
-                    "app__panel app__panel--home-knowledge" +
+                    "app__panel" +
                     (homeView === "newtask" ? " app__panel--hidden" : "")
                   }
                   aria-hidden={homeView === "newtask"}

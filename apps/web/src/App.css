@@ -493,56 +493,19 @@
   }
 }
 
-/* --- Panel entrance and view transitions -------------------------------- */
+/* --- Panel entrance ----------------------------------------------------- */
 
+/* No view transitions: a cross-fade paints the old screen's snapshot over the
+   new one until it fades, which read as two views overlapping (tab switches,
+   history opens). Every switch swaps the DOM in one commit and the new panel
+   plays this entrance instead; a home panel shown again from display:none
+   replays it too. Reduced motion is handled globally in base.css. */
 .app__panel {
   animation: panel-in var(--duration-slow) var(--ease-smooth);
-  view-transition-name: app-panel;
 }
 
 .app__panel--hidden {
   display: none;
-  view-transition-name: none;
-}
-
-.app__panel--home-newtask:not(.app__panel--hidden) {
-  view-transition-name: home-newtask;
-}
-
-.app__panel--home-knowledge:not(.app__panel--hidden) {
-  view-transition-name: home-knowledge;
-}
-
-::view-transition-old(home-newtask),
-::view-transition-old(home-knowledge) {
-  animation: vt-home-out 150ms var(--ease-smooth) both;
-}
-
-::view-transition-new(home-newtask),
-::view-transition-new(home-knowledge) {
-  animation: vt-home-in var(--duration-slow) var(--ease-smooth) both;
-}
-
-@keyframes vt-home-out {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes vt-home-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
 }
 
 @keyframes panel-in {
@@ -553,47 +516,6 @@
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-/* `both` is load-bearing: without a fill mode the old snapshot snaps back to
-   full opacity once its 160 ms fade ends, and stays painted over the new
-   panel until the longer entrance finishes -- the "two views overlap" bug. */
-::view-transition-old(app-panel) {
-  animation: vt-panel-out 160ms var(--ease-smooth) both;
-}
-
-::view-transition-new(app-panel) {
-  animation: vt-panel-in var(--duration-slow) var(--ease-smooth) both;
-}
-
-@keyframes vt-panel-out {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes vt-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-old(root),
-  ::view-transition-new(root),
-  ::view-transition-old(app-panel),
-  ::view-transition-new(app-panel),
-  ::view-transition-old(home-newtask),
-  ::view-transition-new(home-newtask),
-  ::view-transition-old(home-knowledge),
-  ::view-transition-new(home-knowledge) {
-    animation: none;
   }
 }
 

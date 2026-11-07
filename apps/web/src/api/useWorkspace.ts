@@ -157,7 +157,16 @@ export interface WorkspaceState {
 }
 
 export function useWorkspace(taskId: string | null): WorkspaceState {
-  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot | null>(null);
+  // The snapshot is stored with the task it was fetched for. A task switch
+  // commits the new taskId one render before the reset effect below clears
+  // the old snapshot; keying it means that render -- and every effect that
+  // reads `snapshot` -- already sees "no snapshot" instead of painting (or
+  // subscribing for) the previous task's workspace under the new one.
+  const [loaded, setLoaded] = useState<{
+    taskId: string;
+    snapshot: WorkspaceSnapshot;
+  } | null>(null);
+  const snapshot = loaded !== null && loaded.taskId === taskId ? loaded.snapshot : null;
   const [load, setLoad] = useState<LoadState>("idle");
   const [stream, setStream] = useState<StreamState>("closed");
   const [error, setError] = useState<string | null>(null);
@@ -190,7 +199,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
 
   const refresh = useCallback((): Promise<boolean> => {
     if (!taskId) {
-      setSnapshot(null);
+      setLoaded(null);
       setLoad("idle");
       return Promise.resolve(true);
     }
@@ -215,7 +224,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
         if (controller.signal.aborted) return true;
         window.clearTimeout(timeoutHandle);
         snapshotRef.current = next;
-        setSnapshot(next);
+        setLoaded({ taskId, snapshot: next });
         setError(null);
         setLoad("ready");
         return true;
@@ -243,7 +252,7 @@ export function useWorkspace(taskId: string | null): WorkspaceState {
   // the loading branch until the first snapshot of the new task arrives.
   useEffect(() => {
     snapshotRef.current = null;
-    setSnapshot(null);
+    setLoaded(null);
     setEvents([]);
     setProcessEvents([]);
     setError(null);
