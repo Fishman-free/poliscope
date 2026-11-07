@@ -205,8 +205,10 @@ def test_probe_blocks_start_only_for_configuration_errors() -> None:
 
     for code in (401, 402, 403, 404):
         assert probe_blocks_start(ProbeResult(False, "x", status_code=code))
-    for code in (None, 400, 408, 429, 500, 502):
-        assert not probe_blocks_start(ProbeResult(False, "x", status_code=code))
+    for transient in (None, 400, 408, 429, 500, 502):
+        assert not probe_blocks_start(
+            ProbeResult(False, "x", status_code=transient)
+        )
     assert not probe_blocks_start(ProbeResult(True, "ok", status_code=200))
     # A 2xx that is not a chat completion is still a configuration error.
     assert probe_blocks_start(

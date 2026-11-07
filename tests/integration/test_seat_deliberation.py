@@ -612,7 +612,10 @@ async def test_task_model_config_builds_a_per_task_gateway(
     assert result.run.failures == ()
     config = cast(dict[str, str], captured["config"])
     assert config["api_key"] == "sk-researcher-secret"
-    assert config["base_url"] == "https://api.researcher.example/v1"
+    # The stub replaces _gateway_for_task_config, which is where the /v1
+    # completion happens, so it sees the stored row verbatim. The completion
+    # itself is pinned by test_per_task_gateway_completes_a_host_only_base_url.
+    assert config["base_url"] == "https://api.researcher.example"
     # Every seat call went through the per-task gateway (which forwards to the
     # scripted answerer) -- the worker really did run on the task's endpoint.
     # +1: the synthesizer's paper call also went through the per-task gateway.
@@ -726,6 +729,21 @@ def test_per_task_gateway_resolves_the_model_name_in_order(
         }
     )
     assert gateway._config.model_names[ModelClass.LIGHTWEIGHT] == "researcher-model"
+
+
+def test_per_task_gateway_completes_a_host_only_base_url() -> None:
+    """A task row stored before the settings API normalised endpoints can
+    carry a bare host; the worker's gateway must still call ``/v1``, or a
+    relay answers with its HTML dashboard and every seat goes absent."""
+    gateway = _gateway_for_task_config(
+        {"base_url": "https://api.researcher.example", "api_key": "k"}
+    )
+    assert gateway._config.base_url == "https://api.researcher.example/v1"
+
+    explicit = _gateway_for_task_config(
+        {"base_url": "https://relay.example/openai/v1/", "api_key": "k"}
+    )
+    assert explicit._config.base_url == "https://relay.example/openai/v1"
 
 
 def test_a_scripted_payload_matches_what_the_rounds_read() -> None:

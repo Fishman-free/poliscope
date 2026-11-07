@@ -11,7 +11,9 @@ ValidationError. That is not hypothetical: it answered 500 on every
 
 from uuid import UUID, uuid4
 
-from asyncpg.pgproto.pgproto import UUID as AsyncpgUUID
+from asyncpg.pgproto.pgproto import (  # type: ignore[import-untyped]
+    UUID as AsyncpgUUID,
+)
 
 from packages.research.contracts import ResearchContract
 from packages.research.repository import StoredTask

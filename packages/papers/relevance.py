@@ -95,7 +95,9 @@ def _scripts_of(tokens: Collection[str]) -> frozenset[str]:
     return frozenset(scripts)
 
 
-def shares_a_script(context_tokens: Collection[str], candidate_tokens: Collection[str]) -> bool:
+def shares_a_script(
+    context_tokens: Collection[str], candidate_tokens: Collection[str]
+) -> bool:
     """Whether the two token sets have at least one writing system in common.
 
     When they do not (e.g. a Chinese question and an English-only title), no

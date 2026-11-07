@@ -24,7 +24,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.worker.jobs import run_task
@@ -172,7 +172,7 @@ async def _reset_to_queued(
     """Mirror ``recover_stale_running``: a killed run is requeued for reclaim."""
     async with sessions() as session:
         await session.execute(
-            ResearchTaskModel.__table__.update()
+            update(ResearchTaskModel)
             .where(ResearchTaskModel.task_id == task_id)
             .values(status=TaskStatus.QUEUED)
         )

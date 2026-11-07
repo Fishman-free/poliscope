@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from uuid import uuid4
 
 from packages.evidence.lineage_view import LineageViewRow, build_lineage_view
+
+
+def _items(view: dict[str, object], key: str) -> list[dict[str, Any]]:
+    """The view is JSON-shaped (``dict[str, object]``); lists hold row dicts."""
+    return cast(list[dict[str, Any]], view[key])
 
 
 def test_shared_dataset_merges_cluster_and_emits_link() -> None:
@@ -18,7 +24,7 @@ def test_shared_dataset_merges_cluster_and_emits_link() -> None:
     assert view["paper_count"] == 3
     assert view["independent_cluster_count"] == 2
     dataset_links = [
-        link for link in view["links"] if link["dep_type"] == "SAME_DATASET"
+        link for link in _items(view, "links") if link["dep_type"] == "SAME_DATASET"
     ]
     assert len(dataset_links) == 1
     assert set(dataset_links[0]["source_ids"]) == {str(a), str(b)}
@@ -36,7 +42,7 @@ def test_shared_team_does_not_merge_but_is_shown() -> None:
     assert view["independent_cluster_count"] == 2
     team_links = [
         link
-        for link in view["links"]
+        for link in _items(view, "links")
         if link["dep_type"] == "SAME_RESEARCH_TEAM"
     ]
     assert len(team_links) == 1
@@ -46,7 +52,7 @@ def test_shared_team_does_not_merge_but_is_shown() -> None:
 def test_every_source_carries_a_cluster_index() -> None:
     a, b = uuid4(), uuid4()
     view = build_lineage_view([LineageViewRow(a), LineageViewRow(b)])
-    indices = {source["cluster_index"] for source in view["sources"]}
+    indices = {source["cluster_index"] for source in _items(view, "sources")}
     assert indices == {0, 1}
 
 

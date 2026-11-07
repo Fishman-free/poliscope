@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from packages.council.contracts import Seat
@@ -21,6 +21,11 @@ from packages.council.rounds.joint_modeling import (
 )
 from packages.council.rounds.registry import PhaseContext, run_blindspot_bounty
 from packages.epistemo.contracts import TaskPhase
+
+
+def _rows(value: object) -> Sequence[Mapping[str, Any]]:
+    """Round carry values are typed ``object``; these hold row mappings."""
+    return cast(Sequence[Mapping[str, Any]], value)
 
 
 def _blindspot(**over: Any) -> BlindspotItem:
@@ -111,7 +116,7 @@ async def test_bounty_rekeys_hallucinated_duplicate_ids() -> None:
 
     # Both blindspots survive (nothing dropped on the collision), and their
     # ids are distinct: the second was re-keyed deterministically.
-    ranked = outcome.carry["ranked_blindspots"]
+    ranked = _rows(outcome.carry["ranked_blindspots"])
     assert len(ranked) == 2
     rekeyed = [r for r in ranked if r["blindspot_id"] != str(shared_id)]
     assert len(rekeyed) == 1
@@ -190,8 +195,8 @@ async def test_bounty_carries_ranked_pending_investigations() -> None:
 
     outcome = await run_blindspot_bounty(context)
 
-    ranked = outcome.carry["ranked_blindspots"]
-    assignments = outcome.carry["blindspot_assignments"]
+    ranked = _rows(outcome.carry["ranked_blindspots"])
+    assignments = _rows(outcome.carry["blindspot_assignments"])
     assert ranked == (
         {
             "blindspot_id": str(blindspot_id),

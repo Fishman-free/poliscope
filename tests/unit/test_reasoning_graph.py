@@ -27,8 +27,9 @@ def test_flush_marks_inactive_but_keeps_node() -> None:
 
     graph.flush(dead)
 
-    assert graph.node(dead) is not None  # not deleted
-    assert graph.node(dead).status == "flushed"
+    flushed = graph.node(dead)
+    assert flushed is not None  # not deleted
+    assert flushed.status == "flushed"
     assert dead not in graph.active_frontier()
     assert task in graph.active_frontier()
 
@@ -68,7 +69,9 @@ def test_patch_updates_payload() -> None:
     graph = ReasoningGraph()
     node_id = graph.add_node(ProcessNodeType.TASK, {"summary": "task"})
     graph.patch(node_id, next_need="replication")
-    assert graph.node(node_id).payload["next_need"] == "replication"
+    patched = graph.node(node_id)
+    assert patched is not None
+    assert patched.payload["next_need"] == "replication"
 
 
 def test_patch_unknown_node_raises() -> None:

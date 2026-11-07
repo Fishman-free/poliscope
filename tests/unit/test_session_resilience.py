@@ -282,7 +282,8 @@ async def test_claim_on_resume_takes_a_completed_task_without_its_paper() -> Non
     claimed = await jobs._claim(
         cast(AsyncSession, session), uuid4(), resuming=True
     )
-    assert claimed is row
+    # _TaskRow stands in for the ORM row; identity is what is being pinned.
+    assert cast(object, claimed) is row
 
 
 async def test_claim_on_resume_still_refuses_a_finished_task() -> None:

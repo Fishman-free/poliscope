@@ -54,7 +54,7 @@ def _request(**overrides: object) -> ModelRequest:
         "evidence_refs": (),
     }
     fields.update(overrides)
-    return ModelRequest(**fields)  # type: ignore[arg-type]
+    return ModelRequest(**fields)
 
 
 class _Stream(httpx.AsyncByteStream):

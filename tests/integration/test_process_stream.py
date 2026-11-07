@@ -234,7 +234,9 @@ async def test_list_structural_before_keeps_only_anchors_ascending(
     # seq 0: anchor; seq 1-3: heavy tokens; seq 4: closing anchor.
     writer.emit("seat_deliberation", {"seat": "theory_builder", "phase": "P"})
     writer.emit("model_token", {"text": "a", "seat": "theory_builder", "phase": "P"})
-    writer.emit("model_reasoning", {"text": "b", "seat": "theory_builder", "phase": "P"})
+    writer.emit(
+        "model_reasoning", {"text": "b", "seat": "theory_builder", "phase": "P"}
+    )
     writer.emit("seat_working", {"seat": "theory_builder", "elapsed": 1})
     writer.emit("model_done", {"seat": "theory_builder", "phase": "P"})
     await writer.close()

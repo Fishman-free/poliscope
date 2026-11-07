@@ -121,9 +121,11 @@ async def test_semantic_precision_penalises_unmatched_statement() -> None:
         _blindspot("a completely unrelated gap about funding sources"),
     ]
     gateway = _ScriptedJudge({"reverse_causation": [0]})
-    recall, precision = await score_blindspots_semantic(
+    scored = await score_blindspots_semantic(
         statements, ("reverse_causation",), gateway
     )
+    assert scored is not None
+    recall, precision = scored
     assert recall == 1.0
     assert precision == 0.5
 
@@ -131,9 +133,11 @@ async def test_semantic_precision_penalises_unmatched_statement() -> None:
 async def test_semantic_recall_misses_unaddressed_concept() -> None:
     statements = [_blindspot("the direction of effect could run the other way")]
     gateway = _ScriptedJudge({"reverse_causation": [0], "provenance": []})
-    recall, precision = await score_blindspots_semantic(
+    scored = await score_blindspots_semantic(
         statements, ("reverse_causation", "provenance"), gateway
     )
+    assert scored is not None
+    recall, precision = scored
     assert recall == 0.5
     assert precision == 1.0
 
@@ -167,9 +171,11 @@ async def test_semantic_none_on_quarantined_answer() -> None:
 async def test_semantic_drops_out_of_range_indices() -> None:
     statements = [_blindspot("the direction of effect could run the other way")]
     gateway = _ScriptedJudge({"reverse_causation": [0, 7, -1]})
-    recall, precision = await score_blindspots_semantic(
+    scored = await score_blindspots_semantic(
         statements, ("reverse_causation",), gateway
     )
+    assert scored is not None
+    recall, precision = scored
     assert recall == 1.0
     assert precision == 1.0
 
@@ -180,9 +186,11 @@ async def test_semantic_excludes_quarantined_statements() -> None:
         _blindspot("quarantined blindspot", status="quarantined"),
     ]
     gateway = _ScriptedJudge({"reverse_causation": [0]})
-    recall, precision = await score_blindspots_semantic(
+    scored = await score_blindspots_semantic(
         statements, ("reverse_causation",), gateway
     )
+    assert scored is not None
+    recall, precision = scored
     assert recall == 1.0
     assert precision == 1.0
 

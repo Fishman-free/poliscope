@@ -27,7 +27,7 @@ from packages.council.rounds.registry import (
     run_final_rejudgment,
 )
 from packages.epistemo.contracts import TaskPhase
-from packages.reports.contracts import FinalPaper
+from packages.reports.contracts import FinalPaper, MapItem
 from packages.reports.paper_markdown import render_paper_markdown
 from packages.reports.reasoning_map import (
     MODE_DETERMINISTIC,
@@ -81,7 +81,7 @@ def _challenges() -> tuple[ChallengeRow, ...]:
     )
 
 
-def _items() -> tuple:
+def _items() -> tuple[MapItem, ...]:
     return build_catalog(
         findings=[{"finding_statement": "善意性别歧视与传统角色认同正相关。"}],
         blindspots=[{"statement": "缺少非西方文化样本。", "score": "0.8"}],
@@ -115,7 +115,7 @@ async def test_a_declared_stance_travels_on_the_final_judgment_event() -> None:
         seats=tuple(outputs),
         question=QUESTION,
         confirmed_claims=(),
-        deliberator=_Scripted(outputs),  # type: ignore[arg-type]
+        deliberator=_Scripted(outputs),
     )
     outcome = await run_final_rejudgment(context)
     payloads = {

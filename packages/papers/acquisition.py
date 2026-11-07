@@ -254,8 +254,9 @@ class SourceAcquisition:
                 normalized.title,
                 threshold=self._relevance_threshold,
             )
-            # If rejected strictly because the query lacked matching Latin keywords
-            # from the topic, check if screening against the relevance context alone passes.
+            # If rejected strictly because the query lacked matching Latin
+            # keywords from the topic, check if screening against the
+            # relevance context alone passes.
             if not admitted and self._relevance_context:
                 admitted_ctx, score_ctx = is_topically_relevant(
                     self._relevance_context,

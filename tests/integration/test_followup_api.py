@@ -41,7 +41,7 @@ class _FakeAsyncClient:
 
     def __init__(self, answer: str) -> None:
         self._answer = answer
-        self.posts: list[tuple[str, dict[str, object]]] = []
+        self.posts: list[tuple[str, dict[str, Any]]] = []
 
     async def __aenter__(self) -> _FakeAsyncClient:
         return self
@@ -215,7 +215,7 @@ async def test_followup_stream_returns_sse_deltas(
 
     class _FakeStreamClient:
         def __init__(self) -> None:
-            self.posts: list[tuple[str, dict[str, object]]] = []
+            self.posts: list[tuple[str, dict[str, Any]]] = []
 
         async def __aenter__(self) -> _FakeStreamClient:
             return self

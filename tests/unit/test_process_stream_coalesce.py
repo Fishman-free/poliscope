@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from packages.evidence.process_stream import _coalesce_batch
 
+# The writer's queue type: payload values are arbitrary JSON.
+Batch = list[tuple[str, dict[str, object]]]
+
 
 def test_adjacent_same_slice_token_deltas_concatenate() -> None:
-    pending = [
+    pending: Batch = [
         ("model_token", {"text": "a", "seat": "s1", "phase": "P"}),
         ("model_token", {"text": "b", "seat": "s1", "phase": "P"}),
         ("model_token", {"text": "c", "seat": "s1", "phase": "P"}),
@@ -21,7 +24,7 @@ def test_adjacent_same_slice_token_deltas_concatenate() -> None:
 
 
 def test_deltas_from_different_seats_stay_separate() -> None:
-    pending = [
+    pending: Batch = [
         ("model_token", {"text": "a", "seat": "s1", "phase": "P"}),
         ("model_token", {"text": "b", "seat": "s2", "phase": "P"}),
     ]
@@ -34,7 +37,7 @@ def test_deltas_from_different_seats_stay_separate() -> None:
 
 
 def test_structural_rows_break_and_survive() -> None:
-    pending = [
+    pending: Batch = [
         ("model_token", {"text": "a", "seat": "s1", "phase": "P"}),
         ("seat_deliberation", {"seat": "s1", "phase": "Q"}),
         ("model_token", {"text": "b", "seat": "s1", "phase": "Q"}),
@@ -52,7 +55,7 @@ def test_structural_rows_break_and_survive() -> None:
 
 
 def test_adjacent_heartbeats_keep_only_the_newest() -> None:
-    pending = [
+    pending: Batch = [
         ("seat_working", {"seat": "s1", "phase": "P", "elapsed": 1}),
         ("seat_working", {"seat": "s1", "phase": "P", "elapsed": 2}),
         ("seat_working", {"seat": "s1", "phase": "P", "elapsed": 3}),
@@ -67,7 +70,7 @@ def test_adjacent_heartbeats_keep_only_the_newest() -> None:
 def test_coalescing_does_not_mutate_input() -> None:
     # A failed flush puts the original batch back; mutated/copied payloads
     # would be double-merged on retry.
-    pending = [
+    pending: Batch = [
         ("model_token", {"text": "a", "seat": "s1", "phase": "P"}),
         ("model_token", {"text": "b", "seat": "s1", "phase": "P"}),
     ]

@@ -687,8 +687,7 @@ async def test_slow_pdf_parsing_never_freezes_the_event_loop(
     import time
 
     import packages.papers.finding_extraction as module
-
-    real_extract = module.extract_pages
+    from packages.papers.parser import extract_pages as real_extract
 
     def slow_extract(content: bytes) -> object:
         time.sleep(0.3)  # a blocking parse, like PyMuPDF OCR

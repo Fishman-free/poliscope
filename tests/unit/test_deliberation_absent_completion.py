@@ -89,6 +89,9 @@ class _StreamFailsInvokeSucceeds:
 class _InstantGateway:
     """A provider that streams and finishes normally."""
 
+    async def invoke(self, request: ModelRequest) -> ModelResult:
+        raise AssertionError("the stream succeeds; nothing falls back to invoke")
+
     async def stream_invoke(
         self, request: ModelRequest, on_event: object
     ) -> ModelResult:

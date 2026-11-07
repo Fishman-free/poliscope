@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import zipfile
 
+import fitz  # type: ignore[import-untyped]
 import pytest
 
 from packages.knowledge.extractors import InvalidDocument, extract_text
@@ -154,8 +155,6 @@ def test_empty_pptx_archive_is_refused() -> None:
 
 
 def test_pdf_path_still_parses_pages() -> None:
-    import fitz  # type: ignore[import-untyped]
-
     document = fitz.open()
     page = document.new_page()
     page.insert_text((72, 72), "A real PDF page.")
@@ -179,8 +178,6 @@ def test_short_native_text_pdf_is_not_ocrd() -> None:
     # is exact and always preferred over an OCR pass (CLAUDE.md 7). This pins
     # the image gate -- without it, a tesseract-enabled environment would
     # re-OCR short pages and risk garbling text we already have.
-    import fitz  # type: ignore[import-untyped]
-
     document = fitz.open()
     page = document.new_page()
     page.insert_text((72, 72), "Short caption only.")
@@ -195,8 +192,6 @@ def test_scanned_pdf_without_text_layer_is_ocrd() -> None:
     # A raster-only page (no embedded text layer) is exactly the scanned case
     # the OCR fallback exists for. Skip when Tesseract is absent from the test
     # environment -- the assertion only holds where OCR can actually run.
-    import fitz  # type: ignore[import-untyped]
-
     source = fitz.open()
     source_page = source.new_page(width=300, height=120)
     source_page.insert_text((20, 60), "ScannedBody ZXQY987")

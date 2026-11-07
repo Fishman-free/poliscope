@@ -14,7 +14,12 @@ from uuid import uuid4
 
 import pytest
 
-from packages.reports.contracts import FinalPaper, SynthesisOutcome
+from packages.reports.contracts import (
+    FinalPaper,
+    MapItem,
+    ReasoningMap,
+    SynthesisOutcome,
+)
 from packages.reports.paper_markdown import render_paper_markdown
 from packages.reports.reasoning_map import (
     DIMENSION_KEYS,
@@ -79,7 +84,7 @@ def _consensus() -> dict[str, object]:
     }
 
 
-def _catalog() -> tuple:
+def _catalog() -> tuple[MapItem, ...]:
     return build_catalog(
         findings=[
             {"finding_statement": "一项纵向队列研究显示弱相关。", "doi": "10.1/a"}
@@ -164,7 +169,7 @@ def test_prompt_lines_carry_ids_and_headlines_not_full_texts() -> None:
 # ------------------------------------------------------ deterministic map
 
 
-def _placements(rmap) -> list[str]:
+def _placements(rmap: ReasoningMap) -> list[str]:
     placed: list[str] = list(rmap.unassigned)
     for step in rmap.steps:
         placed.extend(step.refs)

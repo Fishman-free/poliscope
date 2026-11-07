@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -234,7 +234,7 @@ async def test_a_completed_task_writes_the_paper_event(
     assert paper_events[0].status == "process_only"
     payload = dict(paper_events[0].payload)
     assert payload["title"] == EXPECTED_TITLE
-    rmap = payload["reasoning_map"]
+    rmap = cast(dict[str, Any], payload["reasoning_map"])
     assert rmap["mode"] == "model"
     assert rmap["bottom_line"] == MAP_PAYLOAD["bottom_line"]
     # Steps come back in spine order (evidence before causality), and an id
@@ -421,7 +421,7 @@ async def test_a_pre_map_paper_is_reorganised_on_read(
     """
     task_id = await _seed_queued_task(app_sessions, UUID(account["id"]))
     await _run_to_completion(app_sessions, projector_sessions, task_id)
-    legacy = {
+    legacy: dict[str, object] = {
         "title": "旧版论文",
         "abstract": "旧版摘要。",
         "sections": [{"heading": "发现", "paragraphs": ["相关性一致。"]}],

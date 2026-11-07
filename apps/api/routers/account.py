@@ -18,7 +18,6 @@ password here instead.
 from __future__ import annotations
 
 from typing import Annotated, Any
-from uuid import UUID
 
 from fastapi import (
     APIRouter,
