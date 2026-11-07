@@ -593,6 +593,12 @@ function MapViewInner({
     exportNodes: ExportNode[];
     exportEdges: ExportEdge[];
   } => {
+    // The box React Flow measured on screen, so the export starts from the
+    // same geometry the researcher is looking at.
+    const measured = (node: MapFlowNode) => ({
+      width: node.measured?.width ?? node.width ?? undefined,
+      height: node.measured?.height ?? node.height ?? undefined,
+    });
     const exportNodes: ExportNode[] = nodes.map((node) => {
       if (node.type === "sticky") {
         const data = node.data as StickyNodeData;
@@ -600,6 +606,7 @@ function MapViewInner({
           id: node.id,
           x: node.position.x,
           y: node.position.y,
+          ...measured(node),
           label: data.text || t("（空便签）"),
           typeLabel: t("研究者便签"),
           tone: "unknown" as NodeTone,
@@ -614,10 +621,14 @@ function MapViewInner({
         id: node.id,
         x: node.position.x,
         y: node.position.y,
+        ...measured(node),
         label: data.label,
         typeLabel: data.typeLabel,
         tone: data.tone,
         kind: "evidence",
+        blindspot: node.className?.includes("map-node--blindspot") ?? false,
+        dimmed: dimRefuted && data.tone === "refuted",
+        hasNote: data.hasNote,
       };
     });
     const exportEdges: ExportEdge[] = edges
@@ -633,7 +644,7 @@ function MapViewInner({
           exportNodes.some((node) => node.id === edge.target),
       );
     return { exportNodes, exportEdges };
-  }, [edges, nodes]);
+  }, [dimRefuted, edges, nodes]);
 
   const exportTitle = useMemo(() => {
     const question = graph.nodes.find(
