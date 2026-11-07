@@ -7,11 +7,18 @@ researcher could only discover the cost after the run finished. This module is
 the read side: it aggregates those rows by purpose/tool and compares them to
 the task's declared budget.
 
-It is strictly a read model. It never estimates a price the gateway did not
-record (a NULL/zero cost is reported as zero), never turns model confidence
-into a number (CLAUDE.md 16), and degrades honestly when a limit is unset
-(``limit == 0`` means "no cap", so remaining is reported as None rather than a
-negative number).
+It is strictly a read model: ``cost_usd`` is exactly what the gateway
+recorded. Calls recorded before the gateway learned list prices (or against a
+model with no known price) carry a zero cost although they consumed tokens;
+those are never shown as free. When the task's model has a known price
+(packages/models/pricing.py), their tokens are priced into a separate,
+explicitly labelled ``pricing.estimated_unpriced_usd`` -- all input billed at
+the cache-miss rate, so the estimate is an upper bound -- and when it has
+none, ``pricing.source`` is ``None`` and the UI says the price is unknown
+(CLAUDE.md 7). Recorded and estimated figures stay distinguishable. It never
+turns model confidence into a number (CLAUDE.md 16), and degrades honestly
+when a limit is unset (``limit == 0`` means "no cap", so remaining is
+reported as None rather than a negative number).
 """
 
 from __future__ import annotations
@@ -20,10 +27,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Integer, func, select
+from sqlalchemy import Integer, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.models.models import ModelCallModel
+from packages.models.pricing import ModelPrice
 from packages.tools.models import ToolCallModel
 
 
@@ -42,12 +50,36 @@ class TaskBudget:
     source_limit: int
 
 
+def estimate_unpriced(
+    price: ModelPrice | None,
+    unpriced_input_tokens: int,
+    unpriced_output_tokens: int,
+) -> float | None:
+    """Upper-bound cost of calls recorded at zero, or ``None`` if unknowable.
+
+    No cache split was stored for those rows, so every input token is billed
+    at the cache-miss rate: the estimate can overstate, never understate.
+    """
+    if price is None:
+        return None
+    return round(
+        float(price.cost(unpriced_input_tokens, unpriced_output_tokens)), 6
+    )
+
+
 async def aggregate_task_usage(
     session: AsyncSession,
     task_id: UUID,
     budget: TaskBudget,
+    *,
+    model_name: str | None = None,
+    price: ModelPrice | None = None,
 ) -> dict[str, object]:
     """Aggregate model/tool audit rows for ``task_id`` into a JSON-able dict.
+
+    ``model_name`` / ``price`` describe the model the task ran with (``price``
+    ``None`` = unknown); they only feed the ``pricing`` block, never the
+    recorded ``cost_usd``.
 
     Shape::
 
@@ -56,11 +88,18 @@ async def aggregate_task_usage(
                     "latency_ms", "retries", "errors", "by_purpose": {...}},
           "tools": {"calls", "cost_usd", "latency_ms", "retries", "errors",
                     "by_tool": {...}},
+          "pricing": {"model_name", "source", "vendor", "input_per_1m_usd",
+                      "output_per_1m_usd", "cached_input_per_1m_usd",
+                      "unpriced_calls", "estimated_unpriced_usd"},
           "budget": {"model_cost_limit_usd", "model_cost_remaining_usd",
                      "tool_call_limit", "tool_calls_remaining",
                      "source_limit"}
         }
     """
+    # A row "carries no price" when it consumed tokens but recorded zero cost.
+    unpriced = (ModelCallModel.cost_usd == 0) & (
+        (ModelCallModel.input_tokens + ModelCallModel.output_tokens) > 0
+    )
     model_rows = await session.execute(
         select(
             ModelCallModel.purpose,
@@ -72,6 +111,13 @@ async def aggregate_task_usage(
             func.coalesce(func.sum(ModelCallModel.retries), 0),
             func.sum(
                 func.cast(ModelCallModel.error_code.is_not(None), Integer)
+            ),
+            func.coalesce(func.sum(case((unpriced, 1), else_=0)), 0),
+            func.coalesce(
+                func.sum(case((unpriced, ModelCallModel.input_tokens), else_=0)), 0
+            ),
+            func.coalesce(
+                func.sum(case((unpriced, ModelCallModel.output_tokens), else_=0)), 0
             ),
         )
         .where(ModelCallModel.task_id == task_id)
@@ -87,7 +133,25 @@ async def aggregate_task_usage(
         "retries": 0,
         "errors": 0,
     }
-    for purpose, calls, in_tok, out_tok, cost, latency, retries, errors in model_rows:
+    unpriced_calls = 0
+    unpriced_in = 0
+    unpriced_out = 0
+    for (
+        purpose,
+        calls,
+        in_tok,
+        out_tok,
+        cost,
+        latency,
+        retries,
+        errors,
+        row_unpriced_calls,
+        row_unpriced_in,
+        row_unpriced_out,
+    ) in model_rows:
+        unpriced_calls += int(row_unpriced_calls)
+        unpriced_in += int(row_unpriced_in)
+        unpriced_out += int(row_unpriced_out)
         entry: dict[str, float] = {
             "calls": int(calls),
             "input_tokens": int(in_tok),
@@ -140,9 +204,30 @@ async def aggregate_task_usage(
 
     cost_limit = _money(budget.model_cost_usd)
     tool_limit = int(budget.tool_call_limit)
+    price_info: dict[str, object] = (
+        price.as_dict()
+        if price is not None
+        else {
+            "source": None,
+            "vendor": None,
+            "input_per_1m_usd": None,
+            "output_per_1m_usd": None,
+            "cached_input_per_1m_usd": None,
+        }
+    )
     return {
         "model": {**model_tot, "by_purpose": by_purpose},
         "tools": {**tool_tot, "by_tool": by_tool},
+        "pricing": {
+            "model_name": model_name,
+            **price_info,
+            "unpriced_calls": unpriced_calls,
+            "estimated_unpriced_usd": (
+                estimate_unpriced(price, unpriced_in, unpriced_out)
+                if unpriced_calls
+                else 0.0
+            ),
+        },
         "budget": {
             "model_cost_limit_usd": cost_limit or None,
             "model_cost_remaining_usd": (
@@ -161,4 +246,4 @@ async def aggregate_task_usage(
     }
 
 
-__all__ = ["TaskBudget", "aggregate_task_usage"]
+__all__ = ["TaskBudget", "aggregate_task_usage", "estimate_unpriced"]

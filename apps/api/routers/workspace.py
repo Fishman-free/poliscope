@@ -9,6 +9,7 @@ an arriving SSE event is already reflected in what it is showing.
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from decimal import Decimal
 from typing import Any, cast
@@ -40,6 +41,7 @@ from packages.evidence.sql_ledger import SqlEventLedger
 from packages.evidence.sql_projector import STATUS_QUARANTINED, node_id_for
 from packages.kernel.contracts import FrozenDict
 from packages.kernel.database import canonical_uuid
+from packages.models.pricing import task_price
 from packages.models.usage import TaskBudget, aggregate_task_usage
 from packages.papers.models import SourceModel
 from packages.reports.json_export import to_dict
@@ -540,15 +542,23 @@ async def _assemble_snapshot(
         cast(int, lineage["independent_cluster_count"])
     )
     version = await SqlEventLedger(session).latest_sequence(task_id)
-    usage = None if public else await aggregate_task_usage(
-        session,
-        task_id,
-        TaskBudget(
-            model_cost_usd=Decimal(task.model_cost_usd),
-            tool_call_limit=task.tool_call_limit,
-            source_limit=task.source_limit,
-        ),
-    )
+    usage: dict[str, object] | None = None
+    if not public:
+        # Same precedence as the worker (C10 hot-swap override first).
+        model_name, price = task_price(
+            task.model_config_override or task.model_config, os.environ
+        )
+        usage = await aggregate_task_usage(
+            session,
+            task_id,
+            TaskBudget(
+                model_cost_usd=Decimal(task.model_cost_usd),
+                tool_call_limit=task.tool_call_limit,
+                source_limit=task.source_limit,
+            ),
+            model_name=model_name,
+            price=price,
+        )
     corpus_cutoff = task.corpus_cutoff
     replay_of_task_id = task.replay_of_task_id
     share_created_at = task.share_created_at

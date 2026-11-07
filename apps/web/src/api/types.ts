@@ -610,6 +610,20 @@ export interface UsageViewData {
     errors: number;
     by_tool: Record<string, Record<string, number>>;
   };
+  /** Where the cost figure comes from. `source` null = the model's price is
+   * unknown (not "free"). `estimated_unpriced_usd` prices calls recorded at
+   * zero cost (older runs) at the list price -- an upper bound, kept apart
+   * from the recorded `model.cost_usd`. Optional: older API builds omit it. */
+  pricing?: {
+    model_name: string | null;
+    source: "configured" | "list" | null;
+    vendor: string | null;
+    input_per_1m_usd: number | null;
+    output_per_1m_usd: number | null;
+    cached_input_per_1m_usd: number | null;
+    unpriced_calls: number;
+    estimated_unpriced_usd: number | null;
+  };
   budget: {
     model_cost_limit_usd: number | null;
     model_cost_remaining_usd: number | null;

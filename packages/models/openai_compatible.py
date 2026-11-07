@@ -53,6 +53,14 @@ from packages.models.contracts import (
     StreamEvent,
 )
 from packages.models.phase_schemas import PHASE_OUTPUT_JSON_SCHEMAS
+from packages.models.pricing import (
+    PRICE_CACHED_INPUT_ENV,
+    PRICE_INPUT_ENV,
+    PRICE_OUTPUT_ENV,
+    ModelPrice,
+    cached_prompt_tokens,
+    resolve_price,
+)
 
 API_KEY_ENV = "POLISCOPE_MODEL_API_KEY"
 BASE_URL_ENV = "POLISCOPE_MODEL_BASE_URL"
@@ -60,8 +68,6 @@ DEFAULT_MODEL_ENV = "POLISCOPE_MODEL_NAME"
 STRONG_MODEL_ENV = "POLISCOPE_MODEL_NAME_STRONG_REASONING"
 MEDIUM_MODEL_ENV = "POLISCOPE_MODEL_NAME_MEDIUM"
 LIGHTWEIGHT_MODEL_ENV = "POLISCOPE_MODEL_NAME_LIGHTWEIGHT"
-PRICE_INPUT_ENV = "POLISCOPE_MODEL_PRICE_INPUT_PER_1M_USD"
-PRICE_OUTPUT_ENV = "POLISCOPE_MODEL_PRICE_OUTPUT_PER_1M_USD"
 TIMEOUT_ENV = "POLISCOPE_MODEL_TIMEOUT_SECONDS"
 STREAM_TIMEOUT_ENV = "POLISCOPE_MODEL_STREAM_TIMEOUT_SECONDS"
 INVOKE_TIMEOUT_ENV = "POLISCOPE_MODEL_INVOKE_TIMEOUT_SECONDS"
@@ -75,7 +81,6 @@ DEFAULT_TIMEOUT_SECONDS = 60.0
 STREAM_TOTAL_TIMEOUT_SECONDS = 240.0
 INVOKE_TOTAL_TIMEOUT_SECONDS = 300.0
 MAX_SCHEMA_REPAIR_ATTEMPTS = 1
-_PER_MILLION = Decimal(1_000_000)
 
 
 class ModelGatewayConfigError(ValueError):
@@ -110,8 +115,12 @@ class OpenAICompatibleConfig:
     api_key: str
     base_url: str
     model_names: Mapping[ModelClass, str]
+    # Operator-configured price. Both zero means "not configured": the call
+    # is then priced at the model's list price when packages.models.pricing
+    # knows it, and at zero (unknown, reported as such) otherwise.
     price_input_per_1m_usd: Decimal = Decimal("0")
     price_output_per_1m_usd: Decimal = Decimal("0")
+    price_cached_input_per_1m_usd: Decimal | None = None
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     # ``timeout_seconds`` is the per-read httpx timeout; these two are the
     # whole-call ceilings the file header's failure shape relies on.
@@ -147,12 +156,16 @@ class OpenAICompatibleConfig:
         invoke_total = float(
             values.get(INVOKE_TIMEOUT_ENV) or INVOKE_TOTAL_TIMEOUT_SECONDS
         )
+        cached_price = values.get(PRICE_CACHED_INPUT_ENV)
         return cls(
             api_key=api_key,
             base_url=base_url.rstrip("/"),
             model_names=model_names,
             price_input_per_1m_usd=_decimal_env(values, PRICE_INPUT_ENV),
             price_output_per_1m_usd=_decimal_env(values, PRICE_OUTPUT_ENV),
+            price_cached_input_per_1m_usd=(
+                Decimal(cached_price) if cached_price else None
+            ),
             timeout_seconds=timeout,
             stream_total_timeout_seconds=stream_total,
             invoke_total_timeout_seconds=invoke_total,
@@ -223,6 +236,7 @@ class OpenAICompatibleModelGateway:
         retries = 0
         input_tokens = 0
         output_tokens = 0
+        cached_tokens = 0
         payload: dict[str, object] = {}
         errors: list[str] = []
         repaired = False
@@ -286,6 +300,7 @@ class OpenAICompatibleModelGateway:
             retries += transport_retries
             input_tokens += int(usage.get("prompt_tokens", 0) or 0)
             output_tokens += int(usage.get("completion_tokens", 0) or 0)
+            cached_tokens += cached_prompt_tokens(usage)
             if reasoning:
                 reasoning_parts.append(reasoning)
             payload, errors = _parse_and_validate(content, schema)
@@ -307,7 +322,9 @@ class OpenAICompatibleModelGateway:
             payload=FrozenDict(payload),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=self._cost(input_tokens, output_tokens),
+            cost_usd=self._cost(
+                model_name, input_tokens, output_tokens, cached_tokens
+            ),
             latency_ms=latency_ms,
             retries=retries,
             schema_status=schema_status,
@@ -497,18 +514,51 @@ class OpenAICompatibleModelGateway:
             payload=FrozenDict(payload),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_usd=self._cost(input_tokens, output_tokens),
+            cost_usd=self._cost(
+                str(body.get("model") or ""),
+                input_tokens,
+                output_tokens,
+                cached_prompt_tokens(usage),
+            ),
             latency_ms=latency_ms,
             retries=0,
             schema_status=SchemaStatus.OK,
             reasoning=reasoning,
         )
 
-    def _cost(self, input_tokens: int, output_tokens: int) -> Decimal:
-        return (
-            Decimal(input_tokens) * self._config.price_input_per_1m_usd
-            + Decimal(output_tokens) * self._config.price_output_per_1m_usd
-        ) / _PER_MILLION
+    def price_for(self, model_name: str) -> ModelPrice | None:
+        """The price this gateway bills ``model_name`` at, or ``None``.
+
+        An operator price (either rate non-zero) wins; otherwise the list
+        price from packages.models.pricing, which is how a researcher's own
+        DeepSeek endpoint -- for which no operator price can exist -- stops
+        reporting a cost of zero.
+        """
+        config = self._config
+        configured = (
+            ModelPrice(
+                input_per_1m_usd=config.price_input_per_1m_usd,
+                output_per_1m_usd=config.price_output_per_1m_usd,
+                cached_input_per_1m_usd=config.price_cached_input_per_1m_usd,
+            )
+            if config.price_input_per_1m_usd or config.price_output_per_1m_usd
+            else None
+        )
+        return resolve_price(model_name, configured)
+
+    def _cost(
+        self,
+        model_name: str,
+        input_tokens: int,
+        output_tokens: int,
+        cached_input_tokens: int = 0,
+    ) -> Decimal:
+        # Unknown price -> 0 recorded; the usage read side reports such rows
+        # as "price unknown", never as a free call.
+        price = self.price_for(model_name)
+        if price is None:
+            return Decimal("0")
+        return price.cost(input_tokens, output_tokens, cached_input_tokens)
 
     async def _call_once(
         self,
