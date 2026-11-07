@@ -556,12 +556,15 @@
   }
 }
 
+/* `both` is load-bearing: without a fill mode the old snapshot snaps back to
+   full opacity once its 160 ms fade ends, and stays painted over the new
+   panel until the longer entrance finishes -- the "two views overlap" bug. */
 ::view-transition-old(app-panel) {
-  animation: vt-panel-out 160ms var(--ease-smooth);
+  animation: vt-panel-out 160ms var(--ease-smooth) both;
 }
 
 ::view-transition-new(app-panel) {
-  animation: vt-panel-in var(--duration-slow) var(--ease-smooth);
+  animation: vt-panel-in var(--duration-slow) var(--ease-smooth) both;
 }
 
 @keyframes vt-panel-out {

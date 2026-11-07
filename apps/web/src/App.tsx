@@ -646,12 +646,17 @@ export function App() {
     [taskId, refresh],
   );
 
-  /** A manual tab choice always wins over auto-follow. */
+  /** A manual tab choice always wins over auto-follow.
+   *
+   * Deliberately NOT a view transition: a cross-fade keeps a snapshot of the
+   * old tab painted over the new one until every pseudo-element animation
+   * ends, and heavy tabs (radar SVG, React Flow map) stretch that window to
+   * seconds -- the two tabs visibly overlapped. `key={tab}` unmounts the old
+   * panel in the same commit, and the panel's own CSS entrance plays on the
+   * new one, so the switch is instant and never shows both. */
   function selectTab(next: Tab) {
-    withTransition(() => {
-      setFollow(false);
-      setTab(next);
-    });
+    setFollow(false);
+    setTab(next);
   }
 
   /** Blob-download any server-rendered markdown document under a given name.
