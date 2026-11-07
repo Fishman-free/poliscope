@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from apps.api.routers.tasks import FOLLOWUP_MAX_TOKENS
 from packages.research.models import ResearchTaskModel
 
 FOLLOWUP_PATH = "/api/tasks/{task_id}/followup"
@@ -22,6 +23,8 @@ FOLLOWUP_PATH = "/api/tasks/{task_id}/followup"
 
 class _FakePost:
     """A fake response object for the mocked httpx client's .post()."""
+
+    status_code = 200
 
     def __init__(self, payload: dict[str, object]) -> None:
         self._payload = payload
@@ -158,7 +161,7 @@ async def test_followup_answers_from_the_tasks_own_endpoint(
     assert messages[0]["role"] == "system"
     assert "本次研究指出" in messages[0]["content"]
     assert "社交媒体使用" in messages[-1]["content"]
-    assert request_body["max_tokens"] == 4096
+    assert request_body["max_tokens"] == FOLLOWUP_MAX_TOKENS
 
 
 async def test_followup_rejects_empty_question(
@@ -183,6 +186,8 @@ async def test_followup_stream_returns_sse_deltas(
     task_id = await _seed_completed_task(app_sessions, UUID(account["id"]))
 
     class _FakeStream:
+        status_code = 200
+
         def __init__(self) -> None:
             self._lines = [
                 ("data: " + '{"choices":[{"delta":{"content":"第"}}]}').encode("utf-8"),
@@ -242,7 +247,7 @@ async def test_followup_stream_returns_sse_deltas(
     _path, request_body = fake.posts[0]
     assert request_body["stream"] is True
     assert request_body["model"] == "qwen3.8-max"
-    assert request_body["max_tokens"] == 4096
+    assert request_body["max_tokens"] == FOLLOWUP_MAX_TOKENS
     assert "本次研究指出" in request_body["messages"][0]["content"]
 
 

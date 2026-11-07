@@ -13,6 +13,7 @@ import os
 import secrets
 import time
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -684,7 +685,7 @@ async def follow_up(
         }
     base_url, api_key, model_name, system_prompt, user_prompt, history = prepared
 
-    request_body = {
+    request_body: dict[str, object] = {
         "model": model_name,
         "messages": _followup_messages(system_prompt, user_prompt, history),
         "max_tokens": FOLLOWUP_MAX_TOKENS,
@@ -692,10 +693,16 @@ async def follow_up(
     try:
         async with httpx.AsyncClient(
             base_url=base_url,
-            timeout=60.0,
+            timeout=120.0,
             headers={"Authorization": f"Bearer {api_key}"},
         ) as client:
             response = await client.post("/chat/completions", json=request_body)
+            if _rejects_max_tokens(response):
+                # Same fallback as the stream: the model's ceiling is lower.
+                request_body.pop("max_tokens")
+                response = await client.post(
+                    "/chat/completions", json=request_body
+                )
             response.raise_for_status()
             data = response.json()
             answer = data["choices"][0]["message"]["content"]
@@ -751,51 +758,83 @@ async def follow_up_stream(
     base_url, api_key, model_name, system_prompt, user_prompt, history = prepared
 
     async def _event_stream() -> AsyncIterator[str]:
-        request_body = {
-            "model": model_name,
-            "messages": _followup_messages(system_prompt, user_prompt, history),
-            "max_tokens": FOLLOWUP_MAX_TOKENS,
-            "stream": True,
-        }
-        saw_done = False
-        finish_reason: str | None = None
+        """Relay one answer, continuing it whenever the vendor cuts it short.
+
+        2026-11 report: a long follow-up reached ``max_tokens``, the stream
+        ended in an error frame and the half-written answer was stranded --
+        the researcher could not get the rest. On a thinking model the
+        reasoning tokens count against that cap too, so it bites sooner than
+        the visible text suggests. A ``length`` stop is therefore not a
+        failure: the partial answer goes back as an assistant turn with an
+        instruction to continue exactly where it stopped, and the new deltas
+        are appended to the same answer, up to MAX_FOLLOWUP_CONTINUATIONS
+        times. Only when that is exhausted does the stream say the answer is
+        still incomplete -- with a ``truncated`` frame, never by pretending
+        it finished.
+        """
+        base_messages = _followup_messages(system_prompt, user_prompt, history)
+        answer: list[str] = []
+        max_tokens: int | None = FOLLOWUP_MAX_TOKENS
+        continuations = 0
         try:
-            # Per-read timeouts cannot stop a provider that sends endless
-            # heartbeats or reasoning deltas; cap the entire follow-up.
-            async with asyncio.timeout(180.0), httpx.AsyncClient(
+            async with httpx.AsyncClient(
                 base_url=base_url,
                 timeout=120.0,
                 headers={"Authorization": f"Bearer {api_key}"},
-            ) as client, client.stream(
-                "POST", "/chat/completions", json=request_body
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if await http_request.is_disconnected():
-                        return
-                    if not line.startswith("data:"):
-                        continue
-                    raw = line[5:].strip()
-                    if raw == "[DONE]":
-                        saw_done = True
-                        break
+            ) as client:
+                while True:
+                    messages = base_messages
+                    if answer:
+                        messages = [
+                            *base_messages,
+                            {"role": "assistant", "content": "".join(answer)},
+                            {"role": "user", "content": FOLLOWUP_CONTINUE_PROMPT},
+                        ]
+                    body: dict[str, object] = {
+                        "model": model_name,
+                        "messages": messages,
+                        "stream": True,
+                    }
+                    if max_tokens is not None:
+                        body["max_tokens"] = max_tokens
+                    segment = _FollowUpSegment()
                     try:
-                        chunk = json.loads(raw)
-                    except ValueError:
-                        continue
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    finish_reason = choices[0].get("finish_reason") or finish_reason
-                    delta = choices[0].get("delta") or {}
-                    text = delta.get("content")
-                    if text:
-                        frame = json.dumps({"text": text}, ensure_ascii=False)
-                        yield f"data: {frame}\n\n"
-            if not saw_done:
-                raise ValueError("模型流式连接提前结束，未收到完成标记")
-            if finish_reason == "length":
-                raise ValueError("模型输出达到 token 上限，回答可能不完整")
+                        # Per segment, not per answer: each continuation is a
+                        # fresh call that deserves the full window.
+                        async with asyncio.timeout(FOLLOWUP_SEGMENT_TIMEOUT_SECONDS):
+                            async for frame in _stream_followup_segment(
+                                client, body, segment, http_request
+                            ):
+                                yield frame
+                    except httpx.HTTPStatusError as error:
+                        if (
+                            max_tokens is not None
+                            and not segment.text
+                            and _rejects_max_tokens(error.response)
+                        ):
+                            # A model whose output ceiling is below our cap
+                            # answers 400; let the vendor default apply.
+                            max_tokens = None
+                            continue
+                        raise
+                    if segment.disconnected:
+                        return
+                    if not segment.saw_done and segment.finish_reason is None:
+                        raise ValueError("模型流式连接提前结束，未收到完成标记")
+                    answer.append(segment.text)
+                    if segment.finish_reason != "length":
+                        break
+                    if continuations >= MAX_FOLLOWUP_CONTINUATIONS:
+                        frame = json.dumps(
+                            {"continuations": continuations}, ensure_ascii=False
+                        )
+                        yield f"event: truncated\ndata: {frame}\n\n"
+                        break
+                    continuations += 1
+                    frame = json.dumps(
+                        {"continuation": continuations}, ensure_ascii=False
+                    )
+                    yield f"event: continued\ndata: {frame}\n\n"
             yield "data: [DONE]\n\n"
         except httpx.HTTPStatusError as error:
             detail = _followup_error_detail(error.response)
@@ -806,7 +845,12 @@ async def follow_up_stream(
             yield f"event: error\ndata: {frame}\n\n"
         except TimeoutError:
             frame = json.dumps(
-                {"detail": "模型流式输出超过 180 秒，回答未完成，请重试。"},
+                {
+                    "detail": (
+                        f"模型单段输出超过 {FOLLOWUP_SEGMENT_TIMEOUT_SECONDS:.0f} 秒"
+                        "仍未结束，回答未完成。可点「继续生成」接着写。"
+                    )
+                },
                 ensure_ascii=False,
             )
             yield f"event: error\ndata: {frame}\n\n"
@@ -833,12 +877,115 @@ async def follow_up_stream(
 # the whole text was seen (CLAUDE.md 7).
 MAX_PAPER_FOLLOWUP_CHARS = 40_000
 MAX_FOLLOWUP_SKILL_CHARS = 4_000
-# Follow-up answers are long (two labelled sections + citations). 1500
-# tokens cut mid-sentence on a second turn; 4096 is enough for a
-# complete reply without pretending the model has unlimited budget.
-FOLLOWUP_MAX_TOKENS = 4096
+# Follow-up answers are long (two labelled sections + citations), and on a
+# thinking model the reasoning tokens are billed against the same cap: 4096
+# was regularly exhausted before the visible answer finished. 16384 covers a
+# complete reply on every model verified here; a vendor whose ceiling is
+# lower answers 400 and the stream retries without the field, and a reply
+# that still hits the cap is continued (see follow_up_stream).
+FOLLOWUP_MAX_TOKENS = 16384
+MAX_FOLLOWUP_CONTINUATIONS = 3
+FOLLOWUP_SEGMENT_TIMEOUT_SECONDS = 240.0
+# How often a still-thinking model's liveness is relayed. Without it a long
+# reasoning phase sends the browser nothing (reasoning is not shown), the UI
+# looks frozen, and an idle-timeout proxy can drop the connection.
+FOLLOWUP_PROGRESS_INTERVAL_SECONDS = 2.0
+FOLLOWUP_CONTINUE_PROMPT = (
+    "你上一条回答因输出长度上限被截断。请从截断处直接接着写：不要重复已写内容，"
+    "不要重新开头或重写标题，也不要说明你在续写；若截断在句子中间，就从那半句接上。"
+    "使用与上一条回答相同的语言。"
+    " (Your previous reply was cut off by the length limit. Continue exactly"
+    " where it stopped, in the same language, without repeating anything.)"
+)
 MAX_FOLLOWUP_HISTORY_TURNS = 8
 MAX_FOLLOWUP_HISTORY_CHARS = 12_000
+
+
+@dataclass(slots=True)
+class _FollowUpSegment:
+    """What one streamed follow-up call produced, for the continuation loop."""
+
+    text: str = ""
+    finish_reason: str | None = None
+    saw_done: bool = False
+    disconnected: bool = False
+
+
+async def _stream_followup_segment(
+    client: httpx.AsyncClient,
+    body: Mapping[str, object],
+    segment: _FollowUpSegment,
+    http_request: Request,
+) -> AsyncIterator[str]:
+    """Relay one chat-completions stream as SSE frames, recording its outcome.
+
+    Answer deltas become ``data: {"text": ...}`` frames. Reasoning deltas are
+    not shown (CLAUDE.md 11), but their volume is relayed as a throttled
+    ``event: thinking`` frame so the UI can say the model is still working;
+    vendor keep-alive lines become SSE comments for the same reason.
+    """
+    parts: list[str] = []
+    reasoning_chars = 0
+    last_progress = time.monotonic()
+    try:
+        async with client.stream("POST", "/chat/completions", json=body) as response:
+            if response.status_code >= 400:
+                # Read the error body while the stream is open: the caller
+                # quotes the vendor's message after this context has closed.
+                await response.aread()
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if await http_request.is_disconnected():
+                    segment.disconnected = True
+                    return
+                now = time.monotonic()
+                due = now - last_progress >= FOLLOWUP_PROGRESS_INTERVAL_SECONDS
+                if not line.startswith("data:"):
+                    if due:
+                        last_progress = now
+                        yield ": keep-alive\n\n"
+                    continue
+                raw = line[5:].strip()
+                if raw == "[DONE]":
+                    segment.saw_done = True
+                    break
+                try:
+                    chunk = json.loads(raw)
+                except ValueError:
+                    continue
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                segment.finish_reason = (
+                    choices[0].get("finish_reason") or segment.finish_reason
+                )
+                delta = choices[0].get("delta") or {}
+                text = delta.get("content")
+                if text:
+                    parts.append(text)
+                    last_progress = now
+                    frame = json.dumps({"text": text}, ensure_ascii=False)
+                    yield f"data: {frame}\n\n"
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                if isinstance(reasoning, str) and reasoning:
+                    reasoning_chars += len(reasoning)
+                    if due:
+                        last_progress = now
+                        frame = json.dumps({"chars": reasoning_chars})
+                        yield f"event: thinking\ndata: {frame}\n\n"
+    finally:
+        segment.text = "".join(parts)
+
+
+def _rejects_max_tokens(response: httpx.Response) -> bool:
+    """Whether a 4xx says our ``max_tokens`` exceeds the model's ceiling."""
+    if response.status_code not in (400, 422):
+        return False
+    detail = _followup_error_detail(response).lower()
+    return any(
+        marker in detail
+        for marker in ("max_tokens", "max_completion_tokens", "max tokens")
+    )
 
 
 def _followup_messages(

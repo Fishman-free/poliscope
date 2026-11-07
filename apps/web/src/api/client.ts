@@ -524,12 +524,21 @@ export function cancelTask(taskId: string): Promise<{ task_id: string; status: s
   );
 }
 
+/** Side-channel progress of a streamed follow-up (see followUpStream). */
+export type FollowUpProgress =
+  | { kind: "thinking"; chars: number }
+  | { kind: "continued"; continuation: number }
+  | { kind: "truncated"; continuations: number };
+
 /** 「补充提问·流式」: stream a follow-up answer (round-10).
  *
  * Uses fetch with a reader (not EventSource) because the endpoint needs the
  * Authorization header, which EventSource cannot attach. Each SSE frame is
  * ``data: {"text": "<delta>"}``; the stream ends with ``data: [DONE]`` or an
- * ``event: error`` frame carrying ``{"detail": ...}``.
+ * ``event: error`` frame carrying ``{"detail": ...}``. Progress frames ride
+ * alongside: ``thinking`` (the model is still reasoning, ``{"chars": n}``),
+ * ``continued`` (the answer hit the length cap and is being continued) and
+ * ``truncated`` (continuations ran out; the answer is incomplete).
  *
  * @param onDelta called with each text delta as it arrives.
  * @param signal lets the caller abort the stream (e.g. a stop button).
@@ -543,6 +552,7 @@ export async function followUpStream(
     skillIds?: string[];
     searchLiterature?: boolean;
     history?: { role: "user" | "assistant"; content: string }[];
+    onProgress?: (progress: FollowUpProgress) => void;
   },
 ): Promise<void> {
   let response: Response;
@@ -598,6 +608,32 @@ export async function followUpStream(
             // fall through with the default message
           }
           throw new ApiError(0, detail);
+        }
+        if (event === "thinking" || event === "continued" || event === "truncated") {
+          try {
+            const payload = JSON.parse(raw) as {
+              chars?: number;
+              continuation?: number;
+              continuations?: number;
+            };
+            if (event === "thinking") {
+              options?.onProgress?.({ kind: "thinking", chars: payload.chars ?? 0 });
+            } else if (event === "continued") {
+              options?.onProgress?.({
+                kind: "continued",
+                continuation: payload.continuation ?? 1,
+              });
+            } else {
+              options?.onProgress?.({
+                kind: "truncated",
+                continuations: payload.continuations ?? 0,
+              });
+            }
+          } catch {
+            // Progress is advisory; a malformed frame never fails the answer.
+          }
+          sep = buffer.indexOf("\n\n");
+          continue;
         }
         if (raw === "[DONE]") return;
         try {

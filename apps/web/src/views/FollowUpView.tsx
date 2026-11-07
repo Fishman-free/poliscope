@@ -9,11 +9,20 @@
  *
  * 对话框形态：上方滚动问答列表，下方输入框 + 发送。回答流式（round-10）：
  * delta 逐字到达并就地追加，无需等待完整答案。
+ *
+ * 长回答（2026-11）：触到输出长度上限时服务端自动续写，这里只显示「正在
+ * 续写」；推理阶段显示已推理字数，不让界面看起来卡死。续写用尽或中途失败
+ * 时，已写出的部分保留并进入对话历史，研究者可点「继续生成」接着写。
  */
 
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { fetchPaperMarkdown, fetchSkills, followUpStream } from "../api/client";
+import {
+  type FollowUpProgress,
+  fetchPaperMarkdown,
+  fetchSkills,
+  followUpStream,
+} from "../api/client";
 import type { SkillSummary } from "../api/types";
 import { t } from "../i18n";
 
@@ -24,9 +33,17 @@ interface Exchange {
   answer: string;
   ok: boolean;
   pending: boolean;
+  /** 推理阶段已产生的字数（仅作存活提示，推理内容本身不展示）。 */
+  thinkingChars?: number;
+  /** 续写/截断提示；回答本身不被改写。 */
+  notice?: string;
+  /** 回答未写完（续写用尽或中途失败），可「继续生成」。 */
+  incomplete?: boolean;
 }
 
 const TERMINAL = new Set(["COMPLETED", "COMPLETED_WITH_GAPS"]);
+
+const CONTINUE_QUESTION = "请从上次中断处继续写完上面的回答，不要重复已写内容。";
 
 export function FollowUpView({
   taskId,
@@ -139,9 +156,40 @@ export function FollowUpView({
     );
   }
 
-  async function ask(event: FormEvent) {
-    event.preventDefault();
-    const text = question.trim();
+  /** 更新最后一条仍在进行中的问答。 */
+  function patchPending(patch: (last: Exchange) => Partial<Exchange>) {
+    setExchanges((prev) => {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last?.pending) next[next.length - 1] = { ...last, ...patch(last) };
+      return next;
+    });
+  }
+
+  function onProgress(progress: FollowUpProgress) {
+    if (progress.kind === "thinking") {
+      patchPending(() => ({ thinkingChars: progress.chars }));
+    } else if (progress.kind === "continued") {
+      patchPending(() => ({
+        notice: t(
+          "回答较长，已到单次输出上限，正在自动续写（第 {0} 次）…",
+          progress.continuation,
+        ),
+      }));
+    } else {
+      patchPending(() => ({
+        incomplete: true,
+        notice: t(
+          "已自动续写 {0} 次仍未写完，以上内容不完整；可点「继续生成」接着写。",
+          progress.continuations,
+        ),
+      }));
+    }
+  }
+
+  async function ask(event?: { preventDefault(): void }, override?: string) {
+    event?.preventDefault();
+    const text = (override ?? question).trim();
     if (!text || sending || !terminal) return;
     setSending(true);
     setError(null);
@@ -151,9 +199,10 @@ export function FollowUpView({
       ...prev,
       { question: text, answer: "", ok: true, pending: true },
     ]);
-    setQuestion("");
+    if (override === undefined) setQuestion("");
+    // 未写完的回答也进入历史：「继续生成」要让模型看到它写到了哪里。
     const history = exchanges
-      .filter((item) => item.ok && item.answer)
+      .filter((item) => item.answer)
       .flatMap((item) => [
         { role: "user" as const, content: item.question },
         { role: "assistant" as const, content: item.answer },
@@ -190,6 +239,7 @@ export function FollowUpView({
           skillIds: [...selectedSkills],
           searchLiterature,
           history,
+          onProgress,
         },
       );
       flushDelta();
@@ -197,7 +247,12 @@ export function FollowUpView({
         const next = [...prev];
         const last = next[next.length - 1];
         if (last && last.pending) {
-          next[next.length - 1] = { ...last, pending: false };
+          // 「正在续写」只在进行中有意义；只有未写完的提示需要留下。
+          next[next.length - 1] = {
+            ...last,
+            pending: false,
+            notice: last.incomplete ? last.notice : undefined,
+          };
         }
         return next;
       });
@@ -209,12 +264,12 @@ export function FollowUpView({
         const next = [...prev];
         const last = next[next.length - 1];
         if (last && last.pending) {
+          // Keep the partial text visible, clearly marked as incomplete.
           next[next.length - 1] = {
-            question: last.question,
-            // Keep the partial text visible, clearly marked as incomplete.
-            answer: last.answer,
+            ...last,
             ok: false,
             pending: false,
+            incomplete: Boolean(last.answer),
           };
         }
         return next;
@@ -260,16 +315,37 @@ export function FollowUpView({
                       </span>
                     </p>
                   ) : (
-                    <p className="followup__pending">{t("思考中…")}</p>
+                    <p className="followup__pending">
+                      {exchange.thinkingChars
+                        ? t("思考中…（已推理 {0} 字）", exchange.thinkingChars)
+                        : t("思考中…")}
+                    </p>
                   )
                 ) : exchange.ok ? (
                   <p>{exchange.answer}</p>
+                ) : exchange.answer ? (
+                  <>
+                    <p>{exchange.answer}</p>
+                    <p className="followup__failed">{t("回答中断，以上内容不完整")}</p>
+                  </>
                 ) : (
-                  <p className="followup__failed">
-                    {t("回答不可用")}
-                    {exchange.answer ? `：${exchange.answer}` : ""}
-                  </p>
+                  <p className="followup__failed">{t("回答不可用")}</p>
                 )}
+                {exchange.notice ? (
+                  <p className="followup__notice">{exchange.notice}</p>
+                ) : null}
+                {exchange.incomplete &&
+                !exchange.pending &&
+                index === exchanges.length - 1 ? (
+                  <button
+                    type="button"
+                    className="button followup__continue"
+                    disabled={sending || !terminal}
+                    onClick={() => void ask(undefined, t(CONTINUE_QUESTION))}
+                  >
+                    {t("继续生成")}
+                  </button>
+                ) : null}
               </div>
             </div>
           ))

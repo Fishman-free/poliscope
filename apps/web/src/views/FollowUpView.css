@@ -111,6 +111,17 @@
   color: var(--refuted);
 }
 
+/* Continuation / truncation notes: process status, not part of the answer. */
+.followup__notice {
+  margin-top: var(--space-2);
+  font-size: var(--text-small);
+  color: var(--provisional);
+}
+
+.followup__continue {
+  margin-top: var(--space-2);
+}
+
 .followup__error {
   margin: 0;
   font-size: var(--text-small);
