@@ -17,8 +17,9 @@ Resolution order (first hit wins):
    DeepSeek halves prices off-peak, so the list figure is an upper bound,
    never an understatement of what the budget has spent.
 3. **Unknown** -- ``None``. The cost of an unknown model is not zero, it is
-   unknown, and the read side reports it as such (CLAUDE.md 7) instead of
-   inventing a price for an arbitrary vendor or relay.
+   unknown: the UI then shows no cost at all (CLAUDE.md 7) rather than a
+   zero that reads as "free", and no price is invented for an arbitrary
+   vendor or relay.
 
 Every price carries its ``source`` so the UI can say "estimated from the
 DeepSeek list price" rather than presenting an estimate as a bill.

@@ -117,7 +117,7 @@ class OpenAICompatibleConfig:
     model_names: Mapping[ModelClass, str]
     # Operator-configured price. Both zero means "not configured": the call
     # is then priced at the model's list price when packages.models.pricing
-    # knows it, and at zero (unknown, reported as such) otherwise.
+    # knows it, and at zero (unknown; the UI then hides the cost) otherwise.
     price_input_per_1m_usd: Decimal = Decimal("0")
     price_output_per_1m_usd: Decimal = Decimal("0")
     price_cached_input_per_1m_usd: Decimal | None = None
@@ -553,8 +553,8 @@ class OpenAICompatibleModelGateway:
         output_tokens: int,
         cached_input_tokens: int = 0,
     ) -> Decimal:
-        # Unknown price -> 0 recorded; the usage read side reports such rows
-        # as "price unknown", never as a free call.
+        # Unknown price -> 0 recorded; the cost panel then hides the cost
+        # instead of presenting these calls as free.
         price = self.price_for(model_name)
         if price is None:
             return Decimal("0")

@@ -808,9 +808,7 @@ export const en: Record<string, string> = {
   "回答中断，以上内容不完整": "The answer was interrupted; the text above is incomplete",
   "继续生成": "Continue",
   "请从上次中断处继续写完上面的回答，不要重复已写内容。": "Please continue the answer above from where it stopped, without repeating what is already written.",
-  "模型「{0}」没有已知单价，{1} 次调用无法计价（不是免费）": "Model “{0}” has no known price; {1} calls cannot be priced (they are not free)",
   "按 {0} 官方标准价估算（输入 ${1} / 输出 ${2} 每百万 Token；非高峰时段更低），不是实际账单": "Estimated at {0}'s standard list price (input ${1} / output ${2} per 1M tokens; lower off-peak); not an actual bill",
   "按部署配置的单价计算": "Priced at the deployment's configured rates",
   "其中 {0} 次早期调用未记录费用，已按标价补估（上限）": "{0} earlier calls recorded no cost and were priced at the list price (upper bound)",
-  "未知": "Unknown",
 };

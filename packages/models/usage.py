@@ -14,8 +14,9 @@ those are never shown as free. When the task's model has a known price
 (packages/models/pricing.py), their tokens are priced into a separate,
 explicitly labelled ``pricing.estimated_unpriced_usd`` -- all input billed at
 the cache-miss rate, so the estimate is an upper bound -- and when it has
-none, ``pricing.source`` is ``None`` and the UI says the price is unknown
-(CLAUDE.md 7). Recorded and estimated figures stay distinguishable. It never
+none, ``pricing.source`` is ``None`` and the UI omits the cost entirely
+rather than show a zero that reads as "free" (CLAUDE.md 7). Recorded and
+estimated figures stay distinguishable. It never
 turns model confidence into a number (CLAUDE.md 16), and degrades honestly
 when a limit is unset (``limit == 0`` means "no cap", so remaining is
 reported as None rather than a negative number).

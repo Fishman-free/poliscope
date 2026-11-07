@@ -75,30 +75,21 @@ function useBusy() {
 
 /** D12 cost / usage. Deterministic accounting from model_calls/tool_calls. */
 function UsageSection({ usage }: { usage: UsageViewData | null | undefined }) {
-  const recorded = Number(usage?.model.cost_usd ?? 0);
   const pricing = usage?.pricing;
+  // No known price for the task's model: the cost is not shown at all. A
+  // "0.0000" next to millions of tokens would read as "free", which it is not.
+  const priceKnown = pricing?.source != null;
   const unpricedCalls = pricing?.unpriced_calls ?? 0;
-  const estimated = pricing?.estimated_unpriced_usd;
-  // Calls that consumed tokens but carry no recorded cost are never shown as
-  // free: priced at the list price when the model is known, else "unknown".
-  const priceUnknown = unpricedCalls > 0 && estimated == null;
-  const cost = recorded + (unpricedCalls > 0 && estimated != null ? estimated : 0);
+  const cost =
+    Number(usage?.model.cost_usd ?? 0) + (pricing?.estimated_unpriced_usd ?? 0);
   const budgetCost = usage?.budget?.model_cost_limit_usd
     ? Number(usage.budget.model_cost_limit_usd)
     : null;
   const ratio =
-    !priceUnknown && budgetCost && budgetCost > 0 ? cost / budgetCost : null;
+    priceKnown && budgetCost && budgetCost > 0 ? cost / budgetCost : null;
   const costNotes: string[] = [];
   if (budgetCost != null) costNotes.push(t("预算 {0}", budgetCost.toFixed(2)));
-  if (priceUnknown) {
-    costNotes.push(
-      t(
-        "模型「{0}」没有已知单价，{1} 次调用无法计价（不是免费）",
-        pricing?.model_name ?? "?",
-        unpricedCalls,
-      ),
-    );
-  } else if (pricing?.source === "list") {
+  if (pricing?.source === "list") {
     costNotes.push(
       t(
         "按 {0} 官方标准价估算（输入 ${1} / 输出 ${2} 每百万 Token；非高峰时段更低），不是实际账单",
@@ -110,7 +101,7 @@ function UsageSection({ usage }: { usage: UsageViewData | null | undefined }) {
   } else if (pricing?.source === "configured") {
     costNotes.push(t("按部署配置的单价计算"));
   }
-  if (unpricedCalls > 0 && estimated != null) {
+  if (unpricedCalls > 0) {
     costNotes.push(
       t("其中 {0} 次早期调用未记录费用，已按标价补估（上限）", unpricedCalls),
     );
@@ -130,22 +121,14 @@ function UsageSection({ usage }: { usage: UsageViewData | null | undefined }) {
           label={t("输入 / 输出 Token")}
           value={`${usage.model.input_tokens} / ${usage.model.output_tokens}`}
         />
-        <Metric
-          label={t("模型费用（USD）")}
-          value={
-            priceUnknown && recorded === 0
-              ? t("未知")
-              : `${priceUnknown ? "≥ " : ""}${cost.toFixed(4)}`
-          }
-          caveat={costNotes.length > 0 ? costNotes.join("；") : undefined}
-          tone={
-            priceUnknown
-              ? "provisional"
-              : ratio != null && ratio > 1
-                ? "refuted"
-                : "admitted"
-          }
-        />
+        {priceKnown ? (
+          <Metric
+            label={t("模型费用（USD）")}
+            value={cost.toFixed(4)}
+            caveat={costNotes.join("；")}
+            tone={ratio != null && ratio > 1 ? "refuted" : "admitted"}
+          />
+        ) : null}
         <Metric
           label={t("工具调用 / 失败")}
           value={`${usage.tools.calls} / ${usage.tools.errors}`}

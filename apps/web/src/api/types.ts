@@ -611,7 +611,7 @@ export interface UsageViewData {
     by_tool: Record<string, Record<string, number>>;
   };
   /** Where the cost figure comes from. `source` null = the model's price is
-   * unknown (not "free"). `estimated_unpriced_usd` prices calls recorded at
+   * unknown, and the cost is not shown at all. `estimated_unpriced_usd` prices calls recorded at
    * zero cost (older runs) at the list price -- an upper bound, kept apart
    * from the recorded `model.cost_usd`. Optional: older API builds omit it. */
   pricing?: {
